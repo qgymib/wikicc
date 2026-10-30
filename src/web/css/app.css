@@ -25,7 +25,6 @@
   --sidebar-width: 260px;
   --inspector-width: 320px;
   --topbar-height: 52px;
-  --reading-width: 78ch;
 }
 
 /* Light palette, applied explicitly by the toggle and implicitly by the OS. */
@@ -360,9 +359,8 @@ a {
 /* ---------- content ---------- */
 
 .content {
-  max-width: var(--reading-width);
   width: 100%;
-  margin: 0 auto;
+  min-width: 0;
   padding: 44px 34px 120px;
   outline: none;
 }
@@ -1071,7 +1069,6 @@ a {
   }
 
   .content {
-    max-width: none;
     padding: 0;
   }
 
