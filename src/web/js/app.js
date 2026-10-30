@@ -14,7 +14,7 @@ import * as Router from "./router.js";
 import * as Search from "./search.js";
 import * as DocList from "./doc-list.js";
 import * as Toc from "./toc.js";
-import * as Table from "./table.js";
+import * as TableView from "./table-view.js";
 import * as GraphView from "./graph-view.js";
 import * as Diagrams from "./diagrams.js";
 import * as DiagramView from "./diagram-view.js";
@@ -173,8 +173,8 @@ export function start() {
     body.className = "doc-body";
     body.innerHTML = doc.html;
     // Tables are enhanced after the markup exists and before it is inserted, so
-    // the first paint already carries the sortable headers and filter row.
-    Table.enhanceTables(body);
+    // the first paint already carries the sortable headers and filter buttons.
+    TableView.enhanceTables(body);
 
     content.textContent = "";
     content.appendChild(path);

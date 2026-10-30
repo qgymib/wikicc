@@ -122,7 +122,7 @@ test("clearing the sort restores the original row order without mutating input",
   assert.deepEqual(order(table.sortRows(rows, 0, undefined)), [0, 1, 2]);
 });
 
-test("filters case-insensitively on a substring", () => {
+test("filters by exact cell value, not by substring", () => {
   const rows = model(
     ["name", "kind"],
     [
@@ -132,12 +132,14 @@ test("filters case-insensitively on a substring", () => {
     ],
   ).rows;
 
-  assert.deepEqual(order(table.filterRows(rows, ["", "abc"])), [0, 2]);
-  assert.deepEqual(order(table.filterRows(rows, ["GAM"])), [2]);
-  assert.deepEqual(order(table.filterRows(rows, ["A", "abc"])), [0, 2]);
+  assert.deepEqual(order(table.filterRows(rows, [null, ["abc"]])), [0, 2]);
+  assert.deepEqual(order(table.filterRows(rows, [["Gamma"]])), [2]);
+  // `alp` is not a candidate value: the panel search narrows its list, it does
+  // not become a row query.
+  assert.deepEqual(table.filterRows(rows, [["alp"]]), []);
 });
 
-test("combines column filters with AND and ignores blank ones", () => {
+test("combines values with OR inside a column and AND across columns", () => {
   const rows = model(
     ["name", "kind"],
     [
@@ -147,16 +149,19 @@ test("combines column filters with AND and ignores blank ones", () => {
     ],
   ).rows;
 
-  assert.deepEqual(order(table.filterRows(rows, ["a", "xyz"])), [1]);
-  assert.deepEqual(order(table.filterRows(rows, ["", ""])), [0, 1, 2]);
+  assert.deepEqual(order(table.filterRows(rows, [["alpha", "Gamma"], ["abc"]])), [0, 2]);
+  assert.deepEqual(order(table.filterRows(rows, [["alpha", "beta"], ["abc"]])), [0]);
+  assert.deepEqual(order(table.filterRows(rows, [[], ["abc"]])), []);
+  assert.deepEqual(order(table.filterRows(rows, [null, null])), [0, 1, 2]);
   assert.deepEqual(order(table.filterRows(rows, [])), [0, 1, 2]);
-  assert.deepEqual(order(table.filterRows(rows, ["a", "abc", ""])), [0, 2]);
 });
 
-test("returns nothing when every row is filtered out", () => {
+test("treats an empty selection as a filter and an absent one as none", () => {
   const rows = model(["name"], [["alpha"], ["beta"]]).rows;
 
-  assert.deepEqual(table.filterRows(rows, ["zzz"]), []);
+  assert.deepEqual(table.filterRows(rows, [[]]), []);
+  assert.deepEqual(order(table.filterRows(rows, [undefined])), [0, 1]);
+  assert.deepEqual(order(table.filterRows(rows, [new Set(["beta"])])), [1]);
 });
 
 test("keeps the sorted order while filtering", () => {
@@ -171,7 +176,7 @@ test("keeps the sorted order while filtering", () => {
   const sorted = table.sortRows(rows, 0, "asc");
 
   assert.deepEqual(order(sorted), [2, 1, 0]);
-  assert.deepEqual(order(table.filterRows(sorted, ["", "x"])), [2, 0]);
+  assert.deepEqual(order(table.filterRows(sorted, [null, ["x"]])), [2, 0]);
 });
 
 test("builds a typed model that preserves the header text", () => {
@@ -188,6 +193,60 @@ test("builds a typed model that preserves the header text", () => {
   assert.equal(built.rows[1].index, 1);
   assert.deepEqual(built.rows[0].cells[1], { text: "1", kind: "number", value: 1 });
   assert.deepEqual(built.rows[1].cells[1], { text: "", kind: "empty", value: null });
+});
+
+test("keys cells by trimmed text and blanks by the empty string", () => {
+  const rows = model(["k"], [[" 42 "], ["   "], ["1,234"]]).rows;
+
+  assert.equal(table.cellKey(rows[0].cells[0]), "42");
+  assert.equal(table.cellKey(rows[1].cells[0]), "");
+  assert.equal(table.cellKey(rows[2].cells[0]), "1,234");
+});
+
+test("collects one candidate per distinct value with its occurrence count", () => {
+  const rows = model(
+    ["kind"],
+    [["b"], ["a"], ["b"], [""], ["   "], ["2024-01-02"], ["10"], ["9"]],
+  ).rows;
+  const values = table.distinctValues(rows, 0);
+
+  assert.deepEqual(
+    values.map((value) => [value.key, value.kind, value.count]),
+    [
+      ["9", "number", 1],
+      ["10", "number", 1],
+      ["2024-01-02", "date", 1],
+      ["a", "text", 1],
+      ["b", "text", 2],
+      ["", "empty", 2],
+    ],
+  );
+  assert.deepEqual(values[5], { text: "", key: "", kind: "empty", value: null, count: 2 });
+});
+
+test("keeps candidates that differ only in case apart", () => {
+  const rows = model(["name"], [["Apple"], ["apple"]]).rows;
+  const values = table.distinctValues(rows, 0);
+
+  assert.deepEqual(values.map((value) => value.key), ["Apple", "apple"]);
+  assert.deepEqual(order(table.filterRows(rows, [["Apple"]])), [0]);
+});
+
+test("treats cells missing from a short row as blanks", () => {
+  const rows = model(["a", "b"], [["1"], ["0", "x"]]).rows;
+
+  assert.deepEqual(table.distinctValues(rows, 1).map((value) => value.key), ["x", ""]);
+  assert.deepEqual(table.distinctValues(rows, 0).map((value) => value.key), ["0", "1"]);
+});
+
+test("collapses a selection that covers every candidate to no filter", () => {
+  const values = table.distinctValues(model(["k"], [["a"], ["b"], ["a"]]).rows, 0);
+
+  assert.equal(table.normalizeSelection(new Set(["a", "b"]), values), null);
+  assert.deepEqual(table.normalizeSelection(new Set(["a"]), values), ["a"]);
+  assert.deepEqual(table.normalizeSelection(new Set(), values), []);
+  assert.equal(table.normalizeSelection(new Set(), []), null);
+  assert.deepEqual(table.normalizeSelection(["a"], ["a", "b"]), ["a"]);
 });
 
 test("cycles a header click through ascending, descending and off", () => {

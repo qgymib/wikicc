@@ -141,6 +141,14 @@ fn tables_are_emitted_and_hooked_for_enhancement() {
         page.html.contains("No matching rows"),
         "the empty-filter placeholder must be bundled into the page"
     );
+    assert!(
+        page.html.contains("table-filter-toggle"),
+        "the per-column filter button must be bundled into the page"
+    );
+    assert!(
+        page.html.contains("Search values"),
+        "the filter panel's value search must be bundled into the page"
+    );
 }
 
 #[test]
@@ -198,12 +206,13 @@ fn the_engines_and_the_reader_are_embedded_in_one_script() {
     // The bundle is minified, so identifiers are not asserted; string literals
     // and attribute names are, because esbuild leaves both alone.
     for marker in [
-        "wikicc-payload",    // the bootstrap reads the embedded payload
-        "data-wikicc-table", // the table enhancer is bundled
-        "graph-node",        // the link graph renderer is bundled
-        "startOnLoad",       // the diagram engine is configured
-        "data-processed",    // ... and mermaid itself is present
-        "sequenceDiagram",   // ... including its diagram implementations
+        "wikicc-payload",      // the bootstrap reads the embedded payload
+        "data-wikicc-table",   // the table enhancer is bundled
+        "table-filter-toggle", // ... with its per-column filter buttons
+        "graph-node",          // the link graph renderer is bundled
+        "startOnLoad",         // the diagram engine is configured
+        "data-processed",      // ... and mermaid itself is present
+        "sequenceDiagram",     // ... including its diagram implementations
     ] {
         assert!(page.html.contains(marker), "the bundle is missing {marker}");
     }

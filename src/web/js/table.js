@@ -1,18 +1,16 @@
 /**
- * Table sorting and filtering for the reader.
+ * Table model, sorting and filtering for the reader.
  *
  * The build emits plain GFM tables (`<table><thead>…<tbody>…`), so everything
  * here runs in the browser: no build-time cost, no payload change and no
- * dependency. The module follows the same split as `doc-list.js` — the pure
- * core (`parseCell`, `compareCells`, `sortRows`, `filterRows`,
- * `buildTableModel`, `nextSortState`) never touches the DOM and is covered by
- * `node --test`, while `enhanceTable`/`enhanceTables` only build and reorder
- * nodes.
+ * dependency. This module is deliberately DOM-free — `table-view.js` owns the
+ * header buttons, the filter panel and the row toggling — so the whole model is
+ * covered by `node --test`, which runs without a document.
  *
  * Semantics worth knowing:
  *
  * - Cells are typed once, when the table is enhanced, and the parsed model is
- *   reused for every sort and filter, so a keystroke never re-parses the table.
+ *   reused for every sort and filter, so a click never re-parses the table.
  * - A column may mix kinds; `number` sorts before `date`, which sorts before
  *   `text`, and empty cells always sort last, in both directions.
  * - `12%` compares as the written magnitude (12), not as 0.12: a column that
@@ -20,6 +18,9 @@
  *   percentages among themselves is what readers expect.
  * - Sorting is stable in both directions: equal values keep their original
  *   order, because the original row index is the tie-breaker.
+ * - Filtering is Excel-style: one set of exact cell values per column, `OR`
+ *   inside a column and `AND` across columns. A column without a set, or with
+ *   every candidate selected, does not constrain anything.
  * - Filtering never reorders rows, it only toggles the `hidden` attribute, so
  *   clearing a filter restores whatever order is currently displayed.
  */
@@ -29,12 +30,6 @@ export var TABLE_MARKER = "data-wikicc-table";
 
 /** Class added to clickable header cells. */
 export var SORTABLE_CLASS = "table-sortable";
-
-/** Class of the injected filter row inside `<thead>`. */
-export var FILTER_ROW_CLASS = "table-filter-row";
-
-/** Class of the filter inputs. */
-export var FILTER_INPUT_CLASS = "table-filter";
 
 /** Class of the placeholder row shown when nothing matches. */
 export var EMPTY_ROW_CLASS = "table-empty-row";
@@ -217,32 +212,132 @@ export function sortRows(rows, column, direction) {
 }
 
 /**
- * Keep the rows that match every column filter.
+ * Identity of a cell inside its column.
  *
- * `filters` holds one query per column index; `null`, `undefined` and blank
- * queries do not constrain their column. Matching is a case-insensitive
- * substring test on the displayed cell text, so a numeric query such as `12`
- * matches `1,234` the way a reader would expect from what is on screen.
+ * The displayed text, trimmed, is what the filter panel lists; an empty cell is
+ * the empty string, which is also the `(Blanks)` candidate. Cells that differ
+ * only in surrounding whitespace are one candidate, and a selection matches by
+ * exact string, not by substring.
  */
-export function filterRows(rows, filters) {
-  var queries = (filters || []).map(function (filter) {
-    return filter === null || filter === undefined ? "" : String(filter).trim().toLowerCase();
+export function cellKey(cell) {
+  var value = asCell(cell);
+
+  if (value.kind === "empty") {
+    return "";
+  }
+
+  return String(value.text === undefined ? value.value : value.text).trim();
+}
+
+/**
+ * Candidate values of one column, in the order the filter panel lists them.
+ *
+ * Every distinct key appears once with its occurrence count. The list is
+ * ordered by the sorting comparator (`number` < `date` < `text`, empty last), so
+ * the panel reads like a sorted column; cells that parse to the same value but
+ * are written differently (`1,234` and `1234`) stay separate entries because
+ * the panel shows what is on screen, and the text tie-breaker keeps their order
+ * deterministic.
+ */
+export function distinctValues(rows, column) {
+  var byKey = new Map();
+
+  (rows || []).forEach(function (row) {
+    var cell = cellAt(row, column);
+    var key = cellKey(cell);
+    var entry = byKey.get(key);
+
+    if (entry) {
+      entry.count += 1;
+      return;
+    }
+
+    byKey.set(key, {
+      text: key,
+      key: key,
+      kind: cell.kind,
+      value: cell.value,
+      count: 1,
+    });
+  });
+
+  return Array.from(byKey.values()).sort(function (left, right) {
+    var result = compareCells(
+      { kind: left.kind, value: left.value },
+      { kind: right.kind, value: right.value },
+    );
+
+    if (result !== 0) {
+      return result;
+    }
+
+    return sign(
+      String(left.text).localeCompare(String(right.text), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    );
+  });
+}
+
+/**
+ * Collapse a selection that covers every candidate to `null`.
+ *
+ * `null` means "this column does not constrain anything", which is what the
+ * filter button's idle state and the header's active marker both key off. An
+ * empty selection is *not* collapsed: unchecking every value is a real filter
+ * that hides the whole column, exactly like Excel.
+ */
+export function normalizeSelection(selectedKeys, allKeys) {
+  var selected = selectedKeys instanceof Set ? selectedKeys : new Set(selectedKeys || []);
+  var all = allKeys || [];
+
+  if (!all.length) {
+    return selected.size ? Array.from(selected) : null;
+  }
+
+  if (selected.size !== all.length) {
+    return Array.from(selected);
+  }
+
+  for (var index = 0; index < all.length; index += 1) {
+    var key = all[index] && all[index].key !== undefined ? all[index].key : all[index];
+    if (!selected.has(key)) {
+      return Array.from(selected);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Keep the rows that survive every column selection.
+ *
+ * `selections` holds one entry per column: `null`/`undefined` (no constraint)
+ * or an array of exact keys (see `cellKey`) that are allowed through. Values
+ * inside a column are combined with `OR`, columns with `AND`. Each selection is
+ * turned into a `Set` once, so a click costs one lookup per cell instead of a
+ * scan of the selection.
+ */
+export function filterRows(rows, selections) {
+  var allowed = (selections || []).map(function (selection) {
+    if (selection === null || selection === undefined) {
+      return null;
+    }
+    return selection instanceof Set ? selection : new Set(selection);
   });
   var list = (rows || []).slice();
 
-  if (!queries.some(Boolean)) {
+  if (!allowed.some(Boolean)) {
     return list;
   }
 
   return list.filter(function (row) {
-    return queries.every(function (query, column) {
-      if (!query) {
+    return allowed.every(function (keys, column) {
+      if (!keys) {
         return true;
       }
-      var cell = cellAt(row, column);
-      return cell.text === undefined
-        ? String(cell.value === null ? "" : cell.value).toLowerCase().indexOf(query) !== -1
-        : String(cell.text).toLowerCase().indexOf(query) !== -1;
+      return keys.has(cellKey(cellAt(row, column)));
     });
   });
 }
@@ -251,7 +346,7 @@ export function filterRows(rows, filters) {
  * Build the parsed model of a table from its text matrix.
  *
  * `headers` and `rows` are plain strings, which keeps the model builder free of
- * the DOM and testable under `node --test`; `enhanceTable` is the adapter that
+ * the DOM and testable under `node --test`; `table-view.js` is the adapter that
  * reads them out of the `<table>` element.
  */
 export function buildTableModel(headers, rows) {
@@ -291,194 +386,4 @@ export function nextSortState(current, column) {
   }
 
   return { column: null, direction: "none" };
-}
-
-/** Header text of a cell, falling back to the column number for the label. */
-function headerLabel(cell, index) {
-  var text = cell && typeof cell.textContent === "string" ? cell.textContent.trim() : "";
-  return text || "column " + (index + 1);
-}
-
-/** Create the filter row that is injected into `<thead>`. */
-function createFilterRow(headerCells, onChange) {
-  var row = document.createElement("tr");
-  row.className = FILTER_ROW_CLASS;
-
-  headerCells.forEach(function (header, index) {
-    var cell = document.createElement("th");
-    var input = document.createElement("input");
-
-    input.type = "search";
-    input.className = FILTER_INPUT_CLASS;
-    input.placeholder = "Filter";
-    input.autocomplete = "off";
-    input.spellcheck = false;
-    input.setAttribute("aria-label", "Filter column " + headerLabel(header, index));
-    input.addEventListener("input", onChange);
-    input.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && input.value) {
-        input.value = "";
-        onChange();
-      }
-    });
-
-    cell.appendChild(input);
-    row.appendChild(cell);
-  });
-
-  return row;
-}
-
-/** Create the placeholder row shown when every row is filtered out. */
-function createEmptyRow(columns) {
-  var row = document.createElement("tr");
-  var cell = document.createElement("td");
-
-  row.className = EMPTY_ROW_CLASS;
-  row.setAttribute("hidden", "");
-
-  cell.colSpan = columns > 0 ? columns : 1;
-  cell.textContent = NO_MATCH_TEXT;
-
-  row.appendChild(cell);
-  return row;
-}
-
-/**
- * Make one table sortable and filterable.
- *
- * Returns `false` when the element is not a table with a header and at least
- * one body row, or when it was enhanced before, which keeps the function
- * idempotent and leaves exotic tables (raw HTML without `<thead>`) untouched.
- */
-export function enhanceTable(table) {
-  if (!table || typeof table.hasAttribute !== "function" || table.hasAttribute(TABLE_MARKER)) {
-    return false;
-  }
-
-  var head = table.tHead;
-  var body = table.tBodies && table.tBodies.length ? table.tBodies[0] : null;
-  var headerRow = head && head.rows && head.rows.length ? head.rows[0] : null;
-
-  if (!headerRow || !headerRow.cells.length || !body || !body.rows.length) {
-    return false;
-  }
-
-  var headers = Array.prototype.slice.call(headerRow.cells);
-  var rows = Array.prototype.slice.call(body.rows);
-  var model = buildTableModel(
-    headers.map(function (cell) {
-      return cell.textContent;
-    }),
-    rows.map(function (row) {
-      return Array.prototype.slice.call(row.cells).map(function (cell) {
-        return cell.textContent;
-      });
-    }),
-  );
-
-  var state = { column: null, direction: "none" };
-  var emptyRow = createEmptyRow(headers.length);
-
-  function applyFilter() {
-    var visible = new Set(
-      filterRows(
-        model.rows,
-        filterRow.cells
-          ? Array.prototype.map.call(filterRow.cells, function (cell) {
-              var input = cell.querySelector("input");
-              return input ? input.value : "";
-            })
-          : [],
-      ).map(function (row) {
-        return row.index;
-      }),
-    );
-
-    model.rows.forEach(function (row) {
-      var element = rows[row.index];
-      if (visible.has(row.index)) {
-        element.removeAttribute("hidden");
-      } else {
-        element.setAttribute("hidden", "");
-      }
-    });
-
-    if (visible.size === 0) {
-      emptyRow.removeAttribute("hidden");
-    } else {
-      emptyRow.setAttribute("hidden", "");
-    }
-  }
-
-  function applySort() {
-    sortRows(model.rows, state.column, state.direction).forEach(function (row) {
-      body.appendChild(rows[row.index]);
-    });
-
-    // The placeholder is not part of the model, so it is re-appended to stay
-    // the last row after every reorder.
-    body.appendChild(emptyRow);
-
-    headers.forEach(function (header, index) {
-      var sorted = state.direction !== "none" && index === state.column;
-      header.setAttribute(
-        "aria-sort",
-        sorted ? (state.direction === "asc" ? "ascending" : "descending") : "none",
-      );
-      if (sorted) {
-        header.setAttribute("data-sort", state.direction);
-      } else {
-        header.removeAttribute("data-sort");
-      }
-    });
-  }
-
-  function sortBy(index) {
-    state = nextSortState(state, index);
-    applySort();
-  }
-
-  var filterRow = createFilterRow(headers, applyFilter);
-
-  table.setAttribute(TABLE_MARKER, "");
-
-  headers.forEach(function (header, index) {
-    header.classList.add(SORTABLE_CLASS);
-    header.setAttribute("tabindex", "0");
-    header.setAttribute("aria-sort", "none");
-    header.addEventListener("click", function () {
-      sortBy(index);
-    });
-    header.addEventListener("keydown", function (event) {
-      if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
-        event.preventDefault();
-        sortBy(index);
-      }
-    });
-  });
-
-  head.appendChild(filterRow);
-  body.appendChild(emptyRow);
-
-  return true;
-}
-
-/**
- * Enhance every table under `root`, including tables inside block quotes and
- * footnote definitions, because the walk is a plain descendant query.
- *
- * Returns the number of tables that were enhanced by this call.
- */
-export function enhanceTables(root) {
-  var scope = root && typeof root.querySelectorAll === "function" ? root : document;
-  var count = 0;
-
-  Array.prototype.forEach.call(scope.querySelectorAll("table"), function (table) {
-    if (enhanceTable(table)) {
-      count += 1;
-    }
-  });
-
-  return count;
 }

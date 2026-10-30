@@ -19,14 +19,16 @@ navigate long documents through their chapter outline.
   that document.
 - **Chapter outline** of the current document, highlighting the section being
   read.
-- **Tables**: click a header to sort, type in the filter box to narrow rows.
+- **Tables**: click a header to sort; open the funnel on the right of a header
+  to tick the values you want, or type to narrow that list, Excel-style.
 - **Theme** toggle (light/dark) and a page that stays usable down to phone width.
 
 ### Markdown support
 
 GitHub-flavored Markdown plus footnotes, task lists and strikethrough, rendered
 with stable heading anchors (Unicode-aware, so CJK headings keep their text) and
-a nested chapter outline. Tables become sortable and filterable in the reader.
+a nested chapter outline. Tables become sortable in the reader, and every column
+gets an Excel-style filter list of its distinct values.
 
 Fenced code blocks are highlighted at build time (no client-side highlighter,
 no grammar files loaded at runtime). A fence tagged `mermaid` becomes a diagram

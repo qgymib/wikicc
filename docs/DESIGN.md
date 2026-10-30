@@ -219,9 +219,17 @@ the documents, which is a product change rather than a writer change.
   by `package-lock.json`. `npm ci` is a build prerequisite; a missing dependency
   fails the build with an actionable message instead of degrading silently.
 - **Layering rule.** Pure logic and DOM access live in separate modules
-  (`router.js`, `search.js`, `table.js`, `graph.js` versus `graph-view.js`,
-  `diagram-view.js`), because the JS test suite runs under `node --test` with no
-  DOM. Anything that touches `document` belongs to a view module.
+  (`router.js`, `search.js`, `table.js`, `graph.js` versus `table-view.js`,
+  `graph-view.js`, `diagram-view.js`), because the JS test suite runs under
+  `node --test` with no DOM. Anything that touches `document` belongs to a view
+  module; the table's Excel-style filter panel is a view over the pure candidate
+  and selection functions in `table.js`.
+- **No UI framework.** The reader stays on native DOM. One popover plus a few
+  attribute toggles do not pay for a component runtime: Svelte/Vite would fight
+  the single-inline-classic-script requirement, add an output layer to the
+  byte-identical bundle and force a DOM test environment on logic that is
+  otherwise covered by `node --test`. `esbuild` and plain ES modules stay the
+  whole front-end build chain.
 - **Determinism of the graph.** The force layout is seeded from a hash of the
   document ids, the same generator feeds the initial jitter and
   `simulation.randomSource()`, and the simulation is stepped synchronously, so
@@ -244,7 +252,7 @@ the documents, which is a product change rather than a writer change.
 | --- | --- | --- | --- |
 | Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline |
 | Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates`, `mailparse` | CLI, scan, markdown, writers, end to end |
-| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search adapter, table sort/filter, graph layout |
+| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search adapter, table sort/filter model, graph layout |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the JS suite inside `cargo test` |
 
 Fixtures under `tests/fixtures` are committed sites: `site/` (three documents,

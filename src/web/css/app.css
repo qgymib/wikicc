@@ -536,6 +536,7 @@ a {
 }
 
 .doc-body thead th {
+  position: relative;
   padding: 9px 12px;
   border-bottom: 1px solid var(--border-strong);
   background: var(--bg-hover);
@@ -564,6 +565,8 @@ a {
 /* ---------- table sorting and filtering ---------- */
 
 .doc-body thead th.table-sortable {
+  /* Room for the sort arrow and the funnel button on the right edge. */
+  padding-right: 46px;
   cursor: pointer;
   user-select: none;
   transition: color 140ms ease, background 140ms ease;
@@ -579,13 +582,17 @@ a {
   outline-offset: -2px;
 }
 
-/* The direction indicator is drawn by CSS so the header text is untouched. */
+/* The direction indicator is drawn by CSS so the header text is untouched. It
+   is positioned rather than inline, because the filter button is a real child
+   element and a generated `::after` would otherwise render behind it. */
 .doc-body thead th.table-sortable::after {
-  display: inline-block;
-  margin-left: 6px;
+  position: absolute;
+  top: 50%;
+  right: 28px;
+  margin: 0;
   font-size: 8px;
   line-height: 1;
-  vertical-align: middle;
+  transform: translateY(-50%);
   opacity: 0.75;
   content: "";
 }
@@ -598,37 +605,52 @@ a {
   content: "▼";
 }
 
-.doc-body thead tr.table-filter-row th {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border);
+/* The funnel button: quiet until hovered, accent-coloured while filtering. */
+.doc-body .table-filter-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
   background: transparent;
-  letter-spacing: normal;
-  text-transform: none;
-}
-
-.doc-body .table-filter {
-  width: 100%;
-  min-width: 0;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg-hover);
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  letter-spacing: normal;
-  text-transform: none;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.doc-body .table-filter::placeholder {
   color: var(--text-dim);
+  opacity: 0.45;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
 }
 
-.doc-body .table-filter:focus {
+.doc-body .table-filter-toggle:hover,
+.doc-body .table-filter-toggle:focus-visible {
+  opacity: 1;
+  color: var(--text);
+  background: var(--bg-hover);
   outline: none;
-  border-color: rgba(76, 141, 255, 0.65);
-  box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.16);
+}
+
+.doc-body .table-filter-toggle:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.doc-body .table-filter-toggle.is-filtered {
+  opacity: 1;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.doc-body .table-filter-toggle svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
 }
 
 .doc-body tbody tr[hidden] {
@@ -640,6 +662,154 @@ a {
   color: var(--text-dim);
   font-style: italic;
   text-align: center;
+}
+
+/* ---------- column filter panel ---------- */
+
+/* The panel is parented to `body`, not to the header cell: the table clips its
+   overflow, so a popover inside `th` would be cut off. */
+.table-filter-panel {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 240px;
+  max-width: calc(100vw - 24px);
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  animation: table-filter-in 120ms ease;
+}
+
+@keyframes table-filter-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.table-filter-search {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-hover);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.table-filter-search::placeholder {
+  color: var(--text-dim);
+}
+
+.table-filter-search:focus {
+  outline: none;
+  border-color: rgba(76, 141, 255, 0.65);
+  box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.16);
+}
+
+.table-filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 280px;
+  padding-right: 2px;
+  overflow-y: auto;
+}
+
+.table-filter-all,
+.table-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1.35;
+}
+
+/* Outside the scrolling list, so it stays visible while the values scroll. */
+.table-filter-all {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-weight: 600;
+}
+
+.table-filter-all:hover,
+.table-filter-option:hover {
+  background: var(--bg-hover);
+}
+
+.table-filter-all input,
+.table-filter-option input {
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.table-filter-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-filter-value.is-blank {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.table-filter-count {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-filter-more {
+  margin: 2px 0 0;
+  padding: 4px 6px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.table-filter-footer {
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.table-filter-clear {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.table-filter-clear:hover,
+.table-filter-clear:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 
 .doc-body img,
@@ -1043,6 +1213,10 @@ a {
     animation-duration: 0.01ms !important;
   }
 
+  .table-filter-panel {
+    animation: none;
+  }
+
   /* The diagram engine measures its own geometry while its transitions run: a
      duration that is merely tiny still creates a transition and the
      measurement comes back distorted (a three-node flowchart laid out 2 500px
@@ -1072,8 +1246,13 @@ a {
     padding: 0;
   }
 
-  .doc-body tr.table-filter-row {
+  .doc-body .table-filter-toggle,
+  .table-filter-panel {
     display: none;
+  }
+
+  .doc-body thead th.table-sortable {
+    padding-right: 12px;
   }
 
   .doc-body thead th.table-sortable::after {
