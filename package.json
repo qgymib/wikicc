@@ -1,0 +1,22 @@
+{
+  "name": "wikicc-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Third-party front-end libraries and the bundler used by the wikicc reader",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "d3-drag": "3.0.0",
+    "d3-force": "3.0.0",
+    "d3-selection": "3.0.0",
+    "d3-zoom": "3.0.0",
+    "mermaid": "12.2.0",
+    "minisearch": "7.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -2,5 +2,59 @@
 name = "wikicc"
 version = "0.1.0"
 edition = "2024"
+description = "Compile a folder of Markdown documents into a self-contained offline HTML reader"
+license = "GPL-3.0-only"
+
+[lib]
+name = "wikicc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wikicc"
+path = "src/main.rs"
 
 [dependencies]
+base64 = "0.23"
+clap = { version = "4", features = ["derive"] }
+icu = "2.4.0"
+mime_guess = "2"
+minijinja = "2"
+pulldown-cmark = "0.13.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+syntect = { version = "5.3.0", default-features = false, features = [
+    "default-fancy",
+    "default-syntaxes",
+    "default-themes",
+    "html",
+] }
+thiserror = "2"
+walkdir = "2.5.0"
+
+[dev-dependencies]
+assert_cmd = "2"
+mailparse = "0.18"
+predicates = "3"
+tempfile = "3"
+
+# Highlighting is regex-bound: compiling the engine with optimisations keeps the
+# 5000-line performance guard of `markdown::highlight` meaningful in the default
+# (unoptimised) dev and test profiles, where it would otherwise take seconds.
+[profile.dev.package.fancy-regex]
+opt-level = 3
+
+[profile.dev.package.regex-automata]
+opt-level = 3
+
+[profile.dev.package.syntect]
+opt-level = 3
+
+[profile.test.package.fancy-regex]
+opt-level = 3
+
+[profile.test.package.regex-automata]
+opt-level = 3
+
+[profile.test.package.syntect]
+opt-level = 3
