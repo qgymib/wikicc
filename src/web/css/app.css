@@ -1090,6 +1090,10 @@ a {
 
 .toc {
   max-height: calc(100vh - 260px);
+  /* The reading line is measured against this panel staying put: an inherited
+     smooth scroll would also animate any browser-driven scroll of the outline
+     and make the highlighted entry trail the document. */
+  scroll-behavior: auto;
   overflow-y: auto;
 }
 

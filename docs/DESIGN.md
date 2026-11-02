@@ -218,6 +218,15 @@ script and the payload is embedded, so neither format depends on a server.
   document ids, the same generator feeds the initial jitter and
   `simulation.randomSource()`, and the simulation is stepped synchronously, so
   the same input always produces the same picture.
+- **Outline scroll-spy.** The active chapter is decided by position, not by
+  visibility: each heading's absolute top is measured once, `pickActive` finds
+  the last heading above a reading line at 25% of the viewport, and scrolling
+  only re-runs that binary search. An intersection-based spy cannot express
+  "between two headings, still inside this section", which is why a long table
+  used to knock the outline back to the first entry. A click or a deep link
+  locks its entry until the jump settles (`scrollend`, or an idle window while
+  the pointer is not mid-gesture), so a smooth scroll does not light up every
+  section it passes.
 - **Theme and diagrams.** Light and dark are one set of CSS custom properties
   on the root element; the toggle only swaps an attribute. Mermaid re-measures
   geometry, so the reduced-motion media query disables transitions outright
@@ -234,7 +243,7 @@ script and the payload is embedded, so neither format depends on a server.
 | --- | --- | --- | --- |
 | Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline |
 | Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, markdown, writers, end to end |
-| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search adapter, table sort/filter model, graph layout |
+| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search adapter, table sort/filter model, graph layout, outline scroll-spy |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the JS suite inside `cargo test` |
 
 Fixtures under `tests/fixtures` are committed sites: `site/` (three documents,
