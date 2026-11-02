@@ -19,6 +19,15 @@ navigate long documents through their chapter outline.
   that document.
 - **Chapter outline** of the current document, highlighting the section being
   read.
+- **Block references**: a link to `other.md#chapter` previews that chapter
+  (with everything nested under it, and nothing above it) when you hover it, and
+  opens the document at that chapter when you click. A chapter that does not
+  exist is a build warning; the reference is then styled as broken in the text
+  itself, and hovering it opens a small notice beside the link naming the
+  document and the chapter that was asked for. Clicking still opens the document
+  from the top, and *then* floats a banner above the article explaining why the
+  chapter was not reached. The banner is as wide as the article, never moves it,
+  goes away after a few seconds and can be dismissed from its close button.
 - **Tables**: click a header to sort; open the funnel on the right of a header
   to tick the values you want, or type to narrow that list, Excel-style.
 - **Theme** toggle (light/dark) and a page that stays usable down to phone width.
@@ -29,6 +38,14 @@ GitHub-flavored Markdown plus footnotes, task lists and strikethrough, rendered
 with stable heading anchors (Unicode-aware, so CJK headings keep their text) and
 a nested chapter outline. Tables become sortable in the reader, and every column
 gets an Excel-style filter list of its distinct values.
+
+`[label](path/to/doc.md#chapter)` addresses one chapter of another document:
+the anchor is matched against that document's headings, so the text the author
+wrote (`#Getting Started`) and the slug the reader emits
+(`#getting-started`) both work, CJK included. The link is rewritten to the
+anchor the reader actually emits, so `#1.4 配色与字体` becomes
+`#14-配色与字体` — the heading id a browser can find.
+`[label](path/to/doc.md)` addresses the document as a whole.
 
 Fenced code blocks are highlighted at build time (no client-side highlighter,
 no grammar files loaded at runtime). A fence tagged `mermaid` becomes a diagram
@@ -140,10 +157,19 @@ suppresses only the summary line.
 
 ### Warnings and `--strict`
 
-Broken links, missing assets and links that escape the input directory are
-warnings: the build still succeeds, the original destination is left untouched
-and the message names the document and line. They are summarized as
-`N warnings (use --strict to fail)`.
+Broken links, missing assets, chapter anchors a document does not have and links
+that escape the input directory are warnings: the build still succeeds, the
+original destination is left untouched and the message names the document and
+line. They are summarized as `N warnings (use --strict to fail)`.
+
+A chapter anchor that does not resolve is still rewritten as a link to its
+document — the chapter is only dropped — so a typo costs the reader a jump to
+the top of the right document instead of a dead link. The chapter the author
+wrote travels with the link as `data-wikicc-missing-anchor`, so the reader can
+still say what was asked for: the reference is marked `doc-link-missing` in the
+text, hovering it opens a notice beside the link, and clicking it floats a
+banner above the article naming the document and the chapter. The banner fades
+after a few seconds and can be closed by hand.
 
 `--strict` turns them into a failure (exit code 1) and reports the offending
 links. The gate runs before anything is written, so a refused build neither

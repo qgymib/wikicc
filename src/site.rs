@@ -28,8 +28,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::assets::AssetTable;
+use crate::markdown::sections::Block;
 use crate::markdown::toc::TocEntry;
-use crate::markdown::{LinkContext, render_document_with};
+use crate::markdown::{LinkContext, render_document_with, sections_of};
 use crate::scan::{Diagnostic, Severity, SourceDoc};
 
 /// One document as the front end sees it.
@@ -49,7 +50,20 @@ pub struct DocModel {
     /// addressed by their opaque placeholder.
     pub html: String,
     /// Chapter outline in document order, nested by heading level.
+    ///
+    /// A display projection of [`DocModel::blocks`] for the outline column: it
+    /// carries the same ids, levels and nesting, and exists because the outline
+    /// is what the reader renders first, before the body. `blocks` is the
+    /// authoritative structure.
     pub toc: Vec<TocEntry>,
+    /// Body HTML split into one block per heading, in document order.
+    ///
+    /// Each block holds its own chapter's markup and its place in the outline,
+    /// so a block reference previews a whole chapter — the block and its
+    /// [`Block::subtree`] — by joining blocks in order, without parsing any
+    /// Markdown in the browser and without repeating a paragraph. Content before
+    /// the first heading belongs to no block.
+    pub blocks: Vec<Block>,
     /// Plain text of the document, for the search index.
     pub text: String,
 }
@@ -159,8 +173,17 @@ pub fn build_edges(links: &[(String, String)]) -> Vec<Edge> {
 ///
 /// Documents are visited in the order they are given, which is scan order, so
 /// the payload lists them exactly once and always in the same order.
+///
+/// Chapter anchors of every document are collected *before* any link is
+/// resolved (see [`sections_of`]): a block reference has to be checked against
+/// the headings of a document that may not have been rendered yet, so the
+/// anchor table cannot be built incrementally alongside the render pass.
 pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
     let mut context = LinkContext::new(root.to_path_buf(), docs.iter().map(|doc| doc.id.clone()));
+    for doc in docs {
+        context.register_anchors(&doc.id, sections_of(&doc.text));
+    }
+
     let mut models: Vec<DocModel> = Vec::with_capacity(docs.len());
     let mut links: Vec<(String, String)> = Vec::new();
 
@@ -178,6 +201,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
             title: doc.title.clone(),
             html: rendered.html,
             toc: rendered.toc,
+            blocks: rendered.blocks,
             text: rendered.text,
         });
     }
@@ -449,11 +473,167 @@ mod tests {
         );
         assert_eq!(
             value["docs"][0].as_object().map(keys),
-            Some(vec!["html", "id", "path", "text", "title", "toc"])
+            Some(vec!["blocks", "html", "id", "path", "text", "title", "toc"])
+        );
+        assert_eq!(
+            value["docs"][0]["blocks"][0].as_object().map(keys),
+            Some(vec!["html", "id", "level", "parent", "subtree"])
         );
         assert_eq!(
             value["stats"].as_object().map(keys),
             Some(vec!["asset_bytes", "assets", "documents"])
+        );
+    }
+
+    #[test]
+    fn documents_carry_one_block_per_heading() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source(
+            "a.md",
+            "A",
+            "intro\n\n# A\n\nbody\n\n## B\n\nmore\n",
+        )];
+
+        let build = build_site("Site", dir.path(), &docs);
+        let blocks = &build.bundle.docs[0].blocks;
+
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|block| (block.id.as_str(), block.level, block.parent))
+                .collect::<Vec<_>>(),
+            [("a", 1, None), ("b", 2, Some(0))],
+            "one block per heading, nested the way the outline nests"
+        );
+        assert_eq!(blocks[0].html, "<h1 id=\"a\">A</h1>\n<p>body</p>\n");
+        assert_eq!(blocks[1].html, "<h2 id=\"b\">B</h2>\n<p>more</p>\n");
+        assert_eq!(
+            blocks[0].subtree,
+            [0, 1],
+            "the chapter is its whole subtree"
+        );
+        assert_eq!(blocks[1].subtree, [1]);
+        assert!(
+            !blocks[0].html.contains("intro"),
+            "content before the first heading is not part of a chapter"
+        );
+    }
+
+    #[test]
+    fn joining_the_root_subtree_reproduces_the_body_html() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source(
+            "a.md",
+            "A",
+            "# A\n\nbody\n\n## B\n\nmore\n\n### C\n\ndeepest\n",
+        )];
+
+        let build = build_site("Site", dir.path(), &docs);
+        let doc = &build.bundle.docs[0];
+        let joined: String = doc.blocks[0]
+            .subtree
+            .iter()
+            .map(|&index| doc.blocks[index].html.as_str())
+            .collect();
+
+        assert_eq!(
+            joined, doc.html,
+            "the blocks and the body must never drift apart"
+        );
+    }
+
+    #[test]
+    fn block_levels_and_nesting_match_the_outline() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source(
+            "a.md",
+            "A",
+            "# A\n\n## A1\n\n### A1a\n\n## A2\n\n# B\n\n## B1\n",
+        )];
+
+        let build = build_site("Site", dir.path(), &docs);
+        let doc = &build.bundle.docs[0];
+
+        // Depth-first over the outline, in the order both structures store.
+        fn flatten(entries: &[TocEntry], out: &mut Vec<(String, u32)>) {
+            for entry in entries {
+                out.push((entry.id.clone(), entry.level));
+                flatten(&entry.children, out);
+            }
+        }
+
+        let mut outline = Vec::new();
+        flatten(&doc.toc, &mut outline);
+
+        assert_eq!(
+            doc.blocks
+                .iter()
+                .map(|block| (block.id.clone(), block.level))
+                .collect::<Vec<_>>(),
+            outline,
+            "the blocks and the outline must describe the same headings"
+        );
+        assert_eq!(
+            doc.blocks[0].subtree,
+            [0, 1, 2, 3],
+            "A and everything under it"
+        );
+        assert_eq!(doc.blocks[4].subtree, [4, 5], "B and everything under it");
+    }
+
+    #[test]
+    fn a_deep_outline_does_not_duplicate_markup_in_the_payload() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // Six nested headings, each with its own paragraph: the outline is as
+        // deep as Markdown allows.
+        let source_text = "# L1\n\none\n\n## L2\n\ntwo\n\n### L3\n\nthree\n\n\
+             #### L4\n\nfour\n\n##### L5\n\nfive\n\n###### L6\n\nsix\n";
+        let docs = [source("a.md", "A", source_text)];
+
+        let build = build_site("Site", dir.path(), &docs);
+        let doc = &build.bundle.docs[0];
+
+        assert_eq!(doc.blocks.len(), 6, "one block per heading");
+
+        // Every paragraph appears exactly once, so the block markup costs one
+        // copy of the body no matter how deep the nesting goes.
+        let markup: usize = doc.blocks.iter().map(|block| block.html.len()).sum();
+        assert_eq!(
+            markup,
+            doc.html.len(),
+            "the body is serialised once, not once per ancestor"
+        );
+
+        let deepest = doc.blocks.last().expect("the last block");
+        assert_eq!(deepest.subtree, [5], "the deepest chapter has no children");
+        assert_eq!(
+            doc.blocks[0].subtree,
+            [0, 1, 2, 3, 4, 5],
+            "the root spans every block below it"
+        );
+    }
+
+    #[test]
+    fn a_block_reference_to_a_chapter_of_another_document_resolves() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [
+            source("a.md", "A", "[b](b.md#Details)\n"),
+            source("b.md", "B", "# B\n\n## Details\n\ntext\n"),
+        ];
+
+        let build = build_site("Site", dir.path(), &docs);
+
+        assert!(
+            build.bundle.docs[0]
+                .html
+                .contains("href=\"#/doc/b.md#details\""),
+            "the route carries the heading id, not the author's spelling: {}",
+            build.bundle.docs[0].html
+        );
+        assert!(
+            build.diagnostics.is_empty(),
+            "a chapter of a later document must resolve: {:?}",
+            build.diagnostics
         );
     }
 

@@ -18,9 +18,15 @@ import * as TableView from "./table-view.js";
 import * as GraphView from "./graph-view.js";
 import * as Diagrams from "./diagrams.js";
 import * as DiagramView from "./diagram-view.js";
+import * as PreviewView from "./preview-view.js";
+import * as Anchor from "./anchor.js";
+import * as Banner from "./banner.js";
 
 /** `localStorage` key holding the explicit theme choice. */
 var THEME_KEY = "wikicc.theme";
+
+/** Class of the banner shown when a chapter anchor does not exist. */
+export var ALERT_CLASS = Banner.BANNER_CLASS;
 
 /** Read and parse the embedded payload. */
 function readPayload() {
@@ -92,6 +98,7 @@ export function start() {
   );
 
   var content = document.getElementById("doc-content");
+  var article = document.getElementById("doc-article");
   var filter = document.getElementById("doc-filter");
   var stats = document.getElementById("stats");
   var inspector = document.getElementById("inspector");
@@ -103,6 +110,33 @@ export function start() {
   var index = Search.createSearch(docs);
   var currentId = null;
   var firstRender = true;
+
+  /**
+   * Chapter a pending navigation has to report even though its route cannot.
+   *
+   * A broken block reference routes to its document without an anchor, so the
+   * href the browser would have followed carries no hint at all. Clicking such
+   * a link stores the authored chapter here, and `render` — which every
+   * navigation ends up in, whether it came from a hash change or a direct
+   * call — shows it once the document is on screen.
+   */
+  var pendingMissing = null;
+
+  var preview = PreviewView.createPreviewView({
+    content: content,
+    byId: byId,
+    theme: currentTheme,
+    onNavigate: navigate,
+    // Only a click reports a broken reference this way. Hovering one opens the
+    // preview panel with a notice instead, because a hint about the link under
+    // the pointer belongs beside it. A click navigates, so its message is
+    // queued for the render it triggers — shown now, it would be dismissed by
+    // the navigation that follows it.
+    onMissingChapter: function (message) {
+      pendingMissing = { docId: message.docId, anchor: message.anchor };
+      showMissingChapter(message);
+    },
+  });
 
   var docList = DocList.createDocList({
     container: document.getElementById("doc-list"),
@@ -154,13 +188,44 @@ export function start() {
     return filter ? Search.search(index, filter.value) : null;
   }
 
-  function scrollToAnchor(anchor) {
-    if (!anchor) {
-      return;
-    }
-    var target = document.getElementById(anchor);
-    if (target) {
-      target.scrollIntoView({ block: "start" });
+  /** Banner for a chapter the current document does not contain. */
+  var banner = Banner.createBanner({
+    container: content,
+    host: document.getElementById("doc-alert"),
+  });
+
+  /**
+   * Say that the document of `message` has no chapter `message.anchor`.
+   *
+   * Only a navigation calls this: a click on a broken reference, whose queued
+   * message `render` replays once the document is on screen. Hovering the same
+   * reference never gets here — it is answered by the preview panel's notice.
+   */
+  function showMissingChapter(message) {
+    banner.show({
+      docId: message && message.docId ? String(message.docId) : "",
+      anchor: message && message.anchor ? String(message.anchor) : "",
+    });
+  }
+
+  /**
+   * Resolve `anchor` against `doc` and the live document.
+   *
+   * The route normally carries the anchor the build wrote, which is the heading
+   * id itself; an artifact from an older build may still carry the author's
+   * spelling, so the payload's outline is consulted as well. `null` means the
+   * document really has no such chapter.
+   */
+  function findAnchor(doc, anchor) {
+    return Anchor.resolveDocAnchor(doc, anchor, function (id) {
+      return document.getElementById(id);
+    });
+  }
+
+  /** Park the document at `anchor`, which `findAnchor` has already resolved. */
+  function scrollToAnchor(found) {
+    if (found && found.element && found.element.scrollIntoView) {
+      found.element.scrollIntoView({ block: "start" });
     }
   }
 
@@ -176,15 +241,24 @@ export function start() {
     // the first paint already carries the sortable headers and filter buttons.
     TableView.enhanceTables(body);
 
+    // Only the article is replaced: the banner slot sits beside it in `content`
+    // for the whole session, so a document change can neither remove it nor
+    // rebuild it, and the article's width never depends on whether it is shown.
     content.textContent = "";
-    content.appendChild(path);
-    content.appendChild(body);
+    content.appendChild(banner.element());
+    content.appendChild(article);
+    article.textContent = "";
+    article.appendChild(path);
+    article.appendChild(body);
 
     // Diagrams are rendered after insertion: the engine measures label sizes
     // with the DOM, which is impossible for a detached subtree. The call is
     // asynchronous and swallows its own failures, so the document is already
     // readable when the SVGs replace their source blocks.
     DiagramView.renderDiagrams(body, currentTheme());
+
+    // The links this document carries are the ones the hover preview watches.
+    preview.tag(body);
   }
 
   /** Re-render the current document's diagrams for the theme now in effect. */
@@ -209,12 +283,18 @@ export function start() {
   function render() {
     var route = Router.resolveRoute(globalThis.location.hash, ids);
 
+    // A message queued by a click is only valid for the render it triggered:
+    // take it now, so a later navigation can never replay it.
+    var queued = pendingMissing;
+    pendingMissing = null;
+
     if (!route.id) {
-      content.textContent = "";
+      banner.hide();
+      article.textContent = "";
       var empty = document.createElement("p");
       empty.className = "doc-empty";
       empty.textContent = "This site has no documents.";
-      content.appendChild(empty);
+      article.appendChild(empty);
       docList.render(null, null);
       return;
     }
@@ -231,7 +311,31 @@ export function start() {
 
     docList.render(filteredIds(), route.id);
     graph.setActive(route.id);
-    scrollToAnchor(route.anchor);
+
+    // A banner explains the *previous* navigation, so it never outlives it.
+    banner.hide();
+
+    // A block reference whose chapter the document does not have still opens
+    // the document, at the top, and says what was asked for. A click on such a
+    // reference leaves no anchor in the route — the build cannot address a
+    // chapter that has no element — so the queued message stands in for it.
+    var wanted = route.anchor
+      ? { docId: doc.id, anchor: route.anchor }
+      : queued;
+
+    var found = findAnchor(doc, route.anchor);
+    if (found) {
+      scrollToAnchor(found);
+    } else if (wanted && wanted.anchor) {
+      showMissingChapter(wanted);
+      // The document is opened from its top: there is no chapter to scroll to.
+      if (typeof globalThis.scrollTo === "function") {
+        globalThis.scrollTo(0, 0);
+      } else {
+        var scrolling = document.scrollingElement || document.documentElement;
+        scrolling.scrollTop = 0;
+      }
+    }
 
     if (!route.known) {
       // Canonicalise the address bar without adding a history entry. Some
@@ -258,8 +362,10 @@ export function start() {
       var next = currentTheme() === "light" ? "dark" : "light";
       applyTheme(next, themeToggle);
       storeTheme(next);
-      // Diagram colours are baked into the SVG, so they need a re-render.
+      // Diagram colours are baked into the SVG, so they need a re-render — in
+      // the document and in an open preview alike.
       refreshDiagrams();
+      preview.refreshDiagrams();
     });
   }
 

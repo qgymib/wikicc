@@ -255,6 +255,198 @@ fn a_diagram_fence_is_rendered_instead_of_highlighted() {
 }
 
 #[test]
+fn a_document_carries_its_blocks_for_the_hover_preview() {
+    let bundle = build(&fixture_root(), "Fixture");
+    let intro = bundle
+        .doc("guide/intro.md")
+        .expect("the fixture has an intro");
+
+    assert_eq!(
+        intro
+            .blocks
+            .iter()
+            .map(|block| block.id.as_str())
+            .collect::<Vec<_>>(),
+        ["introduction", "getting-started", "details"],
+        "one block per heading, in document order"
+    );
+    assert!(
+        intro.blocks[2].html.contains("<h3 id=\"details\">"),
+        "a block starts at its own heading: {}",
+        intro.blocks[2].html
+    );
+    assert!(
+        !intro.blocks[1].html.contains("<h3"),
+        "a block holds its own content only, so no paragraph is repeated: {}",
+        intro.blocks[1].html
+    );
+
+    // The outline is carried by the blocks themselves: `details` is nested
+    // under `getting-started`, which is why previewing the latter shows both.
+    assert_eq!(intro.blocks[2].parent, Some(1));
+    assert_eq!(intro.blocks[1].subtree, [1, 2]);
+
+    let readme = bundle.doc("README.md").expect("the fixture has a readme");
+    assert!(
+        readme
+            .html
+            .contains("href=\"#/doc/guide/intro.md#details\""),
+        "the block reference must address the chapter: {}",
+        readme.html
+    );
+}
+
+#[test]
+fn joining_a_root_subtree_reproduces_the_document_body() {
+    let bundle = build(&fixture_root(), "Fixture");
+    let intro = bundle
+        .doc("guide/intro.md")
+        .expect("the fixture has an intro");
+    let root = intro.blocks.first().expect("the intro has headings");
+
+    let joined: String = root
+        .subtree
+        .iter()
+        .map(|&index| intro.blocks[index].html.as_str())
+        .collect();
+
+    assert_eq!(
+        joined, intro.html,
+        "the blocks and the body are the same markup, so previewing cannot drift"
+    );
+}
+
+#[test]
+fn blocks_never_duplicate_a_paragraph_however_deep_the_outline() {
+    let bundle = build(&fixture_root(), "Fixture");
+
+    for doc in &bundle.docs {
+        let markup: usize = doc.blocks.iter().map(|block| block.html.len()).sum();
+
+        assert_eq!(
+            markup,
+            doc.html.len(),
+            "{}: block markup must cost exactly one body copy",
+            doc.id
+        );
+        assert_eq!(
+            doc.blocks
+                .iter()
+                .flat_map(|block| block.subtree.iter())
+                .filter(|&&index| index == 0)
+                .count(),
+            usize::from(!doc.blocks.is_empty()),
+            "{}: the first block must appear in exactly one subtree",
+            doc.id
+        );
+    }
+}
+
+#[test]
+fn the_page_carries_the_hover_preview() {
+    let bundle = build(&fixture_root(), "Fixture");
+    let page = render(&bundle);
+    let payload: serde_json::Value =
+        serde_json::from_str(payload_of(&page.html)).expect("payload JSON");
+
+    assert_eq!(
+        payload["docs"][1]["blocks"][0]
+            .as_object()
+            .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+        Some(vec!["html", "id", "level", "parent", "subtree"]),
+        "the payload carries the blocks and their place in the outline"
+    );
+
+    // The popover is built at runtime, so the page only has to carry the module
+    // and the class names it looks for. A broken reference reuses the same
+    // panel as a notice, which is why its own markers are checked here rather
+    // than in the banner test: hovering one must never raise the banner.
+    for marker in [
+        "preview-popover",
+        "preview-scroll",
+        "Chapter preview",
+        "data-wikicc-doc-link",
+        "data-missing",
+        "Broken reference",
+        "preview-missing",
+        "Chapter not found",
+    ] {
+        assert!(
+            page.html.contains(marker),
+            "the preview module is missing {marker}"
+        );
+    }
+}
+
+#[test]
+fn the_page_carries_the_missing_chapter_banner() {
+    let bundle = build(&fixture_root(), "Fixture");
+    let page = render(&bundle);
+
+    // The banner explains a block reference whose chapter the target document
+    // does not have: it is built at runtime, so the page only has to carry the
+    // slot it fills and the module that fills it.
+    assert!(
+        page.html
+            .contains(r#"<div class="doc-alert" id="doc-alert""#),
+        "the banner slot must be part of the shell"
+    );
+    assert!(
+        page.html.contains(r#"aria-live="polite""#),
+        "the banner must be announced politely"
+    );
+    for marker in [
+        "doc-alert-close",
+        "doc-alert-code",
+        "Chapter not found in ",
+        "Dismiss",
+    ] {
+        assert!(
+            page.html.contains(marker),
+            "the banner module is missing {marker}"
+        );
+    }
+    assert!(
+        page.html.contains(r#"id="doc-article""#),
+        "the article must sit beside the banner, so a message never reflows it"
+    );
+
+    // The reader can only report a broken reference if the page tells it which
+    // chapter was asked for: the route cannot, because it carries no anchor.
+    for marker in ["data-wikicc-missing-anchor", "doc-link-missing"] {
+        assert!(
+            page.html.contains(marker),
+            "the reader contract is missing {marker}"
+        );
+    }
+}
+
+#[test]
+fn a_route_anchor_is_an_anchor_the_page_emits() {
+    let bundle = build(&fixture_root(), "Fixture");
+    let page = render(&bundle);
+
+    // Every route the payload carries must name an id the article emits; an
+    // author's spelling of a heading (`#Getting Started`) would address nothing
+    // and the reader would report a chapter that is really there as missing.
+    for doc in &bundle.docs {
+        for block in &doc.blocks {
+            assert!(
+                block.html.contains(&format!("id=\"{}\"", block.id)),
+                "{}: a block must carry its own anchor: {}",
+                doc.id,
+                block.html
+            );
+        }
+    }
+
+    assert!(
+        page.html.contains("data-wikicc-doc-link"),
+        "the reader must be able to recognise its own links"
+    );
+}
+
+#[test]
 fn the_page_loads_no_external_resource() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
@@ -497,11 +689,15 @@ fn warnings_are_reported_without_failing_the_build() {
         "stderr: {stderr}"
     );
     assert!(
+        stderr.contains("link target section not found: 'guide/intro.md#no-such-chapter'"),
+        "stderr: {stderr}"
+    );
+    assert!(
         stderr.contains("link target escapes the input directory: '../outside.png'"),
         "stderr: {stderr}"
     );
     assert!(
-        stderr.contains("2 warnings (use --strict to fail)"),
+        stderr.contains("3 warnings (use --strict to fail)"),
         "stderr: {stderr}"
     );
     assert!(out.path().join(HTML_FILE_NAME).is_file());
@@ -520,7 +716,11 @@ fn strict_mode_fails_on_the_link_fixture_and_writes_nothing() {
         "the offending link must be listed: {stderr}"
     );
     assert!(
-        stderr.contains("2 warnings treated as errors (--strict)"),
+        stderr.contains("link target section not found"),
+        "a missing chapter must be listed too: {stderr}"
+    );
+    assert!(
+        stderr.contains("3 warnings treated as errors (--strict)"),
         "stderr: {stderr}"
     );
     assert!(

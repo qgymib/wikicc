@@ -15,6 +15,8 @@ In scope:
 - recursive discovery and compilation of every Markdown document in the folder;
 - local assets (images, audio, video, fonts, PDFs) embedded into the artifact;
 - hash routing with deep links to documents and headings;
+- block references: `[label](doc.md#chapter)` previews the named chapter (and
+  the chapters nested under it) on hover and navigates to it on click;
 - link graph derived from relative Markdown links;
 - table sorting and filtering, full-text search, light/dark theme,
   build-time syntax highlighting and Mermaid diagrams;
@@ -138,7 +140,7 @@ src/options.rs              defaults, lexical path normalization, output-path gu
 src/error.rs                error type and exit-code mapping
 src/pipeline.rs             stage order, strict gate, summary lines
 src/scan.rs                 discovery, ordering, ids, titles, diagnostics
-src/markdown/               render orchestration, slugs, TOC, highlighting, link resolution
+src/markdown/               render orchestration, slugs, TOC, chapter blocks, highlighting, link resolution
 src/assets.rs               read, MIME, hashing, dedupe
 src/site.rs                 payload types and assembly
 src/render.rs               shell assembly (template, CSS, script, payload)
@@ -214,6 +216,74 @@ script and the payload is embedded, so neither format depends on a server.
   byte-identical bundle and force a DOM test environment on logic that is
   otherwise covered by `node --test`. `esbuild` and plain ES modules stay the
   whole front-end build chain.
+- **Block references.** `[label](other.md#chapter)` is a link to a chapter, and
+  the reader treats it as one in two ways. Hovering shows a preview of that
+  chapter *and everything nested under it*; clicking navigates to it. The
+  preview needs no Markdown parser in the browser: the build cut every body into
+  `DocModel.blocks`, one block per heading ending where the next heading starts,
+  and each block records where it sits in the outline — `parent` names the
+  enclosing block, `subtree` lists the block and every block nested under it in
+  document order. A chapter is therefore read with a lookup rather than with a
+  walk: join the blocks `subtree` names and the chapter is reproduced exactly as
+  the source wrote it. `DocModel.toc` still exists, but only as a display
+  projection for the outline column, which renders before the body exists.
+- **A block is a representation, not a limitation.** Ending a block at the next
+  heading *of any level* — rather than at the next heading of the same or a
+  shallower level — is what keeps each paragraph in exactly one block. The
+  alternative, one block per chapter including its descendants, would have
+  serialised a paragraph nested three levels deep into four blocks, so the
+  payload would grow with nesting depth instead of with the document. Because
+  the outline lives on the blocks themselves, that compression costs nothing in
+  expressiveness: the payload carries one body copy plus a few indices per
+  block (`subtree` averages under six entries, bounded by the six heading levels
+  Markdown allows), and `tests/e2e.rs` asserts both that joining a root subtree
+  reproduces `doc.html` byte for byte and that block markup costs exactly one
+  body copy however deep the outline goes.
+- **Chapter anchors are checked at build time.** A block reference's anchor is
+  matched against the target document's headings, which cannot be known while
+  that document is still unrendered — so a lightweight pre-pass walks only the
+  heading events of every document first, then links are resolved in one pass.
+  Both routes build heading text through the same `HeadingText` accumulator and
+  the same `Slugger`, so a chapter the build accepts is a chapter the reader can
+  reach. Matching returns the anchor that hit — exactly, trimmed, or through its
+  slug — and the route carries *that* anchor, because only the emitted slug is
+  an element id: `#1.4 配色与字体` is rewritten to
+  `#14-配色与字体`. An anchor that does not resolve is a warning, and the
+  route is rewritten without it: the reader opens the correct document from the
+  top and shows a banner naming the missing chapter.
+- **A broken reference carries the chapter it asked for as data.** Dropping the
+  anchor keeps the document reachable, but it also throws away the only thing
+  the reader needs to explain the failure, so the authored spelling travels with
+  the link instead: the build writes `class="doc-link-missing"
+  data-wikicc-missing-anchor="<authored chapter>"` and every consumer picks it up
+  from there. The attributes cannot go on the anchor itself — `pulldown-cmark`
+  owns a link's attributes during serialisation — so they are written on an
+  inline `<span hidden>` placed immediately before it, the one shape the
+  serialiser emits without a trailing newline and which stays valid inside a
+  paragraph, a list item or a table cell. The document therefore marks a broken
+  reference statically (`.doc-link-missing`), and nothing about the route
+  grammar changes. Reference definitions resolved through `refdefs` carry the
+  same mark, so a link is treated identically wherever the author wrote it.
+- **Hovering a broken reference shows a notice, not the banner.** There is no
+  chapter to preview, and saying so where the pointer already is answers the
+  question it is asking. The notice reuses the block-reference popover — same
+  element, same positioning, same open/close delays — switched into a second
+  role by `data-missing`: the preview body is emptied and a heading plus one
+  sentence naming the document and the authored chapter take its place. Both
+  roles are written as text into elements that exist from the first hover, so
+  neither a path nor a heading can become markup, and switching between them
+  leaves nothing of the other behind.
+- **The missing-chapter banner is an overlay.** It lives in a slot beside the
+  article inside `.content`, is positioned out of the flow and animated with
+  opacity, so showing or hiding it never reflows the document — a navigation to
+  a chapter that does not exist looks exactly like one that does. It dismisses
+  itself on a timer, has a close button, and is announced politely
+  (`role="status"`), since it explains the navigation the reader just made
+  rather than interrupting them. Only a *click* raises it: the message is queued
+  for the render the click triggers, because rendering a document starts by
+  dismissing whatever the previous navigation had to say. The reader also
+  resolves an anchor through the payload's outline, so an artifact built before
+  the rewrite above still navigates.
 - **Determinism of the graph.** The force layout is seeded from a hash of the
   document ids, the same generator feeds the initial jitter and
   `simulation.randomSource()`, and the simulation is stepped synchronously, so
@@ -243,7 +313,7 @@ script and the payload is embedded, so neither format depends on a server.
 | --- | --- | --- | --- |
 | Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline |
 | Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, markdown, writers, end to end |
-| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search adapter, table sort/filter model, graph layout, outline scroll-spy |
+| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search adapter, table sort/filter model, graph layout, outline scroll-spy, block-reference preview |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the JS suite inside `cargo test` |
 
 Fixtures under `tests/fixtures` are committed sites: `site/` (three documents,
@@ -265,4 +335,5 @@ Quality gates for any change: `cargo fmt --check`,
 | Large media in memory | peak RAM during base64 encoding | single-pass placeholder expansion into one reused buffer, so peak memory is the page plus one asset |
 | Raw HTML passthrough | XSS if untrusted Markdown is compiled | documented as trusted-input behaviour; no sanitizer |
 | No incremental build | full rebuild on every run | acceptable at folder scale; the artifacts are deterministic |
+| A block ends at the next heading of *any* level, so it holds its own content only | none for a consumer: the block carries the outline itself, and `subtree` names the block plus every block nested under it, so a whole chapter is a lookup rather than a walk | the alternative — one block per chapter including its descendants — would repeat every paragraph under every ancestor and grow the payload with nesting depth; the compressed form is one body copy plus a few indices per block, and `tests/e2e.rs` asserts the join reproduces `doc.html` exactly |
 | `package-lock.json` resolves through an internal mirror | publishing outside that network needs a regenerated lockfile | regenerate against the public registry before release |

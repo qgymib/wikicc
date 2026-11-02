@@ -46,12 +46,15 @@
 //! search index.
 //!
 //! The same pass also collects the plain text of the document, which is what
-//! the front end searches. Keeping it here rather than in a second parse means
-//! `html`, `toc` and `text` always describe exactly the same source.
+//! the front end searches, and the chapter blocks the reader previews when a
+//! link to another chapter is hovered (see [`sections`]). Keeping all of them
+//! in one pass means `html`, `toc`, `blocks` and `text` always describe exactly
+//! the same source.
 
 pub mod highlight;
 pub mod links;
 pub(crate) mod refdefs;
+pub mod sections;
 pub mod slug;
 pub mod toc;
 
@@ -62,10 +65,12 @@ use pulldown_cmark::{
 
 use highlight::code_block_html;
 use refdefs::ReferenceDefinition;
+use sections::Block;
 
 pub use links::{LinkClass, LinkContext, LinkResolver, classify};
+pub use sections::Block as ChapterBlock;
 pub use slug::{FALLBACK_SLUG, Slugger, slugify};
-pub use toc::{Heading, TocEntry, build_toc};
+pub use toc::{Heading, HeadingText, TocEntry, build_toc, collapse_whitespace};
 
 /// Markdown extensions compiled in.
 ///
@@ -89,9 +94,52 @@ pub struct RenderedDoc {
     pub html: String,
     /// Chapter outline in document order, nested by heading level.
     pub toc: Vec<TocEntry>,
+    /// Body HTML split into one block per heading, in document order.
+    ///
+    /// A block holds its heading and its own content up to the next heading,
+    /// plus its place in the outline, so a block reference can read a whole
+    /// chapter — itself and everything nested under it — without a second
+    /// parse and without repeating any markup.
+    pub blocks: Vec<Block>,
     /// Plain text of the document: every `Text` and `Code` event, with block
     /// boundaries turned into single spaces and whitespace collapsed.
     pub text: String,
+}
+
+/// Final addressing form of one destination, as the build decides it.
+///
+/// Most destinations only need a string, but a block reference can name a
+/// chapter its target document does not have: the route then cannot carry the
+/// anchor — no element emits it — yet the reader is expected to say *which*
+/// chapter was asked for. The authored spelling therefore travels beside the
+/// route, and the renderer turns it into the attributes the reader looks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkTarget {
+    /// Destination written into the `href` or `src`.
+    pub dest: String,
+    /// Chapter the author named when the target document has no such chapter.
+    ///
+    /// `Some` is the authored spelling, kept verbatim so the message quotes
+    /// the line the author has to fix. Only a chapter mismatch ever sets it.
+    pub missing_anchor: Option<String>,
+}
+
+impl LinkTarget {
+    /// A destination that addresses exactly what was asked for.
+    pub fn new(dest: impl Into<String>) -> Self {
+        Self {
+            dest: dest.into(),
+            missing_anchor: None,
+        }
+    }
+
+    /// This destination, plus the chapter that could not be resolved.
+    pub fn missing_chapter(dest: impl Into<String>, anchor: impl Into<String>) -> Self {
+        Self {
+            dest: dest.into(),
+            missing_anchor: Some(anchor.into()),
+        }
+    }
 }
 
 /// Rewrites link and image destinations while a document is rendered.
@@ -101,8 +149,8 @@ pub struct RenderedDoc {
 /// replaced without touching attribute quoting. `line` is the 1-based source
 /// line the destination starts on, which is what diagnostics quote.
 pub trait LinkRewriter {
-    /// Final destination for `destination`.
-    fn rewrite(&mut self, destination: &str, line: usize) -> String;
+    /// Final target for `destination`.
+    fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget;
 }
 
 /// Leaves every destination exactly as the author wrote it.
@@ -110,8 +158,8 @@ pub trait LinkRewriter {
 pub struct NoRewrite;
 
 impl LinkRewriter for NoRewrite {
-    fn rewrite(&mut self, destination: &str, _line: usize) -> String {
-        destination.to_string()
+    fn rewrite(&mut self, destination: &str, _line: usize) -> LinkTarget {
+        LinkTarget::new(destination)
     }
 }
 
@@ -125,7 +173,7 @@ struct OpenHeading<'a> {
     classes: Vec<CowStr<'a>>,
     attrs: Vec<(CowStr<'a>, Option<CowStr<'a>>)>,
     /// Text seen so far, collapsed once the heading closes.
-    text: String,
+    text: HeadingText,
 }
 
 /// Link whose destination has not been rewritten yet.
@@ -162,12 +210,70 @@ fn rewrite_link_at<R: LinkRewriter + ?Sized>(
     else {
         return;
     };
+
+    let target = rewriter.rewrite(dest_url, line);
+    // A block reference whose chapter does not exist has no anchor to route
+    // to, so the fact has to travel as markup. The `id` slot is the only
+    // place on a link event that carries it: it is unused by the build, and
+    // [`write_positioned_html`] turns it into an [`Event::InlineHtml`] prefix
+    // right before the link's opening tag — still one serialisation pass, and
+    // still no string post-processing.
+    let id = id.clone();
+    let marked = match target.missing_anchor {
+        Some(anchor) => heading_marker(anchor),
+        None => id,
+    };
     events[index] = Event::Start(Tag::Link {
         link_type: *link_type,
-        dest_url: CowStr::from(rewriter.rewrite(dest_url, line)),
+        dest_url: CowStr::from(target.dest),
         title: title.clone(),
-        id: id.clone(),
+        id: marked,
     });
+}
+
+/// Class of a link whose block-reference chapter the target document lacks.
+///
+/// The stylesheet uses it to mark the link in the document itself, so a
+/// broken reference is visible before it is ever hovered or clicked.
+pub const MISSING_LINK_CLASS: &str = "doc-link-missing";
+
+/// Attribute carrying the chapter a broken block reference named.
+///
+/// The route cannot carry it, because no element of the target document emits
+/// that anchor; the reader reads the attribute instead and reports it. Must
+/// stay in step with `MISSING_ANCHOR_ATTRIBUTE` in `src/web/js/links.js`.
+pub const MISSING_ANCHOR_ATTRIBUTE: &str = "data-wikicc-missing-anchor";
+
+/// Prefix of a link's opening tag, standing in for the `id` slot of its event.
+///
+/// [`write_positioned_html`] expands it back into an [`Event::InlineHtml`]
+/// immediately before the link, so nothing here reaches the payload as text.
+pub(crate) const LINK_MARKER_PREFIX: &str = "\u{0}wikicc-link:";
+
+/// Marker recording the extra attributes of a link with a missing chapter.
+pub(crate) fn heading_marker(anchor: String) -> CowStr<'static> {
+    CowStr::Boxed(format!("{LINK_MARKER_PREFIX}{anchor}").into_boxed_str())
+}
+
+/// The chapter a marker carries, or `None` for an `id` that is not one.
+pub(crate) fn marked_anchor(id: &str) -> Option<&str> {
+    id.strip_prefix(LINK_MARKER_PREFIX)
+}
+
+/// Opening-tag attributes for a link whose chapter does not exist.
+///
+/// Built from escaped parts, so the authored chapter cannot terminate the
+/// attribute it is written into.
+fn missing_link_attributes(anchor: &str) -> String {
+    let mut attributes = String::with_capacity(anchor.len() + 64);
+    attributes.push_str(" class=\"");
+    attributes.push_str(MISSING_LINK_CLASS);
+    attributes.push_str("\" ");
+    attributes.push_str(MISSING_ANCHOR_ATTRIBUTE);
+    attributes.push_str("=\"");
+    highlight::escape_into(&mut attributes, anchor);
+    attributes.push('"');
+    attributes
 }
 
 /// Fenced or indented code block whose text is still being collected.
@@ -257,9 +363,12 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
                 id,
             }) => {
                 let line = line_of(&line_starts, range.start);
+                // An image addresses a file, never a chapter, so it has
+                // nothing to report and is written as resolved.
+                let target = rewriter.rewrite(&dest_url, line);
                 events.push(Event::Start(Tag::Image {
                     link_type,
-                    dest_url: CowStr::from(rewriter.rewrite(&dest_url, line)),
+                    dest_url: CowStr::from(target.dest),
                     title,
                     id,
                 }));
@@ -291,8 +400,8 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
                         text.truncate(keep);
                         text.push_str(CLOSING_BRACKET);
                         if let Some(heading) = open.as_mut() {
-                            heading.text.truncate(keep.min(heading.text.len()));
-                            heading.text.push_str(CLOSING_BRACKET);
+                            heading.text.truncate(keep);
+                            heading.text.push(CLOSING_BRACKET);
                         }
                         // The two links are settled; the pending slot is free.
                         pending = None;
@@ -342,12 +451,12 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
                     level,
                     classes,
                     attrs,
-                    text: String::new(),
+                    text: HeadingText::new(),
                 });
             }
             Event::End(TagEnd::Heading(level)) => {
                 if let Some(heading) = open.take() {
-                    let heading_text = collapse_whitespace(&heading.text);
+                    let heading_text = heading.text.finish();
                     let slug = slugger.unique(&heading_text);
                     events[heading.index] = Event::Start(Tag::Heading {
                         level: heading.level,
@@ -390,7 +499,7 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
                     block.code.push_str(&value);
                 } else {
                     if let Some(heading) = open.as_mut() {
-                        heading.text.push_str(&value);
+                        heading.text.push(&value);
                     }
                     events.push(Event::Text(value));
                 }
@@ -398,14 +507,14 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
             Event::Code(value) => {
                 text.push_str(&value);
                 if let Some(heading) = open.as_mut() {
-                    heading.text.push_str(&value);
+                    heading.text.push(&value);
                 }
                 events.push(Event::Code(value));
             }
             other @ (Event::SoftBreak | Event::HardBreak) => {
                 text.push(' ');
                 if let Some(heading) = open.as_mut() {
-                    heading.text.push(' ');
+                    heading.text.push_break();
                 }
                 events.push(other);
             }
@@ -432,6 +541,12 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
                 {
                     separate(&mut text);
                 }
+                // An image's alt text and a footnote reference also belong to a
+                // heading that wraps them, so the outline says `Logo` and not
+                // an empty heading.
+                if let Some(heading) = open.as_mut() {
+                    heading.text.push_other(inline_text(&other));
+                }
                 if code_block.is_none() {
                     events.push(other);
                 }
@@ -452,13 +567,209 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
     );
 
     let mut html = String::with_capacity(source.len());
-    push_html(&mut html, events.into_iter());
+    let blocks = write_positioned_html(&events, &headings, &mut html);
 
     RenderedDoc {
         html,
         toc: build_toc(&headings),
+        blocks,
         text: collapse_whitespace(&text),
     }
+}
+
+/// Plain text an inline event other than text, code or a break contributes.
+///
+/// Only the two events that carry author-visible characters are considered:
+/// an image contributes its alt text and a footnote reference its marker.
+/// Everything else is markup, so it contributes nothing and a heading made of
+/// pure emphasis keeps the text inside it.
+fn inline_text<'a>(event: &'a Event<'_>) -> &'a str {
+    match event {
+        Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image) => "",
+        Event::FootnoteReference(name) => name,
+        Event::InlineHtml(html) | Event::Html(html) => html,
+        _ => "",
+    }
+}
+
+/// Anchors of every heading in `source`, in document order.
+///
+/// A link may point at a chapter of a document that has not been rendered yet
+/// (or at any document at all, given that rendering order follows the scan),
+/// so the anchor set has to be known *before* the link resolver runs. This pass
+/// therefore walks only the heading events: it skips highlighting, code
+/// buffering, text collection and every link, which keeps the cost far below a
+/// second full render.
+///
+/// The result must match the anchors [`render_document_with`] emits exactly,
+/// because a mismatch would either report a chapter that cannot be reached or
+/// accept one that does not exist. Both paths use [`HeadingText`] and
+/// [`Slugger`], and the parser options are shared, so the only thing to keep in
+/// step is which events feed the heading text — which is why that logic is not
+/// duplicated here but expressed by [`HeadingText`]'s methods.
+///
+/// Raw HTML passthrough is a documented build-input trust decision, so a
+/// `<h2>` written by hand is not a heading for either pass and the two stay
+/// consistent.
+pub fn sections_of(source: &str) -> Vec<String> {
+    let mut slugger = Slugger::new();
+    let mut open: Option<HeadingText> = None;
+    let mut anchors: Vec<String> = Vec::new();
+
+    for event in Parser::new_ext(source, PARSER_OPTIONS) {
+        match event {
+            Event::Start(Tag::Heading { .. }) => open = Some(HeadingText::new()),
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(text) = open.take() {
+                    anchors.push(slugger.unique(&text.finish()));
+                }
+            }
+            Event::Text(value) | Event::Code(value) => {
+                if let Some(heading) = open.as_mut() {
+                    heading.push(&value);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some(heading) = open.as_mut() {
+                    heading.push_break();
+                }
+            }
+            other => {
+                if let Some(heading) = open.as_mut() {
+                    heading.push_other(inline_text(&other));
+                }
+            }
+        }
+    }
+
+    anchors
+}
+
+/// Marker placed before a heading to record where its section starts.
+///
+/// A comment rather than a tag, and one no Markdown source can carry: raw HTML
+/// from the document is passed through verbatim, so a marker an author could
+/// write would move every boundary after it.
+const SECTION_MARKER_PREFIX: &str = "<!--wikicc-section:";
+/// End of the marker.
+const SECTION_MARKER_SUFFIX: &str = "-->";
+
+/// Marker announcing section `index`.
+fn section_marker(index: usize) -> Box<str> {
+    format!("{SECTION_MARKER_PREFIX}{index}{SECTION_MARKER_SUFFIX}").into_boxed_str()
+}
+
+/// Serialise `events` into `html`, reporting one [`Block`] per heading.
+///
+/// `push_html` is a stateful writer — a table cell's closing tag depends on the
+/// event that follows it, so serialising one event at a time produces different
+/// markup — which is why the body is produced in a single call. Byte offsets
+/// come from a marker written before every heading: a block starts where its
+/// marker started, and the markers are cut out afterwards together with the
+/// blank lines the serialiser wrapped them in. Only those offsets are used, so
+/// the HTML is exactly what the renderer produced before blocks existed.
+///
+/// `headings` supplies each block's level, in the same document order the
+/// markers are written in: the two lists are read positionally, and a heading
+/// the render pass did not record simply has no level and is dropped by
+/// [`sections::slice`] rather than guessed.
+///
+/// The same single pass expands the marker [`rewrite_link_at`] parks in a
+/// broken link's `id`: it becomes an inline `<span class hidden>` that carries
+/// the attributes the reader looks for, right before the link's opening tag.
+/// A bare inline tag is the one shape `push_html` writes from an
+/// [`Event::InlineHtml`] without a trailing newline, so it lands *inside* the
+/// paragraph the link belongs to, and stays syntactically valid everywhere it
+/// can appear — unlike a `<div>`, which would be invalid inside a table cell.
+fn write_positioned_html(
+    events: &[Event<'_>],
+    headings: &[Heading],
+    html: &mut String,
+) -> Vec<Block> {
+    let mut marked: Vec<Event<'_>> = Vec::with_capacity(events.len() + 8);
+    let mut ids: Vec<String> = Vec::new();
+    let mut levels: Vec<u32> = Vec::new();
+
+    for event in events {
+        if let Event::Start(Tag::Heading { id, .. }) = event {
+            marked.push(Event::Html(CowStr::Boxed(section_marker(ids.len()))));
+            ids.push(id.as_deref().unwrap_or_default().to_string());
+            // `headings` is in the same order as the heading events, because
+            // both are appended as the document is parsed.
+            levels.extend(headings.get(ids.len() - 1).map(|heading| heading.level));
+        }
+
+        if let Event::Start(Tag::Link { id: marker, .. }) = event
+            && let Some(anchor) = marked_anchor(marker)
+        {
+            let attributes = missing_link_attributes(anchor);
+            let mut opening = String::with_capacity(attributes.len() + 28);
+            opening.push_str("<span hidden");
+            opening.push_str(&attributes);
+            opening.push_str("></span>");
+            marked.push(Event::InlineHtml(CowStr::from(opening)));
+        }
+
+        marked.push(event.clone());
+    }
+
+    push_html(html, marked.into_iter());
+
+    // One `(marker_start, cut_end)` pair per heading, in document order, where
+    // `cut_end` is just past the blank lines the serialiser wrapped the marker
+    // in — which is exactly where the heading itself starts.
+    let mut found: Vec<(usize, usize)> = Vec::with_capacity(ids.len());
+    let mut cursor = 0;
+
+    for index in 0..ids.len() {
+        let marker = section_marker(index);
+        let Some(position) = find_from(html, &marker, cursor) else {
+            break;
+        };
+        let cut_end = skip_newlines(html, position + marker.len());
+        found.push((position, cut_end));
+        cursor = position + marker.len();
+    }
+
+    found.truncate(ids.len());
+    if found.is_empty() {
+        return Vec::new();
+    }
+
+    // Cut every marker out of the body, together with the blank lines the
+    // serialiser wrapped it in, so a document that opens with a heading still
+    // opens with that heading and no paragraph gains a stray blank line.
+    let mut without_markers = String::with_capacity(html.len());
+    let mut copied = 0;
+    for &(start, end) in &found {
+        without_markers.push_str(&html[copied..start]);
+        copied = end;
+    }
+    without_markers.push_str(&html[copied..]);
+
+    // A heading starts exactly where its marker started, once the markers
+    // before it are gone: everything between the two was cut.
+    let mut starts: Vec<usize> = Vec::with_capacity(found.len());
+    let mut removed = 0;
+    for &(marker_start, heading_start) in &found {
+        starts.push(marker_start - removed);
+        removed += heading_start - marker_start;
+    }
+
+    let blocks = sections::slice(&without_markers, &starts, &ids, &levels);
+    html.clone_from(&without_markers);
+    blocks
+}
+
+/// First offset at or after `from` that is not a newline.
+fn skip_newlines(html: &str, from: usize) -> usize {
+    let rest = &html[from..];
+    from + (rest.len() - rest.trim_start_matches(['\n', '\r']).len())
+}
+
+/// Start of `needle` in `haystack`, searching from `from`.
+fn find_from(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    haystack.get(from..)?.find(needle).map(|index| index + from)
 }
 
 /// Append one space unless the buffer is empty or already ends with whitespace.
@@ -779,11 +1090,6 @@ fn separates_words(tag: &Tag<'_>) -> bool {
     )
 }
 
-/// Collapse runs of whitespace into single spaces and trim the ends.
-fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 /// Byte offsets of every line start in `source`, always beginning with `0`.
 ///
 /// Built once per document so a diagnostic can name the line of any event with
@@ -812,6 +1118,20 @@ mod tests {
 
     fn heading_ids(doc: &RenderedDoc) -> Vec<&str> {
         doc.toc.iter().map(|entry| entry.id.as_str()).collect()
+    }
+
+    /// Every anchor in document order, including nested outline entries.
+    fn doc_anchor_ids(doc: &RenderedDoc) -> Vec<String> {
+        fn walk(entries: &[TocEntry], into: &mut Vec<String>) {
+            for entry in entries {
+                into.push(entry.id.clone());
+                walk(&entry.children, into);
+            }
+        }
+
+        let mut ids = Vec::new();
+        walk(&doc.toc, &mut ids);
+        ids
     }
 
     #[test]
@@ -905,6 +1225,113 @@ mod tests {
 
         assert!(doc.toc.is_empty());
         assert!(!doc.html.contains("<h1"));
+    }
+
+    #[test]
+    fn blocks_follow_the_heading_order_and_carry_their_level() {
+        let doc = render_document("# A\n\none\n\n## A1\n\ntwo\n\n# B\n\nthree\n");
+
+        assert_eq!(
+            doc.blocks
+                .iter()
+                .map(|block| (block.id.as_str(), block.level, block.parent))
+                .collect::<Vec<_>>(),
+            [("a", 1, None), ("a1", 2, Some(0)), ("b", 1, None),],
+            "the blocks mirror the outline the toc builds"
+        );
+        assert_eq!(doc.blocks[0].html, "<h1 id=\"a\">A</h1>\n<p>one</p>\n");
+        assert_eq!(doc.blocks[1].html, "<h2 id=\"a1\">A1</h2>\n<p>two</p>\n");
+        assert_eq!(doc.blocks[2].html, "<h1 id=\"b\">B</h1>\n<p>three</p>\n");
+    }
+
+    #[test]
+    fn the_renderer_reports_a_whole_chapter_through_the_block_subtree() {
+        let doc = render_document("# A\n\none\n\n## A1\n\ntwo\n\n## A2\n\nthree\n\n# B\n\nfour\n");
+        let chapter: String = doc.blocks[0]
+            .subtree
+            .iter()
+            .map(|&index| doc.blocks[index].html.as_str())
+            .collect();
+
+        assert_eq!(doc.blocks[0].subtree, [0, 1, 2]);
+        assert_eq!(doc.blocks[3].subtree, [3], "B has no children");
+        assert!(
+            chapter.starts_with("<h1 id=\"a\">A</h1>"),
+            "chapter: {chapter}"
+        );
+        assert!(
+            chapter.ends_with("<p>three</p>\n"),
+            "the chapter stops before the next root: {chapter}"
+        );
+        assert!(
+            !chapter.contains("four"),
+            "a sibling root is not part of the chapter"
+        );
+    }
+
+    #[test]
+    fn blocks_leave_the_body_html_untouched() {
+        let source =
+            "# Title\n\npara with `code` and [link](a.md)\n\n| a | b |\n| - | - |\n| 1 | 2 |\n";
+        let doc = render_document(source);
+
+        assert_eq!(
+            doc.html,
+            "<h1 id=\"title\">Title</h1>\n\
+             <p>para with <code>code</code> and <a href=\"a.md\">link</a></p>\n\
+             <table><thead><tr><th>a</th><th>b</th></tr></thead><tbody>\n\
+             <tr><td>1</td><td>2</td></tr>\n\
+             </tbody></table>\n",
+            "the block slicing must not disturb the document body"
+        );
+        assert!(
+            !doc.html.contains("wikicc-section"),
+            "no marker may survive into the body: {}",
+            doc.html
+        );
+        assert_eq!(
+            doc.blocks[0].html, doc.html,
+            "a document with a single heading is one block"
+        );
+    }
+
+    #[test]
+    fn a_document_without_headings_has_no_blocks_but_keeps_its_body() {
+        let doc = render_document("just text\n");
+
+        assert!(doc.blocks.is_empty());
+        assert_eq!(doc.html, "<p>just text</p>\n");
+    }
+
+    #[test]
+    fn blocks_carry_rewritten_links() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with("# A\n\n[gone](missing.md)\n", &mut recorder);
+
+        assert!(
+            doc.blocks[0].html.contains("href=\"rewritten:missing.md\""),
+            "block: {}",
+            doc.blocks[0].html
+        );
+    }
+
+    #[test]
+    fn heading_anchors_are_collected_in_one_pre_pass() {
+        let source = "# A\n\n## Notes\n\n## Notes\n\n### 第一章\n\n## ![Logo](i.png)\n";
+
+        let anchors = sections_of(source);
+
+        assert_eq!(
+            anchors,
+            ["a", "notes", "notes-1", "第一章", "logo"],
+            "the pre-pass must agree with the renderer's slugs"
+        );
+        assert_eq!(
+            anchors,
+            doc_anchor_ids(&render_document(source)),
+            "both paths must produce the same anchors"
+        );
     }
 
     #[test]
@@ -1024,9 +1451,21 @@ mod tests {
     }
 
     impl LinkRewriter for Recorder {
-        fn rewrite(&mut self, destination: &str, line: usize) -> String {
+        fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget {
             self.seen.push((destination.to_string(), line));
-            format!("rewritten:{destination}")
+            LinkTarget::new(format!("rewritten:{destination}"))
+        }
+    }
+
+    /// Rewriter that reports every destination as an unknown chapter, so the
+    /// markup a broken block reference produces can be inspected directly.
+    struct Missing {
+        anchor: String,
+    }
+
+    impl LinkRewriter for Missing {
+        fn rewrite(&mut self, destination: &str, _line: usize) -> LinkTarget {
+            LinkTarget::missing_chapter(destination.to_string(), self.anchor.clone())
         }
     }
 
@@ -1057,6 +1496,80 @@ mod tests {
         );
         assert!(
             doc.html.contains("href=\"rewritten:b.md#x\""),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_marked_link_carries_the_authored_chapter_before_its_opening_tag() {
+        let mut missing = Missing {
+            anchor: "1.4 配色与字体".to_string(),
+        };
+
+        let doc = render_document_with("see [x](b.md)\n", &mut missing);
+
+        assert_eq!(
+            doc.html,
+            "<p>see <span hidden class=\"doc-link-missing\" \
+             data-wikicc-missing-anchor=\"1.4 配色与字体\"></span><a href=\"b.md\">x</a></p>\n",
+            "the mark must sit inside the paragraph, right before the link"
+        );
+    }
+
+    #[test]
+    fn a_marked_link_composes_with_emphasis_and_tables() {
+        let mut missing = Missing {
+            anchor: "gone".to_string(),
+        };
+
+        let doc = render_document_with(
+            "**bold [x](b.md)** and `code`\n\n| a |\n| - |\n| [x](b.md) |\n",
+            &mut missing,
+        );
+
+        assert_eq!(
+            doc.html.matches("data-wikicc-missing-anchor").count(),
+            2,
+            "inline markup and table cells both keep the mark: {}",
+            doc.html
+        );
+        assert!(
+            doc.html
+                .contains("<td><span hidden class=\"doc-link-missing\""),
+            "a cell keeps its inline shape: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn the_authored_chapter_cannot_break_out_of_its_attribute() {
+        let mut missing = Missing {
+            anchor: "a\"b&c<d>".to_string(),
+        };
+
+        let doc = render_document_with("[x](b.md)\n", &mut missing);
+
+        assert!(
+            doc.html
+                .contains("data-wikicc-missing-anchor=\"a&quot;b&amp;c&lt;d&gt;\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("<d>"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn an_unmarked_document_has_no_extra_markup() {
+        let doc = render_document_with("[x](b.md)\n", &mut NoRewrite);
+
+        assert!(
+            !doc.html.contains("span"),
+            "a plain destination writes no mark: {}",
+            doc.html
+        );
+        assert_eq!(
+            doc.html, "<p><a href=\"b.md\">x</a></p>\n",
             "html: {}",
             doc.html
         );

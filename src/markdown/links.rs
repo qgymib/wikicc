@@ -13,6 +13,27 @@
 //! | [`LinkClass::LocalAsset`] | `wikicc-asset:<hash>` | warning, unchanged |
 //! | [`LinkClass::Missing`] | unchanged | warning |
 //!
+//! A chapter mismatch is the one failure whose route still resolves: the
+//! document exists, so the destination is rewritten as a route to it, and the
+//! chapter the author wrote comes back beside it as
+//! [`LinkTarget::missing_anchor`] for the reader to report.
+//!
+//! A block reference — `[label](other.md#chapter)` — carries a chapter anchor,
+//! which is checked against the target document's headings: a destination that
+//! names a chapter the target does not have is reported as
+//! [`MissingReason::UnknownAnchor`]. The route is still rewritten without the
+//! anchor — clicking it opens the document at the top — and the authored
+//! chapter is returned in [`LinkTarget::missing_anchor`], which is what lets the
+//! reader mark the link and say what was asked for; `--strict` turns the
+//! author's typo into a build failure.
+//!
+//! A chapter that *does* exist is addressed by the anchor the reader emits, not
+//! by the text the author wrote. Authors name a heading (`#1.4 配色与字体`,
+//! `#Getting Started`) while the renderer emits its slug (`14-配色与字体`,
+//! `getting-started`), and only the slug is an element id a browser can find, so
+//! the anchor written into the route is the one that matched — see
+//! [`LinkContext::match_anchor`].
+//!
 //! Rewriting happens on `pulldown-cmark` events (see
 //! [`crate::markdown::render_document_with`]), never on serialised HTML, so
 //! attribute quoting and nesting cannot be corrupted.
@@ -22,11 +43,11 @@
 //! filesystem. A path that would leave the input root is reported and skipped,
 //! which keeps a document from addressing files outside the compiled folder.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::assets::{ASSET_PLACEHOLDER_PREFIX, AssetTable};
-use crate::markdown::LinkRewriter;
+use crate::markdown::{LinkRewriter, LinkTarget};
 use crate::scan::Diagnostic;
 
 /// Prefix of the hash route that addresses one document.
@@ -42,6 +63,8 @@ pub enum MissingReason {
     EscapesRoot,
     /// The target names a Markdown document that was not scanned.
     UnknownDocument,
+    /// The target names a chapter the target document does not have.
+    UnknownAnchor,
     /// The target names a file that does not exist.
     UnknownAsset,
     /// The target exists but could not be read.
@@ -216,6 +239,13 @@ pub fn doc_dir(doc_id: &str) -> &str {
 pub struct LinkContext {
     root: PathBuf,
     docs: BTreeSet<String>,
+    /// Heading anchors per document id.
+    ///
+    /// A document without an entry has no headings, so every chapter anchor
+    /// pointing at it is unknown. The table is filled before the first document
+    /// is resolved, because a block reference may name a chapter of a document
+    /// that has not been rendered yet.
+    anchors: BTreeMap<String, BTreeSet<String>>,
     assets: AssetTable,
     diagnostics: Vec<Diagnostic>,
 }
@@ -226,9 +256,37 @@ impl LinkContext {
         Self {
             root: root.into(),
             docs: docs.into_iter().collect(),
+            anchors: BTreeMap::new(),
             assets: AssetTable::new(),
             diagnostics: Vec::new(),
         }
+    }
+
+    /// Record the heading anchors of `doc_id`.
+    ///
+    /// Idempotent: registering the same document twice keeps the last set, so a
+    /// caller that renders a document after collecting its anchors needs no
+    /// bookkeeping.
+    pub fn register_anchors(&mut self, doc_id: &str, anchors: impl IntoIterator<Item = String>) {
+        self.anchors
+            .insert(doc_id.to_string(), anchors.into_iter().collect());
+    }
+
+    /// Whether `doc_id` has a heading anchored `anchor`, in any spelling.
+    pub fn has_anchor(&self, doc_id: &str, anchor: &str) -> bool {
+        self.match_anchor(doc_id, anchor).is_some()
+    }
+
+    /// The heading anchor of `doc_id` that `anchor` addresses.
+    ///
+    /// Authors write a heading's text (`#1.4 配色与字体`,
+    /// `#Getting Started`) while the reader emits its slug
+    /// (`14-配色与字体`, `getting-started`), so the same chapter has
+    /// several spellings. The spelling that matches a heading id verbatim wins,
+    /// followed by its trimmed form and then its slug; `None` means the document
+    /// has no such chapter.
+    pub fn match_anchor(&self, doc_id: &str, anchor: &str) -> Option<&str> {
+        match_anchor(&self.anchors, doc_id, anchor)
     }
 
     /// Input directory every relative path is resolved against.
@@ -262,6 +320,7 @@ impl LinkContext {
         LinkResolver {
             root: &self.root,
             docs: &self.docs,
+            anchors: &self.anchors,
             assets: &mut self.assets,
             diagnostics: &mut self.diagnostics,
             doc_id: doc_id.to_string(),
@@ -278,6 +337,7 @@ impl LinkContext {
 pub struct LinkResolver<'a> {
     root: &'a Path,
     docs: &'a BTreeSet<String>,
+    anchors: &'a BTreeMap<String, BTreeSet<String>>,
     assets: &'a mut AssetTable,
     diagnostics: &'a mut Vec<Diagnostic>,
     doc_id: String,
@@ -292,16 +352,20 @@ pub struct LinkResolver<'a> {
 impl LinkResolver<'_> {
     /// Final addressing form of `destination`, reporting anything that cannot
     /// be resolved as a warning while leaving the destination untouched.
-    pub fn resolve(&mut self, destination: &str, line: usize) -> String {
+    ///
+    /// The returned [`LinkTarget`] additionally says whether the destination
+    /// named a chapter its document does not have, which is the one failure the
+    /// reader can still explain: the document itself did resolve.
+    pub fn resolve(&mut self, destination: &str, line: usize) -> LinkTarget {
         match classify(destination) {
-            LinkClass::External | LinkClass::Anchor => destination.to_string(),
+            LinkClass::External | LinkClass::Anchor => LinkTarget::new(destination),
             LinkClass::InternalDoc { path, anchor } => {
                 self.resolve_doc(destination, line, &path, anchor.as_deref())
             }
             LinkClass::LocalAsset { path } => self.resolve_asset(destination, line, &path),
             LinkClass::Missing { reason } => {
                 self.report(line, missing_message(reason, destination));
-                destination.to_string()
+                LinkTarget::new(destination)
             }
         }
     }
@@ -326,13 +390,13 @@ impl LinkResolver<'_> {
         line: usize,
         path: &str,
         anchor: Option<&str>,
-    ) -> String {
+    ) -> LinkTarget {
         let Some(id) = join_relative(doc_dir(&self.doc_id), path) else {
             self.report(
                 line,
                 missing_message(MissingReason::EscapesRoot, destination),
             );
-            return destination.to_string();
+            return LinkTarget::new(destination);
         };
 
         if !self.docs.contains(&id) {
@@ -340,25 +404,47 @@ impl LinkResolver<'_> {
                 line,
                 missing_message(MissingReason::UnknownDocument, destination),
             );
-            return destination.to_string();
+            return LinkTarget::new(destination);
         }
 
         self.targets.push(id.clone());
         let mut route = format!("{ROUTE_PREFIX}{}", encode_route(&id));
+
+        // A block reference names a chapter of the target document. The route
+        // carries the anchor the document actually emits — the slug — not the
+        // author's spelling of the heading: `#1.4 配色与字体…` would address an
+        // element id that never exists, so the reader would open the document
+        // and report the chapter as missing.
         if let Some(anchor) = anchor.filter(|anchor| !anchor.is_empty()) {
-            route.push('#');
-            route.push_str(&encode_route(anchor));
+            match match_anchor(self.anchors, &id, anchor) {
+                Some(matched) => {
+                    route.push('#');
+                    route.push_str(&encode_route(matched));
+                }
+                None => {
+                    // The reader would otherwise scroll nowhere and report a
+                    // chapter it can never reach; dropping the anchor keeps the
+                    // document reachable from the top instead, and handing the
+                    // authored spelling back lets it say *which* chapter the
+                    // reference asked for.
+                    self.report(
+                        line,
+                        missing_message(MissingReason::UnknownAnchor, destination),
+                    );
+                    return LinkTarget::missing_chapter(route, anchor);
+                }
+            }
         }
-        route
+        LinkTarget::new(route)
     }
 
-    fn resolve_asset(&mut self, destination: &str, line: usize, path: &str) -> String {
+    fn resolve_asset(&mut self, destination: &str, line: usize, path: &str) -> LinkTarget {
         let Some(relative) = join_relative(doc_dir(&self.doc_id), path) else {
             self.report(
                 line,
                 missing_message(MissingReason::EscapesRoot, destination),
             );
-            return destination.to_string();
+            return LinkTarget::new(destination);
         };
 
         // `relative` is root-relative and free of `..`, so the joined path
@@ -366,7 +452,7 @@ impl LinkResolver<'_> {
         let absolute = self.root.join(relative);
 
         match self.assets.insert_file(&absolute) {
-            Ok(hash) => format!("{ASSET_PLACEHOLDER_PREFIX}{hash}"),
+            Ok(hash) => LinkTarget::new(format!("{ASSET_PLACEHOLDER_PREFIX}{hash}")),
             Err(error) => {
                 // A missing file is the author's mistake and needs no OS
                 // wording; anything else (permissions, a directory in the way)
@@ -381,7 +467,7 @@ impl LinkResolver<'_> {
                     ),
                 };
                 self.report(line, message);
-                destination.to_string()
+                LinkTarget::new(destination)
             }
         }
     }
@@ -395,9 +481,37 @@ impl LinkResolver<'_> {
 }
 
 impl LinkRewriter for LinkResolver<'_> {
-    fn rewrite(&mut self, destination: &str, line: usize) -> String {
+    fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget {
         self.resolve(destination, line)
     }
+}
+
+/// The registered anchor of `doc_id` that `anchor` addresses, if any.
+///
+/// Authors write a heading's text (`#1.4 配色与字体`, `#Getting
+/// Started`) while the renderer emits its slug (`14-配色与字体`,
+/// `getting-started`), so one chapter has several spellings. The spelling that
+/// matches a heading id verbatim wins, then its trimmed form, then its slug —
+/// the order is what keeps an authored slug (`#第一章`) from being re-slugged
+/// while a bare heading text still resolves.
+fn match_anchor<'a>(
+    anchors: &'a BTreeMap<String, BTreeSet<String>>,
+    doc_id: &str,
+    anchor: &str,
+) -> Option<&'a str> {
+    let headings = anchors.get(doc_id)?;
+
+    if let Some(exact) = headings.get(anchor) {
+        return Some(exact.as_str());
+    }
+
+    if let Some(exact) = headings.get(anchor.trim()) {
+        return Some(exact.as_str());
+    }
+
+    headings
+        .get(&crate::markdown::slugify(anchor))
+        .map(String::as_str)
 }
 
 /// Human-readable reason for a rejected destination.
@@ -411,6 +525,9 @@ fn missing_message(reason: MissingReason, destination: &str) -> String {
         }
         MissingReason::UnknownDocument => {
             format!("link target not found: '{destination}'")
+        }
+        MissingReason::UnknownAnchor => {
+            format!("link target section not found: '{destination}'")
         }
         MissingReason::UnknownAsset => format!("asset not found: '{destination}'"),
         MissingReason::UnreadableAsset => format!("cannot read asset '{destination}'"),
@@ -693,26 +810,183 @@ mod tests {
     fn internal_documents_become_hash_routes() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut context = context(dir.path(), &["guide/intro.md", "other.md"]);
+        context.register_anchors("other.md", ["section".to_string()]);
         let mut resolver = context.for_doc("guide/intro.md");
 
-        assert_eq!(resolver.resolve("../other.md", 1), "#/doc/other.md");
+        assert_eq!(resolver.resolve("../other.md", 1).dest, "#/doc/other.md");
         assert_eq!(
-            resolver.resolve("../other.md#section", 2),
+            resolver.resolve("../other.md#section", 2).dest,
             "#/doc/other.md#section"
         );
-        assert_eq!(resolver.resolve("intro.md", 3), "#/doc/guide/intro.md");
+        assert_eq!(resolver.resolve("intro.md", 3).dest, "#/doc/guide/intro.md");
     }
 
     #[test]
     fn document_routes_encode_non_ascii_ids_and_anchors() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut context = context(dir.path(), &["中文/说明.md"]);
+        context.register_anchors("中文/说明.md", ["第一节".to_string()]);
         let mut resolver = context.for_doc("中文/说明.md");
 
         assert_eq!(
-            resolver.resolve("说明.md#第一节", 1),
+            resolver.resolve("说明.md#第一节", 1).dest,
             "#/doc/%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E.md#%E7%AC%AC%E4%B8%80%E8%8A%82"
         );
+    }
+
+    #[test]
+    fn a_block_reference_to_an_unknown_chapter_warns_and_drops_the_anchor() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        context.register_anchors("b.md", ["existing".to_string()]);
+        let mut resolver = context.for_doc("a.md");
+
+        assert_eq!(
+            resolver.resolve("b.md#missing", 5).dest,
+            "#/doc/b.md",
+            "the document is still reachable; the chapter is not"
+        );
+        assert_eq!(
+            resolver.resolve("b.md#existing", 6).dest,
+            "#/doc/b.md#existing"
+        );
+        drop(resolver);
+
+        assert_eq!(
+            messages(&context),
+            ["warning: a.md:5: link target section not found: 'b.md#missing'".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_unknown_chapter_travels_with_the_route_as_data() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        context.register_anchors("b.md", ["existing".to_string()]);
+        let mut resolver = context.for_doc("a.md");
+
+        let broken = resolver.resolve("b.md#1.4 配色与字体", 1);
+        assert_eq!(
+            broken.dest, "#/doc/b.md",
+            "the route cannot name an anchor the document never emits"
+        );
+        assert_eq!(
+            broken.missing_anchor.as_deref(),
+            Some("1.4 配色与字体"),
+            "the authored chapter is what the reader has to report"
+        );
+
+        let working = resolver.resolve("b.md#existing", 2);
+        assert_eq!(working.missing_anchor, None);
+        assert_eq!(working.dest, "#/doc/b.md#existing");
+    }
+
+    #[test]
+    fn only_a_chapter_mismatch_marks_a_destination() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        write(dir.path(), "logo.svg", b"<svg/>");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        let mut resolver = context.for_doc("a.md");
+
+        for destination in [
+            "https://example.com",
+            "#local",
+            "b.md",
+            "logo.svg",
+            "missing.md",
+            "/etc/passwd",
+        ] {
+            assert_eq!(
+                resolver.resolve(destination, 1).missing_anchor,
+                None,
+                "destination: {destination}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chapter_anchor_matches_its_slugged_form() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        context.register_anchors("b.md", ["getting-started".to_string()]);
+        let mut resolver = context.for_doc("a.md");
+
+        assert_eq!(
+            resolver.resolve("b.md#Getting Started", 1).dest,
+            "#/doc/b.md#getting-started",
+            "the author's spelling is accepted and points at the anchor the reader emits"
+        );
+        assert!(
+            context.diagnostics().is_empty(),
+            "diagnostics: {:?}",
+            context.diagnostics()
+        );
+    }
+
+    #[test]
+    fn a_numbered_chapter_resolves_to_the_anchor_the_reader_emits() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        // `### 1.4 配色与字体` slugs to `14-配色与字体`: the dot
+        // is dropped and the space becomes a dash.
+        context.register_anchors("b.md", ["14-配色与字体".to_string()]);
+        let mut resolver = context.for_doc("a.md");
+
+        assert_eq!(
+            resolver.resolve("b.md#1.4 配色与字体", 1).dest,
+            "#/doc/b.md#34-%E6%8A%80%E6%9C%AF%E9%A3%8E%E9%99%A9%E4%B8%8E%E5%A4%87%E9%80%89%E8%B7%AF%E7%BA%BF",
+            "a route must name an anchor a browser can find"
+        );
+        drop(resolver);
+
+        assert!(
+            context.diagnostics().is_empty(),
+            "diagnostics: {:?}",
+            context.diagnostics()
+        );
+    }
+
+    #[test]
+    fn an_anchor_that_is_already_the_heading_id_is_kept_verbatim() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        context.register_anchors("b.md", ["hello-world".to_string(), "第一章".to_string()]);
+        let mut resolver = context.for_doc("a.md");
+
+        assert_eq!(
+            resolver.resolve("b.md#hello-world", 1).dest,
+            "#/doc/b.md#hello-world"
+        );
+        assert_eq!(
+            resolver.resolve("b.md#第一章", 2).dest,
+            "#/doc/b.md#%E7%AC%AC%E4%B8%80%E7%AB%A0"
+        );
+    }
+
+    #[test]
+    fn a_slugged_anchor_is_stable_whatever_the_author_wrote() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        context.register_anchors("b.md", ["getting-started".to_string()]);
+        let mut resolver = context.for_doc("a.md");
+
+        assert_eq!(
+            resolver.resolve("b.md#getting-started", 1).dest,
+            resolver.resolve("b.md#Getting Started", 2).dest,
+            "both spellings must address the same anchor"
+        );
+    }
+
+    #[test]
+    fn a_document_without_anchors_rejects_every_chapter() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        let mut resolver = context.for_doc("a.md");
+
+        assert_eq!(resolver.resolve("b.md#any", 1).dest, "#/doc/b.md");
+        drop(resolver);
+
+        assert_eq!(context.diagnostics().len(), 1);
     }
 
     #[test]
@@ -723,9 +997,9 @@ mod tests {
 
         assert_eq!(
             resolver.resolve("https://example.com", 1),
-            "https://example.com"
+            LinkTarget::new("https://example.com")
         );
-        assert_eq!(resolver.resolve("#section", 2), "#section");
+        assert_eq!(resolver.resolve("#section", 2), LinkTarget::new("#section"));
         assert!(context.diagnostics().is_empty());
     }
 
@@ -735,7 +1009,7 @@ mod tests {
         let mut context = context(dir.path(), &["guide/intro.md"]);
         let mut resolver = context.for_doc("guide/intro.md");
 
-        assert_eq!(resolver.resolve("missing.md", 12), "missing.md");
+        assert_eq!(resolver.resolve("missing.md", 12).dest, "missing.md");
         drop(resolver);
 
         assert_eq!(
@@ -751,7 +1025,7 @@ mod tests {
         let mut context = context(dir.path(), &["a.md"]);
         let mut resolver = context.for_doc("a.md");
 
-        assert_eq!(resolver.resolve("../outside.md", 4), "../outside.md");
+        assert_eq!(resolver.resolve("../outside.md", 4).dest, "../outside.md");
         drop(resolver);
 
         assert_eq!(
@@ -769,7 +1043,7 @@ mod tests {
         let mut context = context(dir.path(), &["a.md"]);
         let mut resolver = context.for_doc("a.md");
 
-        assert_eq!(resolver.resolve("/etc/passwd", 1), "/etc/passwd");
+        assert_eq!(resolver.resolve("/etc/passwd", 1).dest, "/etc/passwd");
         drop(resolver);
 
         assert_eq!(
@@ -788,7 +1062,7 @@ mod tests {
         let mut context = context(dir.path(), &["a.md"]);
         let mut resolver = context.for_doc("a.md");
 
-        let placeholder = resolver.resolve("img/logo.svg", 1);
+        let placeholder = resolver.resolve("img/logo.svg", 1).dest;
         drop(resolver);
 
         assert!(
@@ -812,7 +1086,7 @@ mod tests {
         let mut context = context(dir.path(), &["guide/a.md"]);
         let mut resolver = context.for_doc("guide/a.md");
 
-        let placeholder = resolver.resolve("img/logo.svg", 1);
+        let placeholder = resolver.resolve("img/logo.svg", 1).dest;
         drop(resolver);
 
         assert!(placeholder.starts_with(ASSET_PLACEHOLDER_PREFIX));
@@ -845,7 +1119,10 @@ mod tests {
         let mut context = context(dir.path(), &["a.md"]);
         let mut resolver = context.for_doc("a.md");
 
-        assert_eq!(resolver.resolve("img/missing.png", 7), "img/missing.png");
+        assert_eq!(
+            resolver.resolve("img/missing.png", 7).dest,
+            "img/missing.png"
+        );
         drop(resolver);
 
         assert_eq!(
@@ -863,7 +1140,7 @@ mod tests {
         let mut resolver = context.for_doc("guide/a.md");
 
         assert_eq!(
-            resolver.resolve("../../outside.png", 3),
+            resolver.resolve("../../outside.png", 3).dest,
             "../../outside.png"
         );
         drop(resolver);
@@ -885,7 +1162,7 @@ mod tests {
         let mut context = context(dir.path(), &["a.md"]);
         let mut resolver = context.for_doc("a.md");
 
-        assert_eq!(resolver.resolve("folder.png", 2), "folder.png");
+        assert_eq!(resolver.resolve("folder.png", 2).dest, "folder.png");
         drop(resolver);
 
         let messages = messages(&context);

@@ -35,7 +35,12 @@
     <nav class="doc-list" id="doc-list" aria-label="Documents"></nav>
     <footer class="sidebar-footer" id="stats"></footer>
   </aside>
-  <main class="content" id="doc-content" tabindex="-1"></main>
+  <main class="content" id="doc-content" tabindex="-1">
+    <!-- The banner slot is filled once by `banner.js` and only toggled
+         afterwards, so a message never reflows the article. -->
+    <div class="doc-alert" id="doc-alert" role="status" aria-live="polite" aria-hidden="true" hidden></div>
+    <article class="doc-article" id="doc-article"></article>
+  </main>
   <aside class="inspector" id="inspector" data-panel="toc" aria-label="Graph and outline">
     <div class="inspector-tabs" id="inspector-tabs" role="tablist" aria-label="Inspector panels">
       <button class="inspector-tab" type="button" role="tab" data-panel="graph" aria-selected="false" aria-controls="graph-panel">Graph</button>

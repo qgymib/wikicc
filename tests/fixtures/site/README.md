@@ -7,7 +7,9 @@ relative link resolves and every referenced asset exists.
 
 Read the [introduction](guide/intro.md) first, then the
 [getting started section](guide/intro.md#getting-started) again — the link
-graph must collapse both references into a single edge.
+graph must collapse both references into a single edge. The
+[details](guide/intro.md#details) are the nested chapter a block reference
+previews on hover.
 
 An [external link](https://example.com) and a [local anchor](#overview) never
 become edges.

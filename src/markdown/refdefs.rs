@@ -88,8 +88,8 @@ pub(crate) fn definition_html<R: LinkRewriter + ?Sized>(
     rewriter: &mut R,
     line: usize,
 ) -> String {
-    let href = rewriter.rewrite(&definition.dest, line);
-    let mut html = String::with_capacity(href.len() + definition.label.len() + 64);
+    let target = rewriter.rewrite(&definition.dest, line);
+    let mut html = String::with_capacity(target.dest.len() + definition.label.len() + 64);
 
     html.push_str("<p class=\"");
     html.push_str(DEFINITION_CLASS);
@@ -98,8 +98,23 @@ pub(crate) fn definition_html<R: LinkRewriter + ?Sized>(
     html.push_str("\">[");
     escape_into(&mut html, &definition.label);
     html.push_str("]:</span> <a href=\"");
-    escape_into(&mut html, &href);
-    html.push_str("\">");
+    escape_into(&mut html, &target.dest);
+    html.push('"');
+
+    // A definition can name a chapter the way an inline reference can, so it
+    // carries the same mark: an entry in the source list is as visible as a
+    // reference in a sentence, and both have to warn identically.
+    if let Some(anchor) = target.missing_anchor.as_deref() {
+        html.push_str(" class=\"");
+        html.push_str(super::MISSING_LINK_CLASS);
+        html.push_str("\" ");
+        html.push_str(super::MISSING_ANCHOR_ATTRIBUTE);
+        html.push_str("=\"");
+        escape_into(&mut html, anchor);
+        html.push('"');
+    }
+
+    html.push('>');
     escape_into(&mut html, &definition.dest);
     html.push_str("</a>");
 
@@ -136,14 +151,23 @@ pub(crate) fn definition_text(definition: &ReferenceDefinition) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markdown::{NoRewrite, PARSER_OPTIONS};
+    use crate::markdown::{LinkTarget, NoRewrite, PARSER_OPTIONS};
 
     /// Rewriter that tags every destination, so a test can see the handover.
     struct Tagging;
 
     impl LinkRewriter for Tagging {
-        fn rewrite(&mut self, destination: &str, line: usize) -> String {
-            format!("href:{destination}@{line}")
+        fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget {
+            LinkTarget::new(format!("href:{destination}@{line}"))
+        }
+    }
+
+    /// Rewriter that reports the destination as a chapter that does not exist.
+    struct Missing;
+
+    impl LinkRewriter for Missing {
+        fn rewrite(&mut self, destination: &str, _line: usize) -> LinkTarget {
+            LinkTarget::missing_chapter(destination.to_string(), "gone")
         }
     }
 
@@ -257,6 +281,24 @@ mod tests {
             definition_html(&definition, &mut Tagging, 7),
             "<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
              <a href=\"href:a.md#x@7\">a.md#x</a></p>\n"
+        );
+    }
+
+    #[test]
+    fn a_definition_with_a_missing_chapter_carries_the_same_mark() {
+        let definition = ReferenceDefinition {
+            label: "1".to_string(),
+            dest: "a.md#gone".to_string(),
+            title: None,
+            start: 0,
+            end: 10,
+        };
+
+        assert_eq!(
+            definition_html(&definition, &mut Missing, 1),
+            "<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"a.md#gone\" class=\"doc-link-missing\" \
+             data-wikicc-missing-anchor=\"gone\">a.md#gone</a></p>\n"
         );
     }
 

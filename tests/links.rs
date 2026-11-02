@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use wikicc::markdown::sections_of;
 use wikicc::scan::scan;
 use wikicc::{ASSET_PLACEHOLDER_PREFIX, LinkContext, Severity, render_document_with};
 
@@ -31,14 +32,21 @@ struct Site {
 }
 
 /// Run the scan and resolve stages over `root`.
+///
+/// Chapter anchors are collected before any link is resolved, exactly as
+/// [`wikicc::site::build_site`] does: a link to a later document's chapter has
+/// to be checked against headings that have not been rendered yet.
 fn build(root: &Path) -> Site {
     let report = scan(root, &root.join("dist")).expect("scan");
     let mut context = LinkContext::new(
         root.to_path_buf(),
         report.docs.iter().map(|doc| doc.id.clone()),
     );
-    let mut html = BTreeMap::new();
+    for doc in &report.docs {
+        context.register_anchors(&doc.id, sections_of(&doc.text));
+    }
 
+    let mut html = BTreeMap::new();
     for doc in &report.docs {
         let mut resolver = context.for_doc(&doc.id);
         let rendered = render_document_with(&doc.text, &mut resolver);
@@ -74,6 +82,7 @@ fn the_link_matrix_rewrites_each_destination_kind() {
     for expected in [
         "href=\"#/doc/guide/intro.md\"",
         "href=\"#/doc/guide/intro.md#getting-started\"",
+        "href=\"#/doc/guide/intro.md#getting-started\">chapter</a>",
         "href=\"#link-matrix\"",
         "href=\"https://example.com/docs\"",
         "href=\"//cdn.example.com/app.js\"",
@@ -135,6 +144,7 @@ fn missing_and_escaping_targets_are_reported_with_document_and_line() {
     let root = fixture_root();
     let site = build(&root);
     let missing_line = line_containing(&root, "README.md", "(missing.md)");
+    let chapter_line = line_containing(&root, "README.md", "(guide/intro.md#no-such-chapter)");
     let escape_line = line_containing(&root, "README.md", "(../outside.png)");
 
     assert_eq!(
@@ -142,9 +152,148 @@ fn missing_and_escaping_targets_are_reported_with_document_and_line() {
         [
             format!("README.md:{missing_line}: link target not found: 'missing.md'"),
             format!(
+                "README.md:{chapter_line}: link target section not found: \
+                 'guide/intro.md#no-such-chapter'"
+            ),
+            format!(
                 "README.md:{escape_line}: link target escapes the input directory: '../outside.png'"
             ),
         ]
+    );
+}
+
+#[test]
+fn a_missing_chapter_still_opens_its_document() {
+    let site = build(&fixture_root());
+    let readme = &site.html["README.md"];
+
+    assert!(
+        readme.contains("href=\"#/doc/guide/intro.md\">no such chapter</a>"),
+        "the document must stay reachable without the chapter\nhtml: {readme}"
+    );
+}
+
+#[test]
+fn a_missing_chapter_is_marked_so_the_reader_can_report_it() {
+    let site = build(&fixture_root());
+    let readme = &site.html["README.md"];
+
+    // The route cannot carry the anchor — it addresses no element the document
+    // emits — so the authored chapter travels as data instead. Without it the
+    // reader sees a perfectly ordinary link and can never say what was asked
+    // for, which is exactly the bug this test pins.
+    assert!(
+        readme.contains(
+            "<span hidden class=\"doc-link-missing\" \
+             data-wikicc-missing-anchor=\"no-such-chapter\"></span>\
+             <a href=\"#/doc/guide/intro.md\">no such chapter</a>"
+        ),
+        "a broken block reference must be marked\nhtml: {readme}"
+    );
+    assert!(
+        readme.contains(
+            "<tr><td>block reference</td><td>\
+             <a href=\"#/doc/guide/intro.md#getting-started\">chapter</a>"
+        ),
+        "a chapter that exists must stay unmarked\nhtml: {readme}"
+    );
+}
+
+#[test]
+fn a_broken_definition_chapter_is_marked_like_an_inline_reference() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    write(root, "guide/intro.md", "# Intro\n");
+    write(
+        root,
+        "source.md",
+        "[1]: guide/intro.md#no-such \"A chapter\"\n\nsee [1]\n",
+    );
+
+    let site = build(root);
+    let html = &site.html["source.md"];
+
+    assert!(
+        html.contains(
+            "<a href=\"#/doc/guide/intro.md\" class=\"doc-link-missing\" \
+             data-wikicc-missing-anchor=\"no-such\">guide/intro.md#no-such</a>"
+        ),
+        "a definition must be marked exactly like an inline link\nhtml: {html}"
+    );
+}
+
+#[test]
+fn the_authored_chapter_of_a_broken_reference_is_escaped() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    write(root, "b.md", "# B\n");
+    // `%22`/`%3C` decode to `"` and `<` before the chapter is checked, so the
+    // value the reader is told about is the raw one.
+    write(root, "a.md", "[x](b.md#a%22b%26c%3Cd%3E)\n");
+
+    let site = build(root);
+    let html = &site.html["a.md"];
+
+    assert!(
+        html.contains("data-wikicc-missing-anchor=\"a&quot;b&amp;c&lt;d&gt;\""),
+        "the authored chapter cannot break out of the attribute\nhtml: {html}"
+    );
+    assert!(
+        !html.contains("<d>"),
+        "the markup must stay escaped\nhtml: {html}"
+    );
+}
+
+#[test]
+fn a_chapter_anchor_is_rewritten_to_the_anchor_the_reader_emits() {
+    let site = build(&fixture_root());
+    let readme = &site.html["README.md"];
+
+    assert!(
+        readme.contains("href=\"#/doc/guide/intro.md#getting-started\">chapter</a>"),
+        "`#Getting Started` must address the heading id, not the author's spelling\nhtml: {readme}"
+    );
+}
+
+#[test]
+fn a_numbered_chapter_anchor_is_rewritten_to_its_slug() {
+    let site = build(&fixture_root());
+    let readme = &site.html["README.md"];
+
+    // `## 2.3 带标点 的标题` renders as `<h2 id="23-带标点-的标题">`, so the
+    // route has to name that anchor; the authored text would scroll nowhere.
+    assert!(
+        readme.contains(
+            "href=\"#/doc/guide/outline.md#23-%E5%B8%A6%E6%A0%87%E7%82%B9-%E7%9A%84%E6%A0%87%E9%A2%98\">numbered</a>"
+        ),
+        "a numbered heading must be addressed by its slug\nhtml: {readme}"
+    );
+    assert!(
+        !readme.contains("outline.md#2.3"),
+        "the authored numbering must not survive into the route\nhtml: {readme}"
+    );
+    assert!(
+        !warnings(&site.context)
+            .iter()
+            .any(|warning| warning.contains("guide/outline.md#2.3")),
+        "a chapter that exists must not warn: {:?}",
+        warnings(&site.context)
+    );
+}
+
+#[test]
+fn a_route_anchor_matches_an_emitted_heading_id() {
+    let site = build(&fixture_root());
+    let html = &site.html["guide/outline.md"];
+
+    assert!(
+        html.contains("id=\"23-带标点-的标题\""),
+        "the fixture heading must keep its slug\nhtml: {html}"
+    );
+    assert!(
+        site.html["README.md"]
+            .contains("#23-%E5%B8%A6%E6%A0%87%E7%82%B9-%E7%9A%84%E6%A0%87%E9%A2%98"),
+        "the route and the heading id must agree"
     );
 }
 

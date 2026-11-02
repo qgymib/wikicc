@@ -21,6 +21,67 @@ pub struct Heading {
     pub text: String,
 }
 
+/// Plain text of a heading, built from the events between its tags.
+///
+/// The renderer feeds this while it walks the document; the anchor pre-pass
+/// feeds it from a scan of the same events. Both routes must agree exactly,
+/// because a heading's text decides its slug and therefore whether a link to
+/// `#that-heading` resolves, so the folding lives here instead of in either
+/// caller.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeadingText {
+    text: String,
+}
+
+impl HeadingText {
+    /// Empty accumulator.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an inline run of text or code.
+    pub fn push(&mut self, value: &str) {
+        self.text.push_str(value);
+    }
+
+    /// Add the single space a soft or hard break reads as.
+    pub fn push_break(&mut self) {
+        self.text.push(' ');
+    }
+
+    /// Add the replacement text of any other inline event (an image's alt
+    /// text, a footnote marker, a raw HTML run).
+    pub fn push_other(&mut self, value: &str) {
+        self.text.push_str(value);
+    }
+
+    /// Drop everything after `len` bytes, used when a folded citation rewrites
+    /// the heading text in place.
+    pub fn truncate(&mut self, len: usize) {
+        self.text.truncate(len.min(self.text.len()));
+    }
+
+    /// Current byte length of the collected text.
+    pub fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    /// Whether nothing has been collected.
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// Collapsed, finished heading text.
+    pub fn finish(&self) -> String {
+        collapse_whitespace(&self.text)
+    }
+}
+
+/// Collapse runs of whitespace into single spaces and trim the ends.
+pub fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// One node of the nested chapter outline.
 ///
 /// The tree is serialised verbatim into the site payload (see
@@ -82,6 +143,11 @@ pub fn build_toc(headings: &[Heading]) -> Vec<TocEntry> {
     }
 
     roots
+}
+
+/// Anchors of `headings`, in document order.
+pub fn anchors(headings: &[Heading]) -> Vec<String> {
+    headings.iter().map(|heading| heading.id.clone()).collect()
 }
 
 /// Entry addressed by `path`, which must be non-empty and valid.
