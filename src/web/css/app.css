@@ -869,6 +869,34 @@ a {
   font-family: var(--font-mono);
 }
 
+/* Link reference definitions: `[1]: https://… "title"`, shown where the author
+   wrote them instead of being swallowed by the parser. They are a reference
+   list, so they read quieter than the body — the same weight as a footnote
+   definition — and a long URL may wrap anywhere rather than widen the page. */
+.doc-body .link-ref-def {
+  margin: 0.45em 0;
+  color: var(--text-dim);
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.doc-body .link-ref-def-label {
+  margin-right: 0.15em;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
+.doc-body .link-ref-def a {
+  border-bottom-color: transparent;
+  overflow-wrap: anywhere;
+}
+
+.doc-body .link-ref-def a:hover {
+  border-bottom-color: currentColor;
+}
+
 /* ---------- inspector ---------- */
 
 .inspector {

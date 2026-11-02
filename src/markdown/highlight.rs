@@ -224,8 +224,12 @@ fn normalize_newlines(code: &str) -> Cow<'_, str> {
     }
 }
 
-/// Escape code for HTML text content, using the same set as the highlighter.
-fn escape_into(out: &mut String, code: &str) {
+/// Escape text for HTML content, using the same set as the highlighter.
+///
+/// Besides code blocks, [`crate::markdown::refdefs`] reuses it for the
+/// hand-built markup of a link reference definition, so author input can never
+/// terminate an attribute or an element there either.
+pub(crate) fn escape_into(out: &mut String, code: &str) {
     for ch in code.chars() {
         match ch {
             '&' => out.push_str("&amp;"),

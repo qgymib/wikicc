@@ -195,11 +195,20 @@ fn a_bracketed_citation_renders_as_one_link_like_typora() {
     let doc = render_document(&cited("散射机理[[1]][1]"));
 
     assert_eq!(
-        doc.html, "<p>散射机理<a href=\"https://example.com/1\">[1]</a></p>\n",
+        doc.html,
+        "<p>散射机理<a href=\"https://example.com/1\">[1]</a></p>\n\
+         <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+         <a href=\"https://example.com/1\">https://example.com/1</a></p>\n\
+         <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[2]:</span> \
+         <a href=\"https://example.com/2\">https://example.com/2</a></p>\n",
         "html: {}",
         doc.html
     );
-    assert_eq!(doc.text, "散射机理[1]", "text: {}", doc.text);
+    assert_eq!(
+        doc.text, "散射机理[1] [1]: https://example.com/1 [2]: https://example.com/2",
+        "text: {}",
+        doc.text
+    );
 }
 
 #[test]
@@ -214,7 +223,72 @@ fn a_bracketed_citation_collapses_inside_a_table_cell() {
         "html: {}",
         doc.html
     );
-    assert_eq!(doc.html.matches("<a ").count(), 1, "html: {}", doc.html);
+    assert_eq!(
+        doc.html.matches("<a ").count(),
+        3,
+        "one table link plus one per definition: {}",
+        doc.html
+    );
+}
+
+/// The "参考链接" section a Typora user writes: a heading followed by the
+/// reference list, with the definitions ending the document.
+const REFERENCE_LIST: &str = "\
+### 参考链接
+
+[1]: https://books.gw-project.org/distributed-fiber-optic-hydrogeophysics/chapter/strain-and-strain-rate-measurement-distributed-acoustic-sensing-das/ \"The Groundwater Project：Distributed Fiber-Optic Hydrogeophysics — 瑞利、布里渊、拉曼散射机理与 DAS 应变测量\"
+[2]: https://opg.optica.org/abstract.cfm?&uri=oe-20-8-8584 \"Peled, Motil, Tur：Fast Brillouin optical time domain analysis for dynamic sensing，Optics Express 20(8), 2012\"
+[3]: https://gdxt.semi.ac.cn/contents/308/3351.html \"中国科学院半导体研究所光电系统实验室：分布式光纤声传感系统（DAS）\"
+";
+
+#[test]
+fn a_reference_list_renders_under_its_heading_like_typora() {
+    let doc = render_document(REFERENCE_LIST);
+
+    assert!(
+        doc.html.starts_with("<h3 id=\"参考链接\">参考链接</h3>\n"),
+        "html: {}",
+        doc.html
+    );
+    assert_eq!(
+        doc.html.matches("<p class=\"link-ref-def\">").count(),
+        3,
+        "every definition must be visible: {}",
+        doc.html
+    );
+    for expected in [
+        "[1]:</span> <a href=\"https://books.gw-project.org/distributed\
+-fiber-optic-hydrogeophysics/chapter/strain-and-strain-rate-measurement\
+-distributed-acoustic-sensing-das/\">https://books.gw-project.org/distributed\
+-fiber-optic-hydrogeophysics/chapter/strain-and-strain-rate-measurement\
+-distributed-acoustic-sensing-das/</a> \"The Groundwater Project：Distributed \
+Fiber-Optic Hydrogeophysics — 瑞利、布里渊、拉曼散射机理与 DAS 应变测量\"",
+        "[2]:</span> <a href=\"https://opg.optica.org/abstract.cfm?&amp;uri=oe-20-8-8584\">\
+https://opg.optica.org/abstract.cfm?&amp;uri=oe-20-8-8584</a> \"Peled, Motil, Tur：\
+Fast Brillouin optical time domain analysis for dynamic sensing，Optics Express 20(8), 2012\"",
+        "[3]:</span> <a href=\"https://gdxt.semi.ac.cn/contents/308/3351.html\">\
+https://gdxt.semi.ac.cn/contents/308/3351.html</a> \"中国科学院半导体研究所光电系统实验室：\
+分布式光纤声传感系统（DAS）\"",
+    ] {
+        assert!(
+            doc.html.contains(expected),
+            "missing {expected:?}\nhtml: {}",
+            doc.html
+        );
+    }
+    assert!(
+        doc.text.contains("中国科学院半导体研究所光电系统实验室"),
+        "the entries must be searchable: {}",
+        doc.text
+    );
+}
+
+#[test]
+fn a_reference_list_is_rendered_deterministically() {
+    assert_eq!(
+        render_document(REFERENCE_LIST).html,
+        render_document(REFERENCE_LIST).html
+    );
 }
 
 #[test]

@@ -164,6 +164,61 @@ fn links_resolve_against_the_document_directory() {
 }
 
 #[test]
+fn definition_destinations_are_resolved_like_inline_links() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path();
+    write(root, "guide/intro.md", "# Intro\n");
+    write(root, "img/logo.svg", b"<svg>logo</svg>");
+    write(
+        root,
+        "source.md",
+        "# Sources\n\n\
+         [1]: guide/intro.md \"A chapter\"\n\
+         [2]: img/logo.svg\n\
+         [3]: https://example.com/docs\n\
+         [4]: missing.md\n",
+    );
+
+    let site = build(root);
+    let html = &site.html["source.md"];
+
+    assert!(
+        html.contains(
+            "<span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"#/doc/guide/intro.md\">guide/intro.md</a> \"A chapter\""
+        ),
+        "an internal document becomes a route, the text stays as written\nhtml: {html}"
+    );
+    assert!(
+        html.contains(&format!("<a href=\"{ASSET_PLACEHOLDER_PREFIX}"))
+            && html.contains(">img/logo.svg</a>"),
+        "a local asset becomes a placeholder, the text stays as written\nhtml: {html}"
+    );
+    assert!(
+        html.contains("<a href=\"https://example.com/docs\">https://example.com/docs</a>"),
+        "an external destination is untouched\nhtml: {html}"
+    );
+    assert!(
+        html.contains("<a href=\"missing.md\">missing.md</a>"),
+        "an unresolvable definition keeps its destination\nhtml: {html}"
+    );
+
+    let missing_line = line_containing(root, "source.md", "[4]:");
+    assert!(
+        warnings(&site.context).contains(&format!(
+            "source.md:{missing_line}: link target not found: 'missing.md'"
+        )),
+        "the warning quotes the definition's own line: {:?}",
+        warnings(&site.context)
+    );
+    assert_eq!(
+        site.context.assets().len(),
+        1,
+        "the asset is registered once"
+    );
+}
+
+#[test]
 fn compiling_the_same_site_twice_is_identical() {
     let root = fixture_root();
     let first = build(&root);

@@ -36,12 +36,22 @@
 //! consequently never reaches the resolver, so it cannot produce a second
 //! diagnostic or a second link-graph edge.
 //!
+//! The same idiom puts a definition block under a heading, `[1]: https://…`,
+//! which CommonMark consumes as link metadata and never renders — the section
+//! then reads as empty. [`refdefs`] turns every definition back into one
+//! paragraph at its source position, so the reader shows the list Typora
+//! shows. Definitions produce no events of their own, so they are injected
+//! between events by source offset; each one resolves its destination through
+//! the same [`LinkRewriter`] as an inline link and contributes its text to the
+//! search index.
+//!
 //! The same pass also collects the plain text of the document, which is what
 //! the front end searches. Keeping it here rather than in a second parse means
 //! `html`, `toc` and `text` always describe exactly the same source.
 
 pub mod highlight;
 pub mod links;
+pub(crate) mod refdefs;
 pub mod slug;
 pub mod toc;
 
@@ -51,6 +61,7 @@ use pulldown_cmark::{
 };
 
 use highlight::code_block_html;
+use refdefs::ReferenceDefinition;
 
 pub use links::{LinkClass, LinkContext, LinkResolver, classify};
 pub use slug::{FALLBACK_SLUG, Slugger, slugify};
@@ -194,8 +205,27 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
     // `[[n]][n]` citation. At most one such link can be pending: the shape
     // only ever spans two adjacent links.
     let mut pending: Option<OpenLink> = None;
+    // Definitions are collected before the parser is consumed, then injected
+    // between events at their source offset.
+    let parser = Parser::new_ext(source, PARSER_OPTIONS);
+    let definitions = refdefs::collect(&parser);
+    let mut next_definition = 0;
 
-    for (event, range) in Parser::new_ext(source, PARSER_OPTIONS).into_offset_iter() {
+    for (event, range) in parser.into_offset_iter() {
+        // A definition is only ever met at the start of a paragraph block, so
+        // every event after its span starts later. Emitting the definitions
+        // whose span ends at or before this event therefore keeps the exact
+        // source order with a single forward pass.
+        emit_definitions_before(
+            &mut events,
+            &mut text,
+            &definitions,
+            &mut next_definition,
+            range.start,
+            &line_starts,
+            &mut *rewriter,
+        );
+
         match event {
             Event::Start(Tag::Link {
                 link_type,
@@ -409,6 +439,18 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
         }
     }
 
+    // A document that ends with its definitions never reaches an event past
+    // them, which is exactly the "参考链接" layout: flush the rest here.
+    emit_definitions_before(
+        &mut events,
+        &mut text,
+        &definitions,
+        &mut next_definition,
+        usize::MAX,
+        &line_starts,
+        &mut *rewriter,
+    );
+
     let mut html = String::with_capacity(source.len());
     push_html(&mut html, events.into_iter());
 
@@ -426,6 +468,38 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
 fn separate(text: &mut String) {
     if !text.is_empty() && !text.ends_with(char::is_whitespace) {
         text.push(' ');
+    }
+}
+
+/// Emit every definition that ends at or before `offset`.
+///
+/// Each definition becomes one `Event::Html` paragraph at its source position,
+/// with its destination resolved by `rewriter` and its text appended to the
+/// search index. `next` is the index of the first definition not yet emitted,
+/// so the pass is linear in the number of events plus definitions and never
+/// reorders them: the caller walks the source front to back and passes each
+/// event's start offset.
+#[allow(clippy::too_many_arguments)]
+fn emit_definitions_before<R: LinkRewriter + ?Sized>(
+    events: &mut Vec<Event<'_>>,
+    text: &mut String,
+    definitions: &[ReferenceDefinition],
+    next: &mut usize,
+    offset: usize,
+    line_starts: &[usize],
+    rewriter: &mut R,
+) {
+    while let Some(definition) = definitions.get(*next) {
+        if definition.end > offset {
+            break;
+        }
+
+        separate(text);
+        text.push_str(&refdefs::definition_text(definition));
+        let line = line_of(line_starts, definition.start);
+        let html = refdefs::definition_html(definition, rewriter, line);
+        events.push(Event::Html(CowStr::from(html)));
+        *next += 1;
     }
 }
 
@@ -990,7 +1064,7 @@ mod tests {
 
     #[test]
     fn the_default_rewriter_is_the_identity() {
-        let source = "# T\n\n[a](a.md) ![i](i.png) [e](https://example.com)\n";
+        let source = "# T\n\n[a](a.md) ![i](i.png) [e](https://example.com)\n\n[r]: r.md \"R\"\n";
 
         assert_eq!(
             render_document(source),
@@ -1100,23 +1174,44 @@ fn main() {}
         format!("{body}\n\n[1]: https://example.com/1\n[2]: https://example.com/2\n")
     }
 
+    /// The two definition paragraphs `citation_source` renders, in order.
+    const CITATION_DEFINITIONS: &str = "\
+<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+<a href=\"https://example.com/1\">https://example.com/1</a></p>\n\
+<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[2]:</span> \
+<a href=\"https://example.com/2\">https://example.com/2</a></p>\n";
+
+    /// The definition text `citation_source` adds to the search index.
+    const CITATION_DEFINITIONS_TEXT: &str = "[1]: https://example.com/1 [2]: https://example.com/2";
+
     #[test]
     fn bracketed_citation_collapses_to_one_link() {
         let doc = render_document(&citation_source("text[[1]][1] more"));
 
         assert_eq!(
-            doc.html, "<p>text<a href=\"https://example.com/1\">[1]</a> more</p>\n",
+            doc.html,
+            format!(
+                "<p>text<a href=\"https://example.com/1\">[1]</a> more</p>\n{CITATION_DEFINITIONS}"
+            ),
             "html: {}",
             doc.html
         );
-        assert_eq!(doc.html.matches("<a ").count(), 1, "one link only");
+        assert_eq!(
+            doc.html.matches("<a ").count(),
+            3,
+            "one link in the body plus one per definition: {}",
+            doc.html
+        );
     }
 
     #[test]
     fn bracketed_citation_reads_as_a_citation_in_the_text() {
         let doc = render_document(&citation_source("text[[1]][1] more"));
 
-        assert_eq!(doc.text, "text[1] more");
+        assert_eq!(
+            doc.text,
+            format!("text[1] more {CITATION_DEFINITIONS_TEXT}")
+        );
     }
 
     #[test]
@@ -1130,8 +1225,8 @@ fn main() {}
             "html: {}",
             doc.html
         );
-        assert_eq!(doc.html.matches("<a ").count(), 1);
-        assert_eq!(doc.text, "a b x[1] y");
+        assert_eq!(doc.html.matches("<a ").count(), 3, "html: {}", doc.html);
+        assert_eq!(doc.text, format!("a b x[1] y {CITATION_DEFINITIONS_TEXT}"));
     }
 
     #[test]
@@ -1153,11 +1248,13 @@ fn main() {}
 
         assert_eq!(
             doc.html,
-            "<p>a<a href=\"https://example.com/1\">[1]</a>b<a href=\"https://example.com/2\">[2]</a>c</p>\n",
+            format!(
+                "<p>a<a href=\"https://example.com/1\">[1]</a>b<a href=\"https://example.com/2\">[2]</a>c</p>\n{CITATION_DEFINITIONS}"
+            ),
             "html: {}",
             doc.html
         );
-        assert_eq!(doc.text, "a[1]b[2]c");
+        assert_eq!(doc.text, format!("a[1]b[2]c {CITATION_DEFINITIONS_TEXT}"));
     }
 
     #[test]
@@ -1170,7 +1267,10 @@ fn main() {}
             "html: {}",
             doc.html
         );
-        assert_eq!(doc.text, "text[1] more");
+        assert_eq!(
+            doc.text,
+            format!("text[1] more {CITATION_DEFINITIONS_TEXT}")
+        );
     }
 
     #[test]
@@ -1190,7 +1290,12 @@ fn main() {}
     fn adjacent_reference_links_without_a_wrap_are_not_folded() {
         let doc = render_document(&citation_source("[1] [1]"));
 
-        assert_eq!(doc.html.matches("<a ").count(), 2, "html: {}", doc.html);
+        assert_eq!(
+            doc.html.matches("<a ").count(),
+            4,
+            "two body links plus one per definition: {}",
+            doc.html
+        );
     }
 
     #[test]
@@ -1210,7 +1315,14 @@ fn main() {}
             "html: {}",
             doc.html
         );
-        assert!(!doc.html.contains("<a "), "html: {}", doc.html);
+        assert!(
+            doc.html
+                .contains("<pre class=\"code\"><code>[[1]][1]\n</code></pre>"),
+            "code keeps the source verbatim: {}",
+            doc.html
+        );
+        // Only the definition block renders a link; nothing inside code does.
+        assert_eq!(doc.html.matches("<a ").count(), 1, "html: {}", doc.html);
     }
 
     #[test]
@@ -1221,15 +1333,28 @@ fn main() {}
 
         assert_eq!(
             recorder.seen,
-            [("https://example.com/1".to_string(), 1)],
-            "only the surviving link reaches the resolver"
+            [
+                ("https://example.com/1".to_string(), 1),
+                ("https://example.com/1".to_string(), 3),
+                ("https://example.com/2".to_string(), 4),
+            ],
+            "the duplicate body link is dropped, each definition is resolved once"
         );
         assert_eq!(
             doc.html.matches("href=").count(),
-            1,
-            "the duplicate link must not survive: {}",
+            3,
+            "one body link and two definitions: {}",
             doc.html
         );
+        // `x[1]y`: the duplicate link is gone, so the surviving one sits
+        // between the brackets instead of a `[1]1` run.
+        assert!(
+            doc.html
+                .contains("<p>x<a href=\"rewritten:https://example.com/1\">[1]</a>y</p>"),
+            "the duplicate citation must not survive: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("]</a>1"), "html: {}", doc.html);
     }
 
     #[test]
@@ -1238,9 +1363,169 @@ fn main() {}
 
         let doc = render_document_with(&citation_source("see [[1]]"), &mut recorder);
 
-        assert_eq!(recorder.seen, [("https://example.com/1".to_string(), 1)]);
         assert_eq!(
-            doc.html, "<p>see [<a href=\"rewritten:https://example.com/1\">1</a>]</p>\n",
+            recorder.seen,
+            [
+                ("https://example.com/1".to_string(), 1),
+                ("https://example.com/1".to_string(), 3),
+                ("https://example.com/2".to_string(), 4),
+            ]
+        );
+        assert_eq!(
+            doc.html,
+            "<p>see [<a href=\"rewritten:https://example.com/1\">1</a>]</p>\n\
+             <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"rewritten:https://example.com/1\">https://example.com/1</a></p>\n\
+             <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[2]:</span> \
+             <a href=\"rewritten:https://example.com/2\">https://example.com/2</a></p>\n",
+            "html: {}",
+            doc.html
+        );
+    }
+
+    /// A source whose definitions end the document, the way a reference list
+    /// sits under its last heading.
+    fn reference_list_source() -> String {
+        "# 参考链接\n\n\
+         [1]: https://example.com/one \"First source\"\n\
+         [2]: https://example.com/two\n"
+            .to_string()
+    }
+
+    #[test]
+    fn definitions_are_rendered_where_the_author_wrote_them() {
+        let doc = render_document(&reference_list_source());
+
+        assert!(
+            doc.html.starts_with("<h1 id=\"参考链接\">参考链接</h1>\n"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(
+            doc.html.matches("<p class=\"link-ref-def\">").count(),
+            2,
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains(
+                "<span class=\"link-ref-def-label\">[1]:</span> \
+                 <a href=\"https://example.com/one\">https://example.com/one</a> \"First source\"</p>"
+            ),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains(
+                "<span class=\"link-ref-def-label\">[2]:</span> \
+                 <a href=\"https://example.com/two\">https://example.com/two</a></p>"
+            ),
+            "a definition without a title gets no quotes: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn definitions_are_searchable_and_feed_the_outline() {
+        let doc = render_document(&reference_list_source());
+
+        assert_eq!(
+            doc.text,
+            "参考链接 [1]: https://example.com/one \"First source\" [2]: https://example.com/two"
+        );
+        assert_eq!(doc.toc.len(), 1, "definitions are not headings");
+        assert_eq!(doc.toc[0].text, "参考链接");
+    }
+
+    #[test]
+    fn definitions_between_paragraphs_keep_their_position() {
+        let source = "alpha\n\n[1]: https://example.com/1\n\nbeta\n";
+        let doc = render_document(source);
+
+        assert_eq!(
+            doc.html,
+            "<p>alpha</p>\n\
+             <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"https://example.com/1\">https://example.com/1</a></p>\n\
+             <p>beta</p>\n",
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_repeated_definition_renders_only_its_first_occurrence() {
+        let source = "[1]: https://example.com/first\n[1]: https://example.com/second\n";
+        let doc = render_document(source);
+
+        assert_eq!(doc.html.matches("<p class=\"link-ref-def\">").count(), 1);
+        assert!(
+            doc.html.contains("https://example.com/first"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            !doc.html.contains("https://example.com/second"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_document_of_definitions_alone_renders_them() {
+        let doc = render_document("[1]: https://example.com/1\n");
+
+        assert_eq!(
+            doc.html,
+            "<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"https://example.com/1\">https://example.com/1</a></p>\n",
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "[1]: https://example.com/1");
+    }
+
+    #[test]
+    fn definition_parts_are_escaped() {
+        let source = "[a&b]: https://example.com/?a=1&b=2 \"x < y & \\\"q\\\"\"\n";
+        let doc = render_document(source);
+
+        assert!(
+            doc.html
+                .contains("<span class=\"link-ref-def-label\">[a&amp;b]:</span>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html
+                .contains("href=\"https://example.com/?a=1&amp;b=2\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("\"x &lt; y &amp; &quot;q&quot;\"</p>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("x < y"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn a_definition_destination_reaches_the_resolver_once() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with("[1]: a.md\n\nsee [1]\n", &mut recorder);
+
+        assert_eq!(
+            recorder.seen,
+            [("a.md".to_string(), 1), ("a.md".to_string(), 3),],
+            "the definition is resolved on its own line, not through the citation"
+        );
+        assert_eq!(
+            doc.html,
+            "<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"rewritten:a.md\">a.md</a></p>\n\
+             <p>see <a href=\"rewritten:a.md\">1</a></p>\n",
             "html: {}",
             doc.html
         );
