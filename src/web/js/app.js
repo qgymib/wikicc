@@ -4,7 +4,7 @@
  * The payload is embedded by the build as `<script type="application/json">`, so
  * no request is ever made and the page works from `file://`. Document HTML is
  * inserted with `innerHTML` because the Markdown source is trusted build input
- * (raw HTML passthrough is documented behaviour, see `docs/DESIGN.md`); every
+ * (raw HTML passthrough is documented behaviour, see `docs/design.md`); every
  * other string goes through `textContent`.
  *
  * `main.js` is the bundle entry point and calls `start()`; this module only

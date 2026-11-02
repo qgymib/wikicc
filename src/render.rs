@@ -1,6 +1,6 @@
 //! Shell assembly: the template, the styles, the scripts and the payload.
 //!
-//! This is the `render` stage described in `docs/DESIGN.md`. It turns a
+//! This is the `render` stage described in `docs/design.md`. It turns a
 //! [`SiteBundle`] into the single HTML document every writer starts from, so the
 //! three output formats differ only in how asset placeholders are addressed and
 //! never in the page itself.

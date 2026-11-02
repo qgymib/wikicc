@@ -1,6 +1,6 @@
 //! Deterministic discovery of the Markdown documents that make up a site.
 //!
-//! This is the first pipeline stage described in `docs/DESIGN.md`: it turns a
+//! This is the first pipeline stage described in `docs/design.md`: it turns a
 //! directory tree into an ordered [`Vec<SourceDoc>`] plus a deterministic list
 //! of [`Diagnostic`]s. It performs no Markdown rendering and writes nothing, so
 //! the later stages can be tested against plain data.

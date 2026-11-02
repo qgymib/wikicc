@@ -1,7 +1,7 @@
 //! Build orchestration: the stage order, the `--strict` gate and the summary lines.
 //!
 //! This is the module that turns the individual stages described in
-//! `docs/DESIGN.md` into one run. The order is a contract:
+//! `docs/design.md` into one run. The order is a contract:
 //!
 //! 1. validate the options (input tree and output-directory guards),
 //! 2. scan the input directory,

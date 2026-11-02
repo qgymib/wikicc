@@ -1,6 +1,6 @@
 //! Site bundle assembly: the deterministic payload the front end consumes.
 //!
-//! This is the `assemble` stage described in `docs/DESIGN.md`. It folds the outputs of the
+//! This is the `assemble` stage described in `docs/design.md`. It folds the outputs of the
 //! previous stages into one serialisable [`SiteBundle`]:
 //!
 //! - [`DocModel`] per document: id, title, rewritten HTML, chapter outline and

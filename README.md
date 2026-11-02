@@ -3,91 +3,59 @@
 Compile a folder of Markdown documents into a self-contained, offline HTML
 reader you can double-click.
 
-One command scans the folder, renders every document, resolves every link and
-asset, and writes **one artifact** that needs no server, no sibling files and no
-network. Open it and read: search the whole folder, read a document with syntax
-highlighting and Mermaid diagrams, follow the link graph between documents, and
-navigate long documents through their chapter outline.
+The compiled reader needs no server, no sibling files and no network: search the
+whole folder, read a document with syntax highlighting and Mermaid diagrams,
+follow the link graph between documents, and navigate long documents through
+their chapter outline.
 
 ## Features
 
 ### Reader
 
-- **Search** over titles, headings and body text, including CJK, with multiple
-  words combined as AND.
+- **Search** over titles, headings and body text, including CJK.
 - **Link graph** of the folder with zoom, pan and drag; clicking a node opens
   that document.
-- **Chapter outline** of the current document, highlighting the section being
-  read.
-- **Block references**: a link to `other.md#chapter` previews that chapter
-  (with everything nested under it, and nothing above it) when you hover it, and
-  opens the document at that chapter when you click. A chapter that does not
-  exist is a build warning; the reference is then styled as broken in the text
-  itself, and hovering it opens a small notice beside the link naming the
-  document and the chapter that was asked for. Clicking still opens the document
-  from the top, and *then* floats a banner above the article explaining why the
-  chapter was not reached. The banner is as wide as the article, never moves it,
-  goes away after a few seconds and can be dismissed from its close button.
-- **Tables**: click a header to sort; open the funnel on the right of a header
-  to tick the values you want, or type to narrow that list, Excel-style.
-- **Theme** toggle (light/dark) and a page that stays usable down to phone width.
+- **Chapter outline** of the current document, following the section being read.
+- **Block references**: a link to a chapter of another document previews that
+  chapter on hover and opens it on click. A chapter that does not exist is
+  reported as a broken reference and explained by the reader.
+- **Tables**: sorting and Excel-style per-column filtering.
+- **Theme** toggle (light/dark) and a layout that stays usable down to phone
+  width.
 
 ### Markdown support
 
-GitHub-flavored Markdown plus footnotes, task lists and strikethrough, rendered
-with stable heading anchors (Unicode-aware, so CJK headings keep their text) and
-a nested chapter outline. Tables become sortable in the reader, and every column
-gets an Excel-style filter list of its distinct values.
-
-`[label](path/to/doc.md#chapter)` addresses one chapter of another document:
-the anchor is matched against that document's headings, so the text the author
-wrote (`#Getting Started`) and the slug the reader emits
-(`#getting-started`) both work, CJK included. The link is rewritten to the
-anchor the reader actually emits, so `#1.4 配色与字体` becomes
-`#14-配色与字体` — the heading id a browser can find.
-`[label](path/to/doc.md)` addresses the document as a whole.
-
-Fenced code blocks are highlighted at build time (no client-side highlighter,
-no grammar files loaded at runtime). A fence tagged `mermaid` becomes a diagram
-rendered by the embedded Mermaid engine (pinned at **12.2.0**).
-
-Raw HTML inside Markdown is passed through unchanged: the input is trusted, so
-there is no sanitizer — do not compile untrusted documents.
+- GitHub-flavored Markdown: tables, task lists, strikethrough and footnotes.
+- Nested chapters with stable, Unicode-aware heading anchors, so CJK headings
+  keep their text.
+- Chapter links: `[label](path/to/doc.md#chapter)` addresses one chapter of
+  another document, `[label](path/to/doc.md)` addresses the document as a whole.
+- Fenced code highlighting, done at build time.
+- Mermaid diagrams from a fence tagged `mermaid`.
+- Raw HTML inside Markdown, passed through unchanged. **The input is trusted:
+  there is no sanitizer, so do not compile untrusted documents.**
 
 ### Output formats
 
-| Format | Artifact | Assets | Trade-off |
-| --- | --- | --- | --- |
-| `single-html` (default) | one `index.html` | inlined as `data:` URIs | one file to send anywhere; ~4/3 the asset bytes, no browser caching |
-| `html-dir` | `index.html` + `assets/` | `assets/<hash>.<ext>` | smallest artifact, copyable or servable as-is, one file per unique resource |
+| Format | Artifact | Assets |
+| --- | --- | --- |
+| `single-html` (default) | one `index.html` | inlined into the page |
+| `html-dir` | `index.html` + `assets/` | one file per unique resource |
 
-Both formats carry the same page. Assets are content-addressed by a truncated
-SHA-256, so identical bytes are stored once no matter how many documents
-reference them, and names are stable across builds and machines.
+Both formats carry the same page. Assets are content-addressed, so identical
+bytes are stored once no matter how many documents reference them.
 
-- **`single-html`** inlines the stylesheet, the reader script, the site payload
-  and every referenced asset, so it opens by double click, offline, from any
-  directory, with no sibling files. The fixture site produces a ~5.3 MB page,
-  most of which is the embedded diagram engine.
-- **`html-dir`** writes the same page as `index.html` next to an `assets/`
-  folder. Every reference in the page is relative, so the whole directory can be
-  copied, zipped or served statically. A site without assets writes only the
-  page — no empty folder.
+- **`single-html`** opens by double click, offline, from any directory, with no
+  sibling files.
+- **`html-dir`** is smallest and can be copied, zipped or served statically as it
+  is.
 
-Both artifacts are plain HTML that any browser opens directly from disk: the
-reader script is a classic inline script and needs no `file://` privileges
-beyond the ones a local page always has.
+### Offline and reproducibility
 
-### Offline and determinism
-
-- Nothing is fetched at runtime: the payload is embedded in the page, because
-  `fetch()` of a local JSON file is blocked by CORS under `file://`.
-- No CDN, no web font, no remote stylesheet: the page has one inline
-  `<style>` block and one inline classic `<script>`.
-- The build itself never touches the network. The only network step is the
+- Nothing is fetched at runtime: no CDN, no web font, no remote stylesheet.
+- The build itself never touches the network; the only network step is the
   one-time `npm ci` that installs the pinned front-end dependencies.
-- Two builds of the same input are byte identical: stable document order,
-  sorted collections, content-hash asset names and no timestamps.
+- Two builds of the same input produce byte-identical artifacts.
 
 ## Usage
 
@@ -103,9 +71,7 @@ cargo build --release      # build.rs bundles the reader into the binary
 cargo install --path .     # optional: put `wikicc` on PATH
 ```
 
-Both the compiled binary and the generated HTML have no external dependencies:
-the stylesheet, the reader script, the site payload and every referenced asset
-travel inside the artifact.
+The compiled binary and the generated HTML have no external dependencies.
 
 ### Command line
 
@@ -129,51 +95,28 @@ wikicc path/to/docs --format html-dir
 wikicc path/to/docs --strict              # broken links fail the build
 ```
 
-A successful build prints one line on stdout:
+A successful build prints a summary line and reports diagnostics on stderr;
+`--quiet` suppresses the summary only.
 
-```
-compiled 3 documents, 1 asset -> path/to/docs/dist (single-html) in 84 ms
-```
-
-Diagnostics — notes, warnings and the warning count — go to stderr. `--quiet`
-suppresses only the summary line.
-
-### Output directory rules
+### Output directory
 
 - A missing directory is created; an empty one is used as it is.
-- A directory that holds a previous artifact (`index.html`) is emptied and
-  reused, so rebuilding needs no flags and leaves no stale files. A directory
-  with only an artifact from a retired format is treated as foreign and needs
-  `--force`.
-- Any other non-empty directory is refused with a `--force` hint, because
-  `--out` can point anywhere and silently deleting unrelated files is data loss.
-  Only the entries *inside* the directory are removed; symbolic links are
-  removed as links, never followed.
-- Three combinations are always rejected before anything is written: the output
-  directory equal to the input root, an ancestor of the input root, and the
-  current working directory.
-- The output directory is excluded from scanning, so rebuilding never
-  recompiles previous artifacts.
+- A directory holding a previous build is emptied and reused, so rebuilding needs
+  no flags and leaves no stale files.
+- Any other non-empty directory requires `--force`.
+- The output directory cannot be the input folder, an ancestor of it, or the
+  current working directory, and it is excluded from scanning.
+- Symlinks inside the output directory are removed as links, never followed.
 
 ### Warnings and `--strict`
 
 Broken links, missing assets, chapter anchors a document does not have and links
-that escape the input directory are warnings: the build still succeeds, the
-original destination is left untouched and the message names the document and
-line. They are summarized as `N warnings (use --strict to fail)`.
+that escape the input directory are warnings: the build still succeeds and the
+original destination is left untouched, so the reader can still show the link.
 
-A chapter anchor that does not resolve is still rewritten as a link to its
-document — the chapter is only dropped — so a typo costs the reader a jump to
-the top of the right document instead of a dead link. The chapter the author
-wrote travels with the link as `data-wikicc-missing-anchor`, so the reader can
-still say what was asked for: the reference is marked `doc-link-missing` in the
-text, hovering it opens a notice beside the link, and clicking it floats a
-banner above the article naming the document and the chapter. The banner fades
-after a few seconds and can be closed by hand.
-
-`--strict` turns them into a failure (exit code 1) and reports the offending
-links. The gate runs before anything is written, so a refused build neither
-creates an artifact nor empties a previous one.
+`--strict` turns warnings into a failure. The gate runs before anything is
+written, so a refused build neither creates an artifact nor empties a previous
+one.
 
 ### Exit codes
 
@@ -182,6 +125,11 @@ creates an artifact nor empties a previous one.
 | 0 | Success (possibly with warnings) |
 | 1 | Runtime failure: missing input, I/O error, `--strict` with warnings |
 | 2 | Usage error: invalid arguments |
+
+## Documentation
+
+- [`docs/design.md`](docs/design.md) — how `wikicc` is built.
+- [`tests/README.md`](tests/README.md) — how the test suite is organised.
 
 ## License
 

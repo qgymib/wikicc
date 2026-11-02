@@ -1,6 +1,6 @@
 //! Link classification, path resolution and rewriting.
 //!
-//! This is the link half of the `resolve` stage in `docs/DESIGN.md`. Every
+//! This is the link half of the `resolve` stage in `docs/design.md`. Every
 //! destination that appears in a document is classified syntactically by
 //! [`classify`], then turned into its final addressing form by a
 //! [`LinkResolver`]:

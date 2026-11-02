@@ -1,7 +1,7 @@
 //! `wikicc` compiles a folder of Markdown documents into a fully self-contained,
 //! offline, double-clickable static HTML reader.
 //!
-//! The architecture and its contracts are described in `docs/DESIGN.md`. The
+//! The architecture and its contracts are described in `docs/design.md`. The
 //! crate is one pipeline, and each module owns one stage of it: the CLI surface
 //! (argument parsing, option normalization, output-path guards, exit codes),
 //! the directory scan that produces the ordered document model, the Markdown

@@ -1,6 +1,6 @@
 //! Write stage: turn the rendered page into the artifact of the selected format.
 //!
-//! This is the `write` stage described in `docs/DESIGN.md`. The render stage
+//! This is the `write` stage described in `docs/design.md`. The render stage
 //! hands over one HTML document in which every local resource is addressed by
 //! the opaque placeholder [`crate::ASSET_PLACEHOLDER_PREFIX`]`<hash>`. A writer
 //! replaces those placeholders with the addressing form of its own format and

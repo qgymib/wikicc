@@ -1,6 +1,6 @@
 //! `html-dir` writer: `index.html` plus an `assets/` folder.
 //!
-//! This is the `html-dir` writer described in `docs/DESIGN.md`. The page is the same rendered reader as
+//! This is the `html-dir` writer described in `docs/design.md`. The page is the same rendered reader as
 //! the single-file format; the only difference is addressing. Every
 //! `wikicc-asset:<hash>` placeholder becomes `assets/<hash>.<ext>`, a path that
 //! is relative to `index.html`, and the bytes land in a sibling directory:

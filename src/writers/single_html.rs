@@ -1,6 +1,6 @@
 //! `single-html` writer: one file with every resource inlined as a data URI.
 //!
-//! This is the `single-html` writer described in `docs/DESIGN.md`. The rendered page already contains the
+//! This is the `single-html` writer described in `docs/design.md`. The rendered page already contains the
 //! whole reader (markup, styles, script and payload); the only thing left to do
 //! is to turn every `wikicc-asset:<hash>` placeholder into
 //! `data:<mime>;base64,<payload>`, which is what makes the artifact survive a

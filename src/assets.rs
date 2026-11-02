@@ -1,6 +1,6 @@
 //! Content-addressed registry for local resources referenced from documents.
 //!
-//! This is the asset half of the `resolve` stage in `docs/DESIGN.md`. Every
+//! This is the asset half of the `resolve` stage in `docs/design.md`. Every
 //! relative path that is not a Markdown document (images, audio, video, fonts,
 //! PDFs, …) is read once, hashed with SHA-256 and stored in an [`AssetTable`].
 //!
