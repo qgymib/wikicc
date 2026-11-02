@@ -149,6 +149,14 @@ fn tables_are_emitted_and_hooked_for_enhancement() {
         page.html.contains("Search values"),
         "the filter panel's value search must be bundled into the page"
     );
+    assert!(
+        page.html.contains("table-filter-confirm"),
+        "the filter panel's commit button must be bundled into the page"
+    );
+    assert!(
+        page.html.contains("Apply"),
+        "the filter panel must expose the label of its commit button"
+    );
 }
 
 #[test]

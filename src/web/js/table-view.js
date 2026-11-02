@@ -12,6 +12,11 @@
  * time: it closes on an outside click, on `Escape`, when its anchor scrolls out
  * of the document, and whenever a new document is rendered (`enhanceTables`
  * runs again and disposes the previous panel).
+ *
+ * Picking values edits a draft: the table only changes when the footer's
+ * `Apply` button (or `Enter`) commits it. Every other way out of the panel -
+ * `Escape`, an outside click, losing the anchor - drops the draft, so a
+ * half-finished selection never hides rows.
  */
 import * as Table from "./table.js";
 
@@ -33,8 +38,14 @@ export var FILTER_ALL_CLASS = "table-filter-all";
 /** Class of one candidate row. */
 export var FILTER_OPTION_CLASS = "table-filter-option";
 
-/** Class of the panel's footer action. */
+/** Class of the panel's footer action that resets the column. */
 export var FILTER_CLEAR_CLASS = "table-filter-clear";
+
+/** Class of the panel's footer action that commits the draft. */
+export var FILTER_CONFIRM_CLASS = "table-filter-confirm";
+
+/** Label of the button that commits the draft. */
+export var CONFIRM_LABEL = "Apply";
 
 /** Class of the hint shown when the candidate cap is reached. */
 export var FILTER_MORE_CLASS = "table-filter-more";
@@ -134,6 +145,9 @@ function closeActivePanel() {
  * (`table.distinctValues`), the current selection (`null` or an array of keys)
  * and the `onChange` callback. The returned handle is also what
  * `closeActivePanel` operates on.
+ *
+ * `onChange` fires at most once per panel, when the draft is applied; the
+ * caller's selection is therefore left alone while the user is still picking.
  */
 function openFilterPanel(options) {
   var values = options.values || [];
@@ -180,7 +194,12 @@ function openFilterPanel(options) {
   clear.type = "button";
   clear.className = FILTER_CLEAR_CLASS;
   clear.textContent = "Clear filter";
+  var confirm = document.createElement("button");
+  confirm.type = "button";
+  confirm.className = FILTER_CONFIRM_CLASS;
+  confirm.textContent = CONFIRM_LABEL;
   footer.appendChild(clear);
+  footer.appendChild(confirm);
 
   panel.appendChild(search);
   panel.appendChild(allRow);
@@ -190,9 +209,20 @@ function openFilterPanel(options) {
   var visible = [];
   var api = { anchor: options.anchor, close: close };
 
-  /** Push the selection back to the table, normalised against every candidate. */
+  /**
+   * Push the draft back to the table, normalised against every candidate.
+   *
+   * This is the only place that touches the table: ticking a checkbox must not
+   * call it, otherwise rows would vanish while the user is still choosing.
+   */
   function commit() {
     options.onChange(Table.normalizeSelection(selected, values));
+  }
+
+  /** Commit the draft and leave the panel. */
+  function apply() {
+    commit();
+    api.close();
   }
 
   /** Refresh the tri-state "select all" box from the visible candidates. */
@@ -240,13 +270,13 @@ function openFilterPanel(options) {
       count.className = "table-filter-count";
       count.textContent = String(value.count);
 
+      // Draft only: the table is left untouched until the footer's Apply.
       input.addEventListener("change", function () {
         if (input.checked) {
           selected.add(value.key);
         } else {
           selected.delete(value.key);
         }
-        commit();
         refreshAll();
       });
 
@@ -286,10 +316,11 @@ function openFilterPanel(options) {
       });
     }
 
-    commit();
+    // Draft only, like a single checkbox. `renderList` re-syncs the boxes.
     renderList();
   }
 
+  /** Reset the column in one go: clearing is the same as selecting all. */
   function onClear() {
     selected = new Set(
       values.map(function (value) {
@@ -304,6 +335,20 @@ function openFilterPanel(options) {
     if (event.key === "Escape") {
       event.stopPropagation();
       api.close();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      // `isComposing` keeps an IME confirmation (pinyin, kana) from applying a
+      // half-typed selection; Enter on a focused checkbox still toggles it.
+      var target = event.target;
+      var onCheckbox = target && target.type === "checkbox";
+
+      if (!event.isComposing && !onCheckbox) {
+        event.preventDefault();
+        event.stopPropagation();
+        apply();
+      }
     }
   }
 
@@ -352,6 +397,7 @@ function openFilterPanel(options) {
   search.addEventListener("input", onSearch);
   allInput.addEventListener("change", onAllChange);
   clear.addEventListener("click", onClear);
+  confirm.addEventListener("click", apply);
   panel.addEventListener("keydown", onPanelKeydown);
 
   document.body.appendChild(panel);
