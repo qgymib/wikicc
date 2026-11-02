@@ -19,6 +19,10 @@ import {
   CLOSE_CLASS,
   CLOSE_DELAY_MS,
   CLOSE_LABEL,
+  DRAGGING_ATTRIBUTE,
+  DRAG_LABEL,
+  DRAG_THRESHOLD_PX,
+  HEAD_CLASS,
   HEAD_TEXT_CLASS,
   HOVER_DELAY_MS,
   MISSING_ATTRIBUTE,
@@ -1402,5 +1406,269 @@ test("switching documents keeps a pinned preview and drops nothing of it", () =>
     assert.equal(view.isOpen(), true);
     assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, shown);
     assert.equal(panelOf(doc), panel);
+  });
+});
+
+/* ---------- dragging the panel by its head ---------- */
+
+/** A press on the head, dispatched where the view listens for it. */
+function pressHead(panel, head, x, y) {
+  let prevented = false;
+  head.fire("pointerdown", {
+    target: head,
+    button: 0,
+    clientX: x,
+    clientY: y,
+    preventDefault() {
+      prevented = true;
+    },
+    stopPropagation() {},
+  });
+
+  return prevented;
+}
+
+/** A pointer move during a drag, dispatched on the page rather than the head. */
+function dragTo(fire, x, y) {
+  fire("pointermove", { clientX: x, clientY: y });
+}
+
+/** A pointer release, wherever the pointer happens to be. */
+function releasePointer(fire, x, y) {
+  fire("pointerup", { clientX: x, clientY: y });
+}
+
+/**
+ * Open a preview and hand back its panel and head.
+ *
+ * The panel is positioned against the link before the first press, which is
+ * what a reader always starts from: `left`/`top` are already written.
+ */
+function openPanel(ctx) {
+  const opened = openPreview(ctx);
+  return Object.assign({ head: byClass(opened.panel, HEAD_CLASS)[0] }, ctx, opened);
+}
+
+test("the head is the handle a reader drags the panel by", () => {
+  setup(function (ctx) {
+    const { panel, head } = openPanel(ctx);
+
+    assert.ok(head, "the head is the element the pointer has to find");
+    assert.equal(head.getAttribute("title"), DRAG_LABEL);
+    assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null, "nothing is being dragged yet");
+  });
+});
+
+test("dragging the head moves the panel with the pointer", () => {
+  setup(function (ctx) {
+    const { panel, head, fire } = openPanel(ctx);
+    const left = parseFloat(panel.style.left);
+    const top = parseFloat(panel.style.top);
+
+    pressHead(panel, head, 100, 110);
+    dragTo(fire, 100 + DRAG_THRESHOLD_PX + 57, 110 + 40);
+
+    assert.equal(parseFloat(panel.style.left), left + DRAG_THRESHOLD_PX + 57);
+    assert.equal(parseFloat(panel.style.top), top + 40);
+    assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), "true");
+
+    releasePointer(fire, 160, 150);
+
+    assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null, "the drag is over");
+    assert.equal(
+      parseFloat(panel.style.left),
+      left + DRAG_THRESHOLD_PX + 57,
+      "the panel stays where the reader let go",
+    );
+  });
+});
+
+test("a drag pins the panel before it moves a pixel", () => {
+  setup(function (ctx) {
+    const { view, content, panel, head, clock, fire, anchor } = openPanel(ctx);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null, "a hovered preview is unpinned");
+
+    pressHead(panel, head, 100, 110);
+
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true", "the press itself claims the panel");
+    assert.equal(buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"), "true");
+
+    // The pointer leaves the link on its way out of the panel: a pinned panel
+    // must not arm the close delay it is guarded against.
+    content.fire("pointerout", { target: anchor, relatedTarget: null });
+    panel.fire("pointerleave", {});
+    fire("scroll", {});
+    assert.deepEqual(clock.delays(), [], "no delay may take a dragged panel away");
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+  });
+});
+
+test("a press on the head without movement moves nothing", () => {
+  setup(function (ctx) {
+    const { panel, head, fire } = openPanel(ctx);
+    const left = panel.style.left;
+    const top = panel.style.top;
+
+    pressHead(panel, head, 100, 110);
+    // Sub-threshold jitter: a hand on a mouse button is never perfectly still.
+    dragTo(fire, 100 + DRAG_THRESHOLD_PX - 1, 110 + 1);
+    releasePointer(fire, 101, 111);
+
+    assert.equal(panel.style.left, left, "a click must not nudge the panel");
+    assert.equal(panel.style.top, top);
+    assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null);
+  });
+});
+
+test("a press on a head button starts no drag", () => {
+  setup(function (ctx) {
+    const { panel, fire } = openPanel(ctx);
+    const left = panel.style.left;
+
+    for (const className of [PIN_CLASS, CLOSE_CLASS]) {
+      const button = buttonOf(panel, className);
+      pressHead(panel, button, 100, 110);
+      dragTo(fire, 100 + DRAG_THRESHOLD_PX + 80, 110);
+      releasePointer(fire, 200, 110);
+
+      assert.equal(panel.style.left, left, "the buttons keep their own meaning");
+      assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null);
+    }
+  });
+});
+
+test("the head of a panel the pointer reached by keyboard drags as well", () => {
+  setup(function (ctx) {
+    const { view, panel, head, fire } = openPanel(ctx);
+    // The reader never pressed the panel before: this drag is the first act.
+    const left = parseFloat(panel.style.left);
+
+    pressHead(panel, head, 50, 60);
+    dragTo(fire, 50 + DRAG_THRESHOLD_PX + 20, 60 + 5);
+    releasePointer(fire, 73, 65);
+
+    assert.equal(parseFloat(panel.style.left), left + DRAG_THRESHOLD_PX + 20);
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
+    assert.equal(panelOf(ctx.doc), panel, "the same panel, in a new place");
+  });
+});
+
+test("a drag cannot carry the panel out of the viewport", () => {
+  setup(function (ctx) {
+    const { panel, head, fire } = openPanel(ctx);
+    // The stub is 480 wide and 200 tall, in a 1200 x 800 viewport, and the
+    // margin the automatic placement already keeps is the one a drag keeps.
+    pressHead(panel, head, 100, 110);
+    dragTo(fire, 100 - 5000, 110 - 5000);
+    releasePointer(fire, 0, 0);
+
+    assert.equal(parseFloat(panel.style.left), 10);
+    assert.equal(parseFloat(panel.style.top), 10);
+
+    pressHead(panel, head, 100, 110);
+    dragTo(fire, 100 + 5000, 110 + 5000);
+    releasePointer(fire, 5200, 5300);
+
+    assert.equal(parseFloat(panel.style.left), 1200 - 480 - 10);
+    assert.equal(parseFloat(panel.style.top), 800 - 200 - 10);
+  });
+});
+
+test("a dragged panel keeps its place until it is closed", () => {
+  setup(function (ctx) {
+    const { view, content, panel, head, clock, fire } = openPanel(ctx);
+
+    pressHead(panel, head, 100, 110);
+    dragTo(fire, 100 + DRAG_THRESHOLD_PX + 40, 110 + 30);
+    releasePointer(fire, 143, 140);
+    const left = panel.style.left;
+    const top = panel.style.top;
+
+    // A second drag starts from where the first one ended.
+    pressHead(panel, head, 200, 200);
+    dragTo(fire, 200 + DRAG_THRESHOLD_PX + 10, 200 + 10);
+    releasePointer(fire, 213, 213);
+
+    assert.equal(parseFloat(panel.style.left), parseFloat(left) + DRAG_THRESHOLD_PX + 10);
+    assert.equal(parseFloat(panel.style.top), parseFloat(top) + 10);
+
+    // A render, a scroll and the pointer leaving all leave it alone.
+    view.tag(content);
+    content.fire("pointerout", { target: content, relatedTarget: null });
+    fire("scroll", {});
+    panel.fire("pointerleave", {});
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.style.left, String(parseFloat(left) + DRAG_THRESHOLD_PX + 10) + "px");
+  });
+});
+
+test("closing a dragged panel forgets where the reader put it", () => {
+  setup(function (ctx) {
+    const { view, content, panel, head, clock, fire, anchor } = openPanel(ctx);
+    const original = panel.style.left;
+
+    pressHead(panel, head, 100, 110);
+    dragTo(fire, 100 + DRAG_THRESHOLD_PX + 200, 110 + 120);
+    releasePointer(fire, 303, 230);
+    assert.notEqual(panel.style.left, original, "the drag really moved it");
+
+    press(buttonOf(panel, CLOSE_CLASS));
+    clock.runAll();
+    assert.equal(view.isOpen(), false);
+
+    // The next preview is an ordinary one, placed against its own link.
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.style.left, original, "the manual place does not outlive the panel");
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
+  });
+});
+
+test("a notice is dragged by the same head", () => {
+  setup(function (ctx) {
+    const { view, content, clock, fire, doc } = ctx;
+    const anchor = brokenLink("#/doc/guide/intro.md", "1.4 配色与字体");
+
+    content.appendChild(anchor);
+    view.tag(content);
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    const panel = panelOf(doc);
+    const head = byClass(panel, HEAD_CLASS)[0];
+    const left = parseFloat(panel.style.left);
+
+    pressHead(panel, head, 100, 110);
+    dragTo(fire, 100 + DRAG_THRESHOLD_PX + 30, 110 + 20);
+    releasePointer(fire, 133, 130);
+
+    assert.equal(parseFloat(panel.style.left), left + DRAG_THRESHOLD_PX + 30);
+    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), "true", "the notice keeps its role");
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
+  });
+});
+
+test("a release outside the panel ends the drag", () => {
+  setup(function (ctx) {
+    const { panel, head, fire } = openPanel(ctx);
+
+    pressHead(panel, head, 100, 110);
+    dragTo(fire, 100 + DRAG_THRESHOLD_PX + 10, 110);
+    releasePointer(fire, 5000, 5000);
+    const left = panel.style.left;
+
+    // Nothing listens any more, so a stray move cannot drag a panel nobody holds.
+    fire("pointermove", { clientX: 900, clientY: 700 });
+
+    assert.equal(panel.style.left, left);
+    assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null);
   });
 });

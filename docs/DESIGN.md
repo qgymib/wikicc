@@ -284,6 +284,19 @@ script and the payload is embedded, so neither format depends on a server.
   both its place and its content. The head carries a pin and a close button, so
   the two readings — "held" and "closed" — are separate acts rather than one
   click that has to guess.
+- **The head is also a handle.** The reader can drag the panel by its head, and
+  the press claims the panel the way a click does — immediately, before any
+  movement, because a drag crosses the gap between the link and the panel and an
+  unpinned panel would be closed by the pointer leaving on the way. A press only
+  becomes a drag past a three-pixel threshold, so a click on the head never
+  nudges the panel; a press on either head button is never a drag at all. The
+  moves are watched on the page rather than on the head, since a small fixed
+  panel is left by the pointer constantly during a gesture. A moved panel keeps
+  its place for as long as it is open and `position()` leaves it alone from then
+  on; closing it forgets the place along with the pin, so the next hover is
+  anchored to its own link again. Dragging clamps to the same margin the
+  automatic placement keeps, and adds no transition on `top`/`left`: a panel
+  that eases into place lags behind the hand.
 - **Hovering a broken reference shows a notice, not the banner.** There is no
   chapter to preview, and saying so where the pointer already is answers the
   question it is asking. The notice reuses the block-reference popover — same

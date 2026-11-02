@@ -959,7 +959,11 @@ a {
 /* The head stays put while the body scrolls, so a long preview always says
    which chapter it is. It is two columns: the name, which may be long and is
    therefore the only thing allowed to shrink, and the buttons, which must keep
-   their size however long the chapter title turns out to be. */
+   their size however long the chapter title turns out to be.
+
+   It is also the handle the panel is dragged by, so it carries the grab
+   cursor. No transition on `top`/`left` anywhere below: a panel that eases
+   into place lags behind the hand that is moving it. */
 .preview-head {
   display: flex;
   align-items: flex-start;
@@ -967,6 +971,32 @@ a {
   gap: 10px;
   padding: 10px 14px 9px;
   border-bottom: 1px solid var(--border);
+  cursor: grab;
+  transition: background 140ms ease;
+}
+
+/* A quiet hint that the head can be taken hold of, in the theme's own colours
+   rather than a colour of its own. */
+.preview-head:hover {
+  background: var(--bg-hover);
+}
+
+/* The buttons are not part of the handle: they keep their own cursor and their
+   own hover, so a reader never drags the panel by reaching for a button. */
+.preview-head .preview-actions,
+.preview-pin,
+.preview-close {
+  cursor: pointer;
+}
+
+/* While the panel follows the hand: the hand is closed and the chapter's name
+   is not selectable text on the way. */
+.preview-popover[data-dragging] .preview-head {
+  cursor: grabbing;
+}
+
+.preview-popover[data-dragging] {
+  user-select: none;
 }
 
 .preview-head-text {

@@ -32,6 +32,22 @@
  * away from the chapter it shows or park it at a paragraph the reader is no
  * longer looking at, so the panel stays where the reader put it instead.
  *
+ * And the reader can put it somewhere else: the head is a handle. Pressing it
+ * claims the panel — the same bit a click sets, only earlier, because a drag
+ * crosses the empty page between the link and the panel and a delayed close
+ * would take the panel away mid-gesture. A press is not yet a drag: the panel
+ * only starts to follow once the pointer has travelled `DRAG_THRESHOLD_PX`,
+ * which is what keeps a quick click on the head from nudging the panel by the
+ * pixel or two a hand always adds. A press on one of the head's buttons is
+ * never a drag, since those two clicks already mean something else.
+ *
+ * The moves are watched on the page rather than on the head: the panel is small
+ * and fixed, so the pointer leaves it constantly during a gesture, and a
+ * listener on the element would lose the drag the moment it did. The place the
+ * reader leaves the panel in holds for as long as that panel is open — closing
+ * it forgets both the pin and the place, so the next hover is anchored to its
+ * own link again.
+ *
  * The panel is appended to `document.body` and positioned with `position:
  * fixed`, the same way the table filter panel works: the document body clips
  * overflow in places, and a panel nested inside it would be cut off. Only one
@@ -78,8 +94,20 @@ var SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 /** Smallest distance from the viewport edge the panel keeps. */
 var MARGIN_PX = 10;
 
+/**
+ * How far the pointer must travel before a press on the head is a drag.
+ *
+ * A hand on a mouse button is never perfectly still, so a zero threshold would
+ * turn every click on the head into a one-pixel move; a browser's sub-pixel
+ * noise never reaches three.
+ */
+export var DRAG_THRESHOLD_PX = 3;
+
 /** Class of the popover root. */
 export var POPOVER_CLASS = "preview-popover";
+
+/** Class of the head, which is the handle the panel is dragged by. */
+export var HEAD_CLASS = "preview-head";
 
 /** Class of the scrolling body inside the popover. */
 export var BODY_CLASS = "preview-scroll";
@@ -119,6 +147,17 @@ export var CLOSE_CLASS = "preview-close";
 
 /** Class of the group holding the head's buttons, kept apart from the title. */
 export var ACTIONS_CLASS = "preview-actions";
+
+/** Accessible name of the head, which is what the reader grabs. */
+export var DRAG_LABEL = "Drag to move";
+
+/**
+ * Attribute marking the popover as being dragged.
+ *
+ * The stylesheet reads it for the cursor and to stop a heading from being
+ * selected along the way; nothing in the module reads it back.
+ */
+export var DRAGGING_ATTRIBUTE = "data-dragging";
 
 /** Class of the column holding the title and the path. */
 export var HEAD_TEXT_CLASS = "preview-head-text";
@@ -164,6 +203,7 @@ export function createPreviewView(options) {
   var onMissingChapter = options.onMissingChapter || null;
 
   var panel = null;
+  var head = null;
   var body = null;
   var title = null;
   var path = null;
@@ -187,9 +227,30 @@ export function createPreviewView(options) {
   // explicit act — a button, a second click on `anchor`, Escape — clears it, so
   // every automatic dismissal asks `isPinned()` before it acts.
   var pinned = false;
+  // Where the pointer went down on the head, and where the panel was when it
+  // did. `null` means no press is in progress. The press is a drag only once
+  // the pointer has travelled past the threshold, which the origin decides.
+  var press = null;
+  var dragging = false;
+  // Whether this showing of the panel has been placed by hand. `position()`
+  // leaves it alone from then on; `close()` forgets it, so the next hover is
+  // anchored to its own link again.
+  var moved = false;
 
   function view() {
     return globalThis;
+  }
+
+  /**
+   * The page a gesture is watched on.
+   *
+   * A drag starts below the head and continues over the document, so the moves
+   * are read from the window when there is one — which is what makes the panel
+   * follow a pointer that has left it — and from `globalThis` in a DOM without
+   * one, the same degradation every other listener here relies on.
+   */
+  function windowTarget() {
+    return typeof window === "undefined" ? view() : window;
   }
 
   function clearOpenTimer() {
@@ -218,8 +279,11 @@ export function createPreviewView(options) {
     panel.setAttribute("aria-label", PREVIEW_LABEL);
     panel.hidden = true;
 
-    var head = document.createElement("div");
-    head.className = "preview-head";
+    // The head is also the handle: it says so, and it is where a drag starts.
+    head = document.createElement("div");
+    head.className = HEAD_CLASS;
+    head.setAttribute("title", DRAG_LABEL);
+    head.addEventListener("pointerdown", onHeadPointerDown);
 
     // The head is two columns: the chapter's name, which may be long and is
     // therefore the one allowed to shrink, and the buttons, which must not.
@@ -408,6 +472,12 @@ export function createPreviewView(options) {
    * common case for a link near the bottom of a long paragraph.
    */
   function position(link) {
+    // A panel the reader has moved is theirs: anchoring it again would undo
+    // the one thing they did to it.
+    if (moved) {
+      return;
+    }
+
     var rect = link.getBoundingClientRect();
     var width = panel.offsetWidth || 480;
     var height = panel.offsetHeight || 0;
@@ -426,8 +496,164 @@ export function createPreviewView(options) {
       Math.max(MARGIN_PX, viewportWidth - width - MARGIN_PX),
     );
 
-    panel.style.left = Math.round(left) + "px";
-    panel.style.top = Math.round(top) + "px";
+    place(left, top);
+  }
+
+  /**
+   * Write a position, keeping the whole panel in the viewport.
+   *
+   * A panel taller than the window is pinned to the top margin instead of
+   * being pushed to a negative top: the range would otherwise be empty and the
+   * panel would jump between two impossible corners.
+   */
+  function place(left, top) {
+    var width = panel.offsetWidth || 0;
+    var height = panel.offsetHeight || 0;
+    var viewportWidth = view().innerWidth || document.documentElement.clientWidth;
+    var viewportHeight = view().innerHeight || document.documentElement.clientHeight;
+
+    panel.style.left = Math.round(clampPosition(left, width, viewportWidth)) + "px";
+    panel.style.top = Math.round(clampPosition(top, height, viewportHeight)) + "px";
+  }
+
+  /** `value` kept inside `[MARGIN_PX, viewport - size - MARGIN_PX]`. */
+  function clampPosition(value, size, viewport) {
+    var limit = viewport - size - MARGIN_PX;
+    if (limit < MARGIN_PX) {
+      return MARGIN_PX;
+    }
+
+    return Math.min(Math.max(MARGIN_PX, value), limit);
+  }
+
+  /** Where the panel currently is, as the browser lays it out. */
+  function panelOrigin() {
+    var left = parseFloat(panel.style.left);
+    var top = parseFloat(panel.style.top);
+    var rect = panel.getBoundingClientRect ? panel.getBoundingClientRect() : null;
+
+    return {
+      left: isNaN(left) ? (rect ? rect.left : 0) : left,
+      top: isNaN(top) ? (rect ? rect.top : 0) : top,
+    };
+  }
+
+  /**
+   * A press on the head: the reader asks to move the panel.
+   *
+   * The panel is claimed at once, before a single pixel of movement: a drag
+   * crosses the gap between the link and the panel, and an unpinned panel
+   * would be closed by the pointer leaving on the way. Claiming it here rather
+   * than on the first move also means the press is already a promise the panel
+   * keeps — a reader who presses and lets go without moving still holds it,
+   * which is what a click on the panel did before.
+   *
+   * The default action is cancelled so the heading is not selected while the
+   * panel travels with the hand; the event itself still bubbles, so the click
+   * the browser derives from this press reaches `onPanelClick` as usual.
+   */
+  function onHeadPointerDown(event) {
+    if (!event || event.button) {
+      return;
+    }
+
+    var target = event.target;
+    if (target === pinButton || target === closeButton) {
+      return;
+    }
+    // A widget inside a preview is not a handle either.
+    if (target && typeof target.closest === "function" && target.closest("button")) {
+      return;
+    }
+
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+
+    setPinned(true);
+
+    var origin = panelOrigin();
+    press = {
+      x: event.clientX,
+      y: event.clientY,
+      left: origin.left,
+      top: origin.top,
+    };
+    dragging = false;
+    listenForDrag();
+  }
+
+  /**
+   * Watch the whole page for the rest of the gesture.
+   *
+   * The panel is fixed and small, so the pointer regularly leaves it before
+   * the drag ends; a move listener on the head would stop following there.
+   */
+  function listenForDrag() {
+    var page = windowTarget();
+    if (!page || typeof page.addEventListener !== "function") {
+      return;
+    }
+    page.addEventListener("pointermove", onDragMove);
+    page.addEventListener("pointerup", onDragEnd);
+    page.addEventListener("pointercancel", onDragEnd);
+  }
+
+  function unlistenForDrag() {
+    var page = windowTarget();
+    if (!page || typeof page.removeEventListener !== "function") {
+      return;
+    }
+    page.removeEventListener("pointermove", onDragMove);
+    page.removeEventListener("pointerup", onDragEnd);
+    page.removeEventListener("pointercancel", onDragEnd);
+  }
+
+  function onDragMove(event) {
+    if (!press || !event) {
+      return;
+    }
+
+    var dx = event.clientX - press.x;
+    var dy = event.clientY - press.y;
+
+    if (!dragging) {
+      // Below the threshold the panel does not move at all: a click must not
+      // nudge it, and the browser's own sub-pixel jitter never gets past here.
+      if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) {
+        return;
+      }
+      dragging = true;
+      moved = true;
+      panel.setAttribute(DRAGGING_ATTRIBUTE, "true");
+    }
+
+    place(press.left + dx, press.top + dy);
+  }
+
+  /**
+   * The gesture is over, wherever the pointer was released.
+   *
+   * The panel keeps the place it was left in and the pin the press put on it:
+   * ending a drag is not a dismissal, and only the acts that always closed the
+   * panel — the buttons, Escape, the reference again — still do.
+   */
+  function onDragEnd() {
+    endDrag();
+  }
+
+  /**
+   * Give up the gesture: drop the origin, stop watching the page and take the
+   * dragging mark off. Idempotent, because every path that can end a showing
+   * asks for it — a release, a close, a dispose, a new press.
+   */
+  function endDrag() {
+    press = null;
+    dragging = false;
+    if (panel) {
+      panel.removeAttribute(DRAGGING_ATTRIBUTE);
+    }
+    unlistenForDrag();
   }
 
   /** Whether `link` still has a chapter to preview. */
@@ -658,8 +884,11 @@ export function createPreviewView(options) {
     clearOpenTimer();
     clearCloseTimer();
     pending = null;
-    // A closed panel is nobody's: the pin goes with the content, or the next
-    // hover would inherit a frame that claims to be held in place.
+    // A closed panel is nobody's: the pin goes with the content, and so does
+    // the place the reader dragged it to — the next hover is anchored to its
+    // own link rather than to where the last chapter was read.
+    endDrag();
+    moved = false;
     setPinned(false);
 
     if (!panel) {
@@ -922,11 +1151,16 @@ export function createPreviewView(options) {
   function dispose() {
     close();
     unlisten();
+    endDrag();
 
+    if (head && typeof head.removeEventListener === "function") {
+      head.removeEventListener("pointerdown", onHeadPointerDown);
+    }
     if (panel && panel.parentNode) {
       panel.parentNode.removeChild(panel);
     }
     panel = null;
+    head = null;
     body = null;
     title = null;
     path = null;
