@@ -6,17 +6,29 @@
  * browser paints them: the popover opens for a chapter that exists, turns into
  * a notice for one that does not, and reporting a broken reference through the
  * banner is reserved for the click that navigates.
+ *
+ * The second half of the file covers pinning: a panel the reader clicked on
+ * belongs to them, so a pointer leaving it, a click elsewhere, a navigation or
+ * a scroll must all leave it alone until it is closed on purpose.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  ACTIONS_CLASS,
+  CLOSE_CLASS,
   CLOSE_DELAY_MS,
+  CLOSE_LABEL,
+  HEAD_TEXT_CLASS,
   HOVER_DELAY_MS,
   MISSING_ATTRIBUTE,
   MISSING_LABEL,
+  PIN_ATTRIBUTE,
+  PIN_CLASS,
+  PIN_LABEL,
   POPOVER_CLASS,
   PREVIEW_LABEL,
+  UNPIN_LABEL,
   createPreviewView,
 } from "../../src/web/js/preview-view.js";
 import {
@@ -49,6 +61,11 @@ function fakeElement(tagName) {
       child.parentNode = this;
       return child;
     },
+    // Deliberately absent: a real `SVGElement` has no `createElementNS` — only
+    // `document` does. A stub that hands it to every node would let a view that
+    // creates SVG children through its parent pass here and throw
+    // "createElementNS is not a function" in a browser, which is exactly the
+    // defect this file failed to catch.
     removeChild(child) {
       const index = this.children.indexOf(child);
       if (index >= 0) {
@@ -74,10 +91,20 @@ function fakeElement(tagName) {
     getBoundingClientRect() {
       return { top: 100, bottom: 120, left: 40, right: 160, width: 120, height: 20 };
     },
+    // A click inside the panel arrives with one of its descendants as the
+    // target, so containment has to be decided over the whole subtree.
     contains(node) {
-      return node === this;
+      if (node === this) {
+        return true;
+      }
+      return this.children.some(function (child) {
+        return typeof child.contains === "function" && child.contains(node);
+      });
     },
     closest(selector) {
+      if (selector === "button") {
+        return this.tagName === "BUTTON" ? this : null;
+      }
       if (selector !== DOC_LINK_SELECTOR) {
         return null;
       }
@@ -167,6 +194,11 @@ function fakeDocument() {
     created,
     documentElement: { clientWidth: 1200, clientHeight: 800 },
     createElement(tagName) {
+      const element = fakeElement(tagName);
+      created.push(element);
+      return element;
+    },
+    createElementNS(namespace, tagName) {
       const element = fakeElement(tagName);
       created.push(element);
       return element;
@@ -328,6 +360,37 @@ function byClass(root, className) {
   })(root);
 
   return found;
+}
+
+/** The one button of `className` inside the panel. */
+function buttonOf(panel, className) {
+  return byClass(panel, className)[0] || null;
+}
+
+/** Press a button the way a reader does: a click that bubbles to the panel. */
+function press(button, event) {
+  button.fire(
+    "click",
+    Object.assign(
+      {
+        target: button,
+        button: 0,
+        preventDefault() {},
+        stopPropagation() {},
+      },
+      event || {},
+    ),
+  );
+}
+
+/** Click inside the panel, on one of its own elements. */
+function clickInside(panel, target) {
+  panel.fire("click", {
+    target: target || panel,
+    button: 0,
+    preventDefault() {},
+    stopPropagation() {},
+  });
 }
 
 /** Everything the panel reads out, depth first, text included. */
@@ -610,6 +673,125 @@ test("a click closes the notice before navigating", () => {
   });
 });
 
+/* ---------- clicking a block reference ---------- */
+
+/**
+ * Click `anchor` and report whether the handler kept the browser out.
+ *
+ * The browser's own navigation is what makes a hash route work at all — it
+ * writes the entry, fires `hashchange` and scrolls — so a click the reader
+ * "helps" with has to be judged by whether it asked the browser to stand down.
+ */
+function click(anchor, event) {
+  return fireClick(anchor.__content, anchor, event);
+}
+
+/**
+ * Dispatch a click on `anchor` through `content`, reporting whether the view
+ * asked the browser to stand down.
+ */
+function fireClick(content, anchor, event) {
+  let prevented = false;
+  content.fire(
+    "click",
+    Object.assign(
+      {
+        target: anchor,
+        button: 0,
+        preventDefault() {
+          prevented = true;
+        },
+        stopPropagation() {},
+      },
+      event || {},
+    ),
+  );
+
+  return prevented;
+}
+
+test("clicking a block reference leaves the navigation to the browser", () => {
+  setup(function (ctx) {
+    const { view, content, navigations } = ctx;
+    const anchor = link("#/doc/guide/intro.md#getting-started");
+    anchor.__content = content;
+    content.appendChild(anchor);
+    view.tag(content);
+
+    const prevented = click(anchor);
+
+    assert.equal(
+      prevented,
+      false,
+      "the browser must follow the href, which is what routes and scrolls",
+    );
+    assert.deepEqual(navigations, [], "the reader must not navigate a second time");
+  });
+});
+
+test("a modified click on a block reference is left alone as well", () => {
+  setup(function (ctx) {
+    const { view, content, navigations } = ctx;
+    const anchor = link("#/doc/guide/intro.md#getting-started");
+    anchor.__content = content;
+    content.appendChild(anchor);
+    view.tag(content);
+
+    assert.equal(click(anchor, { metaKey: true }), false);
+    assert.equal(click(anchor, { button: 1 }), false, "a middle click opens a tab");
+    assert.deepEqual(navigations, []);
+  });
+});
+
+test("clicking a link without a chapter still routes through the reader", () => {
+  setup(function (ctx) {
+    const { view, content, navigations } = ctx;
+    const anchor = link("#/doc/guide/intro.md");
+    anchor.__content = content;
+    content.appendChild(anchor);
+    view.tag(content);
+
+    const prevented = click(anchor);
+
+    assert.equal(prevented, true, "the reader owns this navigation");
+    assert.deepEqual(navigations, [{ id: "guide/intro.md", anchor: null }]);
+  });
+});
+
+test("clicking a block reference closes the preview it opened", () => {
+  setup(function (ctx) {
+    const { view, content, clock } = ctx;
+    const anchor = link("#/doc/guide/intro.md#getting-started");
+    anchor.__content = content;
+    content.appendChild(anchor);
+    view.tag(content);
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+    assert.equal(view.isOpen(), true);
+
+    click(anchor);
+
+    assert.equal(view.isOpen(), false, "the panel must not survive the navigation");
+  });
+});
+
+test("a broken reference still reports its chapter and keeps the route in the reader", () => {
+  setup(function (ctx) {
+    const { view, content, messages, navigations } = ctx;
+    const anchor = brokenLink("#/doc/guide/intro.md", "1.4 配色与字体");
+    anchor.__content = content;
+    content.appendChild(anchor);
+    view.tag(content);
+
+    const prevented = click(anchor);
+
+    assert.equal(prevented, true, "the document has no anchor to scroll to");
+    assert.deepEqual(messages, [{ docId: "guide/intro.md", anchor: "1.4 配色与字体" }]);
+    assert.deepEqual(navigations, [{ id: "guide/intro.md", anchor: null }]);
+  });
+});
+
 test("the preview closes once the pointer leaves it", () => {
   setup(function ({ view, content, clock }) {
     const anchor = link("#/doc/guide/intro.md#getting-started");
@@ -626,5 +808,599 @@ test("the preview closes once the pointer leaves it", () => {
 
     assert.equal(view.isOpen(), false);
     assert.equal(anchor.getAttribute("aria-expanded"), "false");
+  });
+});
+
+/* ---------- pinning ---------- */
+
+/** Open the ordinary preview of a fresh link and hand the panel back. */
+function openPreview(ctx, href) {
+  const anchor = link(href || "#/doc/guide/intro.md#getting-started");
+  ctx.content.appendChild(anchor);
+  ctx.view.tag(ctx.content);
+  ctx.content.fire("pointerover", { target: anchor, relatedTarget: null });
+  ctx.clock.runAll();
+
+  return { anchor, panel: panelOf(ctx.doc) };
+}
+
+test("the panel offers a pin and a close button", () => {
+  setup(function (ctx) {
+    const { panel } = openPreview(ctx);
+    const actions = byClass(panel, ACTIONS_CLASS)[0];
+
+    assert.ok(actions, "the buttons sit in their own group");
+    assert.ok(byClass(panel, HEAD_TEXT_CLASS)[0], "the head keeps its text column");
+
+    const pin = buttonOf(panel, PIN_CLASS);
+    assert.equal(pin.getAttribute("type"), "button");
+    assert.equal(pin.getAttribute("aria-pressed"), "false");
+    assert.equal(pin.getAttribute("aria-label"), PIN_LABEL);
+
+    const close = buttonOf(panel, CLOSE_CLASS);
+    assert.equal(close.getAttribute("type"), "button");
+    assert.equal(close.getAttribute("aria-label"), CLOSE_LABEL);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null, "a preview opens unpinned");
+  });
+});
+
+test("clicking inside the panel pins it", () => {
+  setup(function (ctx) {
+    const { panel } = openPreview(ctx);
+
+    clickInside(panel, byClass(panel, "preview-scroll")[0]);
+
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
+    assert.equal(buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"), "true");
+    assert.equal(buttonOf(panel, PIN_CLASS).getAttribute("aria-label"), UNPIN_LABEL);
+  });
+});
+
+test("a pinned preview survives the pointer leaving both the link and the panel", () => {
+  setup(function (ctx) {
+    const { view, content, clock } = ctx;
+    const { anchor, panel } = openPreview(ctx);
+    clickInside(panel);
+
+    content.fire("pointerout", { target: anchor, relatedTarget: null });
+    assert.deepEqual(clock.delays(), [], "a pinned panel arms no close timer");
+    clock.runAll();
+
+    panel.fire("pointerleave", {});
+    assert.deepEqual(clock.delays(), [], "leaving the panel arms no close timer");
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(anchor.getAttribute("aria-expanded"), "true");
+  });
+});
+
+test("a pinned preview survives a click elsewhere on the page", () => {
+  setup(function (ctx) {
+    const { view, content, doc, clock } = ctx;
+    const { panel } = openPreview(ctx);
+    clickInside(panel);
+
+    content.fire("click", { target: { closest: () => null }, button: 0 });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panelOf(doc), panel, "the same panel stays on screen");
+  });
+});
+
+test("a pinned preview survives a scroll", () => {
+  setup(function (ctx) {
+    const { view, clock, fire } = ctx;
+    const { panel } = openPreview(ctx);
+    clickInside(panel);
+
+    fire("scroll", {});
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
+  });
+});
+
+test("a pinned preview survives a navigation to another document", () => {
+  setup(function (ctx) {
+    const { view, content, clock, navigations } = ctx;
+    const { panel } = openPreview(ctx);
+    clickInside(panel);
+    const shown = byClass(panel, "preview-scroll")[0].innerHTML;
+
+    // Following a second reference: the panel describes the first chapter and
+    // stays where it is, while the click still navigates. A sound block
+    // reference is followed by the browser, so the navigation happens there
+    // rather than through `onNavigate` — either way it is one navigation.
+    const other = link("#/doc/guide/intro.md#getting-started");
+    content.appendChild(other);
+    view.tag(content);
+    const prevented = fireClick(content, other);
+    clock.runAll();
+
+    assert.equal(prevented, false, "the browser follows the reference");
+    assert.deepEqual(navigations, []);
+    assert.equal(view.isOpen(), true, "navigating does not dismiss a pinned panel");
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
+    assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, shown, "the content is unchanged");
+  });
+});
+
+/* ---------- pointer movement inside a link ---------- */
+
+/**
+ * A link as the reader receives it from Markdown, with inline children.
+ *
+ * `[测试](doc.md#chapter)` may carry `<code>`, `<strong>` or a second `<a>` in
+ * its label, and a pointer moving across that label crosses those children
+ * without ever leaving the link. The browser then fires `pointerover` on each
+ * child it enters, which is the sequence that used to restart the open timer
+ * for as long as the hand moved.
+ */
+function nestedLink(href) {
+  const anchor = link(href);
+  const inner = fakeElement("code");
+  anchor.appendChild(inner);
+  return { anchor, inner };
+}
+
+/**
+ * Move the pointer in the way a browser reports it.
+ *
+ * Crossing from `from` to `to` fires, in this order: `pointerout` on `from`,
+ * `pointerover` on `to`, then the boundary events `pointerleave` on `from` and
+ * `pointerenter` on `to` (a browser derives those from the pair and, with an
+ * `over`/`out` listener on an ancestor, does dispatch them). A test that fires
+ * only the `pointerover` half never reproduces what a hand actually does.
+ */
+function movePointer(content, from, to) {
+  content.fire("pointerout", { target: from, relatedTarget: to });
+  content.fire("pointerover", { target: to, relatedTarget: from });
+  content.fire("pointerleave", { target: from, relatedTarget: to });
+  content.fire("pointerenter", { target: to, relatedTarget: from });
+}
+
+/** Move the pointer onto `to` from somewhere outside every link. */
+function enterPointer(content, to) {
+  movePointer(content, fakeElement("p"), to);
+}
+
+test("moving between the children of one link does not restart the open timer", () => {
+  setup(function ({ view, content, clock }) {
+    const { anchor, inner } = nestedLink("#/doc/guide/intro.md#getting-started");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    enterPointer(content, anchor);
+    assert.deepEqual(clock.delays(), [HOVER_DELAY_MS], "the first hover arms the timer");
+
+    // The pointer is still on the link, it has merely crossed into the code
+    // span inside its label: the browser reports an `out` and an `over` pair
+    // whose `relatedTarget` sits inside the same link.
+    movePointer(content, anchor, inner);
+    assert.deepEqual(
+      clock.delays(),
+      [HOVER_DELAY_MS],
+      "crossing into the link's own child must not arm a second timer",
+    );
+
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true, "the preview must still open after the delay");
+  });
+});
+
+test("crossing a link with nested elements opens its preview", () => {
+  setup(function ({ view, content, clock }) {
+    const { anchor, inner } = nestedLink("#/doc/guide/intro.md#getting-started");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    enterPointer(content, anchor);
+    movePointer(content, anchor, inner);
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(anchor.getAttribute("aria-expanded"), "true");
+  });
+});
+
+test("a pointer leaving a link for its own child keeps the preview open", () => {
+  setup(function ({ view, content, clock }) {
+    const { anchor, inner } = nestedLink("#/doc/guide/intro.md#getting-started");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    enterPointer(content, anchor);
+    clock.runAll();
+    assert.equal(view.isOpen(), true);
+
+    movePointer(content, anchor, inner);
+    assert.deepEqual(clock.delays(), [], "moving inside the link arms no close timer");
+    clock.runAll();
+    assert.equal(view.isOpen(), true);
+  });
+});
+
+test("a pointer leaving the link for the page starts the close delay", () => {
+  setup(function ({ view, content, clock }) {
+    const { anchor } = nestedLink("#/doc/guide/intro.md#getting-started");
+    const outside = fakeElement("p");
+    content.appendChild(anchor);
+    content.appendChild(outside);
+    view.tag(content);
+
+    enterPointer(content, anchor);
+    clock.runAll();
+    assert.equal(view.isOpen(), true);
+
+    movePointer(content, anchor, outside);
+    assert.deepEqual(clock.delays(), [CLOSE_DELAY_MS], "leaving the link waits before closing");
+    clock.runAll();
+
+    assert.equal(view.isOpen(), false);
+  });
+});
+
+test("repeated hovers over one link arm exactly one timer", () => {
+  setup(function ({ view, content, clock }) {
+    const { anchor, inner } = nestedLink("#/doc/guide/intro.md#getting-started");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    enterPointer(content, anchor);
+    for (let index = 0; index < 4; index += 1) {
+      movePointer(content, anchor, inner);
+      movePointer(content, inner, anchor);
+    }
+
+    assert.deepEqual(
+      clock.delays(),
+      [HOVER_DELAY_MS],
+      "a pointer that keeps moving must not pile up timers",
+    );
+  });
+});
+
+test("a closed preview reopens when the same link is hovered again", () => {
+  setup(function ({ view, content, clock }) {
+    const anchor = link("#/doc/guide/intro.md#getting-started");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    enterPointer(content, anchor);
+    clock.runAll();
+    assert.equal(view.isOpen(), true);
+
+    // Closed by a scroll while the pointer never left the link: the reader is
+    // asking to see the chapter again the moment they move back onto it.
+    clock.fire("scroll", {});
+    assert.equal(view.isOpen(), false);
+
+    enterPointer(content, anchor);
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true, "the link must be previewable again");
+  });
+});
+
+test("a full enter/leave/enter cycle reopens the preview", () => {
+  setup(function ({ view, content, clock }) {
+    const anchor = link("#/doc/guide/intro.md#getting-started");
+    const outside = fakeElement("p");
+    content.appendChild(anchor);
+    content.appendChild(outside);
+    view.tag(content);
+
+    enterPointer(content, anchor);
+    clock.runAll();
+    assert.equal(view.isOpen(), true);
+
+    movePointer(content, anchor, outside);
+    clock.runAll();
+    assert.equal(view.isOpen(), false);
+
+    movePointer(content, outside, anchor);
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true, "hovering again after a close must open again");
+  });
+});
+
+test("a close armed before re-entering the link never fires", () => {
+  setup(function ({ view, content, clock }) {
+    const anchor = link("#/doc/guide/intro.md#getting-started");
+    const outside = fakeElement("p");
+    content.appendChild(anchor);
+    content.appendChild(outside);
+    view.tag(content);
+
+    enterPointer(content, anchor);
+    clock.runAll();
+    assert.equal(view.isOpen(), true);
+
+    // Leaving arms the close delay, and re-entering right after cancels it.
+    movePointer(content, anchor, outside);
+    movePointer(content, outside, anchor);
+
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true, "the stale close timer must not close the panel");
+  });
+});
+
+test("a superseded open timer does not open the wrong link", () => {
+  setup(function ({ view, content, clock, doc }) {
+    const first = link("#/doc/guide/intro.md#getting-started");
+    const second = brokenLink("#/doc/guide/intro.md", "1.4 配色与字体");
+    content.appendChild(first);
+    content.appendChild(second);
+    view.tag(content);
+
+    enterPointer(content, first);
+    movePointer(content, first, second);
+
+    clock.runAll();
+
+    const panel = panelOf(doc);
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), "true", "the second link is the one shown");
+  });
+});
+
+test("the panel builds its icons through the document, not through the svg", () => {
+  setup(function (ctx) {
+    const { view, doc, content, clock } = ctx;
+    const anchor = link("#/doc/guide/intro.md#getting-started");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    // A real `SVGElement` has no `createElementNS`, so an icon that builds its
+    // own `<path>` throws and the panel never appears — the defect that made
+    // hovering do nothing in a browser while this file stayed green. Every SVG
+    // node must therefore be created by the document.
+    const panel = panelOf(doc);
+    assert.ok(panel, "the panel must exist");
+    const paths = [];
+    (function walk(node) {
+      (node.children || []).forEach(function (child) {
+        if (child.tagName === "PATH") {
+          paths.push(child);
+        }
+        walk(child);
+      });
+    })(panel);
+
+    assert.equal(paths.length, 5, "the pin and the cross draw five strokes");
+    const createdByDocument = doc.created.filter((element) => element.tagName === "PATH");
+    assert.equal(
+      createdByDocument.length,
+      paths.length,
+      "every path must come from `document.createElementNS`",
+    );
+  });
+});
+
+test("a pinned panel ignores pointer boundary events", () => {
+  setup(function (ctx) {
+    const { view, content, clock } = ctx;
+    const { panel } = openPreview(ctx);
+    clickInside(panel);
+    const shown = byClass(panel, "preview-scroll")[0].innerHTML;
+
+    const other = link("#/doc/guide/intro.md#getting-started");
+    content.appendChild(other);
+    view.tag(content);
+
+    enterPointer(content, other);
+    assert.deepEqual(clock.delays(), [], "no preview is scheduled over a pinned one");
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, shown);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
+  });
+});
+
+test("hovering another reference leaves a pinned preview alone", () => {
+  setup(function (ctx) {
+    const { view, content, clock } = ctx;
+    const { panel } = openPreview(ctx);
+    clickInside(panel);
+    const shown = byClass(panel, "preview-scroll")[0].innerHTML;
+
+    const other = brokenLink("#/doc/guide/intro.md", "1.4 配色与字体");
+    content.appendChild(other);
+    ctx.view.tag(content);
+
+    content.fire("pointerover", { target: other, relatedTarget: null });
+    assert.deepEqual(clock.delays(), [], "no preview is scheduled over a pinned one");
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), null, "the pinned role is unchanged");
+    assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, shown);
+  });
+});
+
+test("the pin button pins and unpins an open preview", () => {
+  setup(function (ctx) {
+    const { view, content, clock } = ctx;
+    const { anchor, panel } = openPreview(ctx);
+    const pin = buttonOf(panel, PIN_CLASS);
+
+    press(pin);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
+    assert.equal(pin.getAttribute("aria-pressed"), "true");
+    assert.equal(pin.getAttribute("aria-label"), UNPIN_LABEL);
+
+    press(pin);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
+    assert.equal(pin.getAttribute("aria-pressed"), "false");
+    assert.equal(pin.getAttribute("aria-label"), PIN_LABEL);
+
+    // Unpinning hands the panel back to the pointer: leaving closes it.
+    assert.equal(view.isOpen(), true, "the panel stays while the click is still on it");
+    content.fire("pointerout", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), false);
+  });
+});
+
+test("the close button closes a pinned preview and clears its state", () => {
+  setup(function (ctx) {
+    const { view, content, clock, doc } = ctx;
+    const { anchor, panel } = openPreview(ctx);
+    clickInside(panel);
+
+    press(buttonOf(panel, CLOSE_CLASS));
+    clock.runAll();
+
+    assert.equal(view.isOpen(), false);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null, "no pinned frame is left behind");
+    assert.equal(panel.hidden, true);
+    assert.equal(anchor.getAttribute("aria-expanded"), "false");
+    assert.equal(panelOf(doc), panel, "the panel is still the one instance");
+
+    // The next hover opens an unpinned preview again.
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
+    assert.equal(buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"), "false");
+  });
+});
+
+test("clicking the reference a pinned panel describes unpins and closes it", () => {
+  setup(function (ctx) {
+    const { view, content, clock, navigations } = ctx;
+    const { anchor, panel } = openPreview(ctx);
+    clickInside(panel);
+
+    let prevented = false;
+    content.fire("click", {
+      target: anchor,
+      button: 0,
+      preventDefault() {
+        prevented = true;
+      },
+    });
+    clock.runAll();
+
+    assert.equal(prevented, true, "the browser must not follow the link as well");
+    assert.equal(view.isOpen(), false);
+    assert.deepEqual(navigations, [], "closing the panel is not a navigation");
+    assert.equal(anchor.getAttribute("aria-expanded"), "false");
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
+  });
+});
+
+test("escape still closes a pinned preview", () => {
+  setup(function (ctx) {
+    const { view, clock, fire } = ctx;
+    const { panel } = openPreview(ctx);
+    clickInside(panel);
+
+    fire("keydown", { key: "Escape" });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), false);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
+  });
+});
+
+test("hovering the reference again reopens the preview after it was closed", () => {
+  setup(function (ctx) {
+    const { view, content, clock } = ctx;
+    const { anchor, panel } = openPreview(ctx);
+    clickInside(panel);
+    press(buttonOf(panel, PIN_CLASS));
+
+    // Closed on purpose while the pointer is elsewhere: the panel forgets both
+    // the pin and the link it described, so the next hover is an ordinary
+    // first hover rather than one the old anchor could dismiss.
+    press(buttonOf(panel, CLOSE_CLASS));
+    clock.runAll();
+    assert.equal(view.isOpen(), false);
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
+    assert.equal(anchor.getAttribute("aria-expanded"), "true");
+  });
+});
+
+test("unpinning with the pointer away closes the panel after the delay", () => {
+  setup(function (ctx) {
+    const { view, content, clock } = ctx;
+    const { anchor, panel } = openPreview(ctx);
+    clickInside(panel);
+
+    content.fire("pointerout", { target: anchor, relatedTarget: null });
+    clock.runAll();
+    assert.equal(view.isOpen(), true, "a pinned panel ignores the pointer");
+
+    press(buttonOf(panel, PIN_CLASS));
+    assert.equal(view.isOpen(), true, "the click is still on the panel");
+    assert.deepEqual(clock.delays(), [CLOSE_DELAY_MS], "the grace period comes back");
+
+    clock.runAll();
+    assert.equal(view.isOpen(), false);
+  });
+});
+
+test("a notice can be pinned and closed with the same two buttons", () => {
+  setup(function (ctx) {
+    const { view, content, clock, doc } = ctx;
+    const anchor = brokenLink("#/doc/guide/intro.md", "1.4 配色与字体");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    const panel = panelOf(doc);
+    clickInside(panel);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
+    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), "true");
+
+    content.fire("pointerout", { target: anchor, relatedTarget: null });
+    clock.runAll();
+    assert.equal(view.isOpen(), true, "a pinned notice stays too");
+
+    press(buttonOf(panel, CLOSE_CLASS));
+    clock.runAll();
+
+    assert.equal(view.isOpen(), false);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
+    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), null);
+  });
+});
+
+test("switching documents keeps a pinned preview and drops nothing of it", () => {
+  setup(function (ctx) {
+    const { view, content, clock, doc } = ctx;
+    const { panel } = openPreview(ctx);
+    clickInside(panel);
+    const shown = byClass(panel, "preview-scroll")[0].innerHTML;
+
+    // A render replaces the article and re-tags the new links; the panel lives
+    // on `body`, so nothing it holds is touched.
+    view.tag(content);
+    content.fire("pointerout", { target: content, relatedTarget: null });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, shown);
+    assert.equal(panelOf(doc), panel);
   });
 });

@@ -957,10 +957,21 @@ a {
 }
 
 /* The head stays put while the body scrolls, so a long preview always says
-   which chapter it is. */
+   which chapter it is. It is two columns: the name, which may be long and is
+   therefore the only thing allowed to shrink, and the buttons, which must keep
+   their size however long the chapter title turns out to be. */
 .preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   padding: 10px 14px 9px;
   border-bottom: 1px solid var(--border);
+}
+
+.preview-head-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .preview-title {
@@ -982,6 +993,71 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.preview-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+/* The head's buttons borrow the banner's close button: a bordered-less icon
+   that is quiet until the pointer or the keyboard reaches it. */
+.preview-pin,
+.preview-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.preview-pin:hover,
+.preview-close:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.preview-pin:focus-visible,
+.preview-close:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A pinned panel is held, not shown: the button that holds it says so, so the
+   reader can always tell whether the panel will survive the next pointer move. */
+.preview-pin[aria-pressed="true"] {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.preview-pin svg,
+.preview-close svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Held in place reads on the frame as well: a panel that no longer follows the
+   pointer is drawn as something that stays. The entrance animation is dropped
+   with it — nothing arrives once the reader has claimed it. */
+.preview-popover[data-pinned="true"] {
+  border-color: var(--accent);
+  animation: none;
 }
 
 /* An inherited smooth scroll would animate the preview's own scrollbar, which
@@ -1146,6 +1222,13 @@ a {
 
 .preview-popover[data-missing] .preview-title {
   color: rgba(240, 160, 64, 0.95);
+}
+
+/* A pinned notice keeps its warning frame: the notice is not the colour of an
+   error, it is the colour of the reference the reader is asking about. */
+.preview-popover[data-missing][data-pinned="true"] {
+  border-color: rgba(240, 160, 64, 0.45);
+  border-left: 3px solid rgba(240, 160, 64, 0.85);
 }
 
 .preview-missing-title {

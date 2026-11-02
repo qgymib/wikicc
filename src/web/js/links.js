@@ -109,6 +109,39 @@ export function missingAnchorOf(value) {
 }
 
 /**
+ * Normalised form of a document route, for comparing two addresses.
+ *
+ * Both halves are decoded, so the build's escaping (`#34-%E6%8A%80%E6%9C%AF`)
+ * and a spelling that reached the address bar decoded (`#34-技术`) compare
+ * equal — they address the same chapter and must not look like two routes.
+ */
+function routeKey(href) {
+  var link = parseDocLink(href);
+  if (!link) {
+    return null;
+  }
+
+  return link.id + "\u0000" + (link.anchor === null ? "" : link.anchor);
+}
+
+/**
+ * Whether `href` addresses the route the page is already showing.
+ *
+ * A link to the current route cannot be followed by changing `location.hash`:
+ * the browser sees the same address and fires no `hashchange`, so the reader
+ * would scroll nowhere while the document never re-renders. Callers use this to
+ * decide who walks the reader to the chapter.
+ */
+export function isSameRoute(currentHash, href) {
+  var current = routeKey(currentHash);
+  if (current === null) {
+    return false;
+  }
+
+  return current === routeKey(href);
+}
+
+/**
  * Whether a click on a link should be handled by the reader.
  *
  * Modified clicks (a new tab, a new window, a download) and clicks on another

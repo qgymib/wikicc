@@ -10,6 +10,7 @@ import {
   MISSING_CLASS,
   isBlockReference,
   isPlainLeftClick,
+  isSameRoute,
   missingAnchorOf,
   parseDocLink,
 } from "../../src/web/js/links.js";
@@ -92,6 +93,41 @@ test("a marked link still reads as a block reference only with a chapter", () =>
   // *message* off the mark, not conflate the two.
   assert.equal(isBlockReference("#/doc/a.md"), false);
   assert.equal(missingAnchorOf("gone"), "gone");
+});
+
+test("a link that addresses the current route is recognised as the same route", () => {
+  assert.equal(isSameRoute("#/doc/a.md", "#/doc/a.md"), true);
+  assert.equal(isSameRoute("#/doc/a.md#chapter", "#/doc/a.md#chapter"), true);
+
+  assert.equal(
+    isSameRoute("#/doc/a.md#chapter", "#/doc/a.md"),
+    false,
+    "another chapter of the same document is a different route",
+  );
+  assert.equal(isSameRoute("#/doc/a.md", "#/doc/b.md"), false);
+  assert.equal(isSameRoute("#/doc/a.md#x", "#/doc/b.md#x"), false);
+});
+
+test("the same route is recognised whatever the percent encoding", () => {
+  // The build escapes non-ASCII anchors; an address bar, a hand-written href or
+  // an older artifact may carry the decoded spelling instead.
+  assert.equal(
+    isSameRoute("#/doc/a.md#第一章", "#/doc/a.md#%E7%AC%AC%E4%B8%80%E7%AB%A0"),
+    true,
+  );
+  assert.equal(
+    isSameRoute("#/doc/%E4%B8%AD%E6%96%87.md#34-%E6%8A%80%E6%9C%AF", "#/doc/中文.md#34-技术"),
+    true,
+  );
+});
+
+test("an empty current address or a foreign href is never the same route", () => {
+  for (const current of ["", "#", "#/doc/", null, undefined]) {
+    assert.equal(isSameRoute(current, "#/doc/a.md"), false, `current: ${String(current)}`);
+  }
+  for (const href of ["https://example.com", "#anchor", "a.md", null, undefined]) {
+    assert.equal(isSameRoute("#/doc/a.md", href), false, `href: ${String(href)}`);
+  }
 });
 
 test("only an unmodified left click is handled by the reader", () => {

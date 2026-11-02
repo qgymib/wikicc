@@ -17,11 +17,41 @@
  * cross — without the grace period the panel would close under the hand that is
  * about to scroll it.
  *
+ * A preview can also be *pinned*. Every delay above is a guess at what the
+ * pointer meant; a click on the panel is not a guess, it is the reader saying
+ * they want the chapter at hand while they read something else. So a click
+ * inside the panel, or on its pin button, turns every automatic dismissal off:
+ * the pointer may leave, the reader may click elsewhere, follow another
+ * reference, or land in another document, and the panel keeps the chapter it
+ * opened with. Only an explicit act ends it — the close button, the pin button
+ * again, a second click on the reference it describes, or Escape.
+ *
+ * Pinned means *held in place*, not *following*: the panel is positioned once,
+ * against the link it describes, and `position: fixed` does not move with the
+ * document. Re-anchoring it on scroll or on a navigation would either drag it
+ * away from the chapter it shows or park it at a paragraph the reader is no
+ * longer looking at, so the panel stays where the reader put it instead.
+ *
  * The panel is appended to `document.body` and positioned with `position:
  * fixed`, the same way the table filter panel works: the document body clips
  * overflow in places, and a panel nested inside it would be cut off. Only one
- * panel exists at a time, and it is disposed whenever a new document is
- * rendered.
+ * panel exists at a time, so every document the reader opens shares it: a
+ * document change does not dispose of it, and a pinned panel therefore survives
+ * one untouched.
+ *
+ * Building the panel must never fail: it is built lazily inside the open
+ * timer, so an exception here does not surface as an error a reader can see —
+ * it surfaces as *nothing happening*, which is the hardest failure to diagnose.
+ * Every node the panel owns is therefore created the way the DOM requires:
+ * an SVG child comes from `document.createElementNS` and is appended to its
+ * parent, because an `SVGElement` carries no `createElementNS` of its own.
+ *
+ * A click is where this module hands over. A sound block reference is already a
+ * hash route, so the browser follows it: it writes the history entry, fires
+ * `hashchange` and scrolls to the chapter without a second render racing the
+ * scroll. Only a reference the build marked as broken is routed from here,
+ * because its route carries no anchor to scroll to and its message has to be
+ * queued for the render the click causes.
  */
 import * as Links from "./links.js";
 import * as Preview from "./preview.js";
@@ -36,6 +66,14 @@ export var CLOSE_DELAY_MS = 140;
 
 /** Gap between the link and the panel, in pixels. */
 export var GAP_PX = 8;
+
+/**
+ * Namespace of the inline icons in the panel's head.
+ *
+ * An SVG child must be created in this namespace by `document`; the icons are
+ * drawn inline so the page loads no asset and no icon font.
+ */
+var SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 /** Smallest distance from the viewport edge the panel keeps. */
 var MARGIN_PX = 10;
@@ -65,6 +103,35 @@ export var PREVIEW_LABEL = "Chapter preview";
 /** Accessible name of the popover while it shows a notice. */
 export var MISSING_LABEL = "Broken reference";
 
+/**
+ * Attribute marking the popover as pinned, used by the stylesheet.
+ *
+ * The panel is the same element pinned or not; this bit is what lets the frame
+ * say "held in place" without a second class on the root.
+ */
+export var PIN_ATTRIBUTE = "data-pinned";
+
+/** Class of the pin button in the head. */
+export var PIN_CLASS = "preview-pin";
+
+/** Class of the close button in the head. */
+export var CLOSE_CLASS = "preview-close";
+
+/** Class of the group holding the head's buttons, kept apart from the title. */
+export var ACTIONS_CLASS = "preview-actions";
+
+/** Class of the column holding the title and the path. */
+export var HEAD_TEXT_CLASS = "preview-head-text";
+
+/** Accessible name of the pin button while the panel is not pinned. */
+export var PIN_LABEL = "Pin preview";
+
+/** Accessible name of the pin button while the panel is pinned. */
+export var UNPIN_LABEL = "Unpin preview";
+
+/** Accessible name of the close button. */
+export var CLOSE_LABEL = "Close preview";
+
 /** Heading of a notice: what went wrong, in three words. */
 export var MISSING_TITLE = "Chapter not found";
 
@@ -78,9 +145,11 @@ export var MISSING_TAIL = " exists in this document.";
  *
  * `content` is the element whose links are watched; `byId` maps a document id to
  * its payload model; `theme` returns the theme currently in effect, because
- * diagrams bake their colours into the SVG; `onNavigate` is called instead of
- * letting the browser follow a link, so the preview and the click share one
- * route.
+ * diagrams bake their colours into the SVG; `onNavigate` takes over a click on a
+ * link the browser cannot finish on its own — a broken reference, or a document
+ * link without a chapter — so the preview and the click share one route. A
+ * sound block reference is left to the browser, which routes and scrolls it in
+ * one step.
  */
 export function createPreviewView(options) {
   var content = options.content;
@@ -105,12 +174,19 @@ export function createPreviewView(options) {
   var noticeText = null;
   var noticeDoc = null;
   var noticeChapter = null;
+  // The head's two buttons, so their state can follow the pin without a query.
+  var pinButton = null;
+  var closeButton = null;
   var openTimer = 0;
   var closeTimer = 0;
   // The link the panel currently describes, and the one it is about to.
   var anchor = null;
   var pending = null;
   var listening = false;
+  // Whether the reader has claimed the panel. Only a click sets it, and only an
+  // explicit act — a button, a second click on `anchor`, Escape — clears it, so
+  // every automatic dismissal asks `isPinned()` before it acts.
+  var pinned = false;
 
   function view() {
     return globalThis;
@@ -145,14 +221,37 @@ export function createPreviewView(options) {
     var head = document.createElement("div");
     head.className = "preview-head";
 
+    // The head is two columns: the chapter's name, which may be long and is
+    // therefore the one allowed to shrink, and the buttons, which must not.
+    var headText = document.createElement("div");
+    headText.className = HEAD_TEXT_CLASS;
+
     title = document.createElement("p");
     title.className = "preview-title";
 
     path = document.createElement("p");
     path.className = "preview-path";
 
-    head.appendChild(title);
-    head.appendChild(path);
+    headText.appendChild(title);
+    headText.appendChild(path);
+
+    var actions = document.createElement("div");
+    actions.className = ACTIONS_CLASS;
+
+    pinButton = iconButton("pin", PIN_CLASS, PIN_LABEL, pinSvg);
+    pinButton.setAttribute("aria-pressed", "false");
+    pinButton.addEventListener("click", onPinClick);
+
+    // The reader already holds this panel when they reach for its buttons, so a
+    // close here must not be read as "a click inside the panel" and pin it.
+    closeButton = iconButton("close", CLOSE_CLASS, CLOSE_LABEL, closeSvg);
+    closeButton.addEventListener("click", onCloseClick);
+
+    actions.appendChild(pinButton);
+    actions.appendChild(closeButton);
+
+    head.appendChild(headText);
+    head.appendChild(actions);
 
     // The notice: a heading and one sentence. The document and the chapter are
     // their own `<code>` elements filled with `textContent`, because a path and
@@ -195,7 +294,111 @@ export function createPreviewView(options) {
       scheduleClose();
     });
 
+    // Reading the panel is reaching for it: a click anywhere inside it says the
+    // reader wants this chapter at hand, and the delays stop applying.
+    panel.addEventListener("click", onPanelClick);
+
     return panel;
+  }
+
+  /** Whether the reader holds the panel, so no delay may take it away. */
+  function isPinned() {
+    return pinned && !!panel && !panel.hidden;
+  }
+
+  /**
+   * Write the pin state through every place that shows it.
+   *
+   * One function owns the field, the frame's attribute and the button's state,
+   * so the three can never disagree — a frame that says "pinned" over a button
+   * that says otherwise is the one bug this state invites.
+   */
+  function setPinned(value) {
+    pinned = !!value;
+
+    if (!panel) {
+      return;
+    }
+
+    if (pinned) {
+      panel.setAttribute(PIN_ATTRIBUTE, "true");
+    } else {
+      panel.removeAttribute(PIN_ATTRIBUTE);
+    }
+
+    if (pinButton) {
+      pinButton.setAttribute("aria-pressed", pinned ? "true" : "false");
+      pinButton.setAttribute("aria-label", pinned ? UNPIN_LABEL : PIN_LABEL);
+      pinButton.setAttribute("title", pinned ? UNPIN_LABEL : PIN_LABEL);
+    }
+  }
+
+  /** A head button: an icon, a name and the button semantics it needs. */
+  function iconButton(kind, className, label, draw) {
+    var button = document.createElement("button");
+    button.className = className;
+    button.setAttribute("type", "button");
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+    button.setAttribute("data-icon", kind);
+    button.appendChild(draw());
+
+    return button;
+  }
+
+  /**
+   * Create a node in the SVG namespace.
+   *
+   * `createElementNS` belongs to `document` alone: an `SVGElement` does not
+   * carry it, so asking the element to create its own children throws
+   * `createElementNS is not a function` and takes the whole panel down with it.
+   * Every SVG node is therefore built by the document and appended to its
+   * parent. The fallback keeps a DOM without `createElementNS` working, the
+   * same way the panel itself degrades.
+   */
+  function svgNode(name) {
+    var node = document.createElementNS
+      ? document.createElementNS(SVG_NAMESPACE, name)
+      : document.createElement(name);
+
+    return node;
+  }
+
+  /** A button's drawing surface. */
+  function svgRoot() {
+    var svg = svgNode("svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+
+    return svg;
+  }
+
+  /** One stroke of a button's drawing, appended to its `svg`. */
+  function svgPath(parent, data) {
+    var element = svgNode("path");
+    element.setAttribute("d", data);
+    parent.appendChild(element);
+
+    return element;
+  }
+
+  /** The pin: a head and a needle, drawn inline so the page loads nothing. */
+  function pinSvg() {
+    var svg = svgRoot();
+    svgPath(svg, "M9 4h6");
+    svgPath(svg, "M10 4v6l-2.5 3h9L14 10V4");
+    svgPath(svg, "M12 13v7");
+
+    return svg;
+  }
+
+  /** The cross that closes the panel. */
+  function closeSvg() {
+    var svg = svgRoot();
+    svgPath(svg, "M6 6l12 12");
+    svgPath(svg, "M18 6 6 18");
+
+    return svg;
   }
 
   /**
@@ -373,11 +576,81 @@ export function createPreviewView(options) {
     }, HOVER_DELAY_MS);
   }
 
-  /** Start the close timer, cancelled when the pointer comes back. */
+  /**
+   * Start the close timer, cancelled when the pointer comes back.
+   *
+   * Every automatic dismissal ends up here — the pointer leaving the link or
+   * the panel, focus moving on — so a pinned panel is guarded in one place
+   * rather than in each of the handlers that ask for the timer.
+   */
   function scheduleClose() {
     clearOpenTimer();
     clearCloseTimer();
+
+    if (isPinned()) {
+      return;
+    }
+
     closeTimer = view().setTimeout(close, CLOSE_DELAY_MS);
+  }
+
+  /**
+   * A click inside the panel: the reader claims it.
+   *
+   * The buttons are the exception. Close throws the panel away; the pin has its
+   * own handler, and a click on it must not be an ordinary click first — that
+   * would make "unpin" impossible, since every click would pin again.
+   */
+  function onPanelClick(event) {
+    var target = event && event.target;
+    if (!target || target === pinButton || target === closeButton) {
+      return;
+    }
+
+    setPinned(true);
+  }
+
+  function onPinClick(event) {
+    stopEvent(event);
+
+    if (isPinned()) {
+      unpin();
+      return;
+    }
+
+    if (panel && !panel.hidden) {
+      setPinned(true);
+    }
+  }
+
+  function onCloseClick(event) {
+    stopEvent(event);
+    close();
+  }
+
+  /**
+   * Release the panel back to the delays.
+   *
+   * The pointer may already be somewhere else — the click that unpinned came
+   * from either place — so the panel is kept only while it is still under the
+   * pointer, which `scheduleClose` decides on the usual grace period.
+   */
+  function unpin() {
+    setPinned(false);
+    scheduleClose();
+  }
+
+  /** Keep a button press from reaching the panel, the document and the link. */
+  function stopEvent(event) {
+    if (!event) {
+      return;
+    }
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
   }
 
   /** Hide the panel and drop what it showed. */
@@ -385,6 +658,9 @@ export function createPreviewView(options) {
     clearOpenTimer();
     clearCloseTimer();
     pending = null;
+    // A closed panel is nobody's: the pin goes with the content, or the next
+    // hover would inherit a frame that claims to be held in place.
+    setPinned(false);
 
     if (!panel) {
       anchor = null;
@@ -419,6 +695,12 @@ export function createPreviewView(options) {
   }
 
   function onPointerOver(event) {
+    // The reader has claimed the panel; a pointer crossing the document is not
+    // an instruction to replace what it shows.
+    if (isPinned()) {
+      return;
+    }
+
     var link = linkFrom(event);
     if (link) {
       scheduleOpen(link);
@@ -458,16 +740,29 @@ export function createPreviewView(options) {
   }
 
   function onScroll() {
-    // The panel is positioned against the viewport and does not follow the
+    // A pinned panel was placed by the reader and stays where they left it; an
+    // unpinned one is a hint about the paragraph under the pointer, and the
+    // panel is positioned against the viewport rather than following the
     // document, so scrolling would leave it pointing at the wrong paragraph.
+    if (isPinned()) {
+      return;
+    }
+
     close();
   }
 
   function onClick(event) {
+    // A click inside the panel is the reader reading it, not dismissing it; the
+    // panel's own handler turns that click into the pin.
+    if (panel && !panel.hidden && event.target && panel.contains(event.target)) {
+      return;
+    }
+
     var link = linkFrom(event);
     if (!link) {
-      // A click anywhere else is the reader dismissing the preview.
-      if (panel && !panel.hidden && !(event.target && panel.contains(event.target))) {
+      // A click anywhere else is the reader dismissing the preview — unless the
+      // preview is pinned, which only an explicit act may end.
+      if (panel && !panel.hidden && !isPinned()) {
         close();
       }
       return;
@@ -477,19 +772,34 @@ export function createPreviewView(options) {
       return;
     }
 
-    var destination = Links.parseDocLink(link.getAttribute("href"));
+    var href = link.getAttribute("href");
+    var destination = Links.parseDocLink(href);
     if (!destination) {
       return;
     }
 
-    event.preventDefault();
-    close();
+    // The reference a pinned panel describes is where the reader already is:
+    // clicking it again is how they let go, so it closes instead of navigating
+    // them to the chapter they are looking at.
+    if (isPinned() && link === anchor) {
+      event.preventDefault();
+      close();
+      return;
+    }
+
+    // Everything else is a navigation, and a navigation is not a reason to take
+    // away a panel the reader holds: it keeps the chapter it opened with while
+    // the document behind it changes.
+    if (!isPinned()) {
+      close();
+    }
 
     // The route of a broken reference carries no anchor, so a plain navigation
     // would open the document at its top with nothing to explain why. The
     // `onMissingChapter` hook carries the authored chapter into the navigation
     // instead, which keeps the message valid for exactly one render.
-    if (taggedMissing(link) && onMissingChapter) {
+    var broken = taggedMissing(link);
+    if (broken && onMissingChapter) {
       onMissingChapter({
         docId: destination.id,
         anchor: Links.missingAnchorOf(
@@ -498,6 +808,17 @@ export function createPreviewView(options) {
       });
     }
 
+    // A sound block reference is a plain hash route, so the browser is the best
+    // reader available: it writes the history entry, fires `hashchange` and
+    // scrolls to the chapter in one go. Routing it again here would replace
+    // that with a second render, whose fresh markup arrives *after* the scroll
+    // and leaves the reader at the top of the document. A broken reference has
+    // no anchor to hand the browser, so only that one stays routed by hand.
+    if (!broken && Links.isBlockReference(href)) {
+      return;
+    }
+
+    event.preventDefault();
     onNavigate(destination.id, destination.anchor);
   }
 
@@ -613,6 +934,8 @@ export function createPreviewView(options) {
     noticeText = null;
     noticeDoc = null;
     noticeChapter = null;
+    pinButton = null;
+    closeButton = null;
   }
 
   /** Re-render the open preview's diagrams after a theme change. */
@@ -635,5 +958,7 @@ export function createPreviewView(options) {
     isOpen: function () {
       return !!panel && !panel.hidden;
     },
+    /** Whether the reader holds the panel, for tests. */
+    isPinned: isPinned,
   };
 }

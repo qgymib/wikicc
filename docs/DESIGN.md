@@ -16,7 +16,8 @@ In scope:
 - local assets (images, audio, video, fonts, PDFs) embedded into the artifact;
 - hash routing with deep links to documents and headings;
 - block references: `[label](doc.md#chapter)` previews the named chapter (and
-  the chapters nested under it) on hover and navigates to it on click;
+  the chapters nested under it) on hover and navigates to it on click; a click
+  on the preview pins it, so it stays while the reader reads on;
 - link graph derived from relative Markdown links;
 - table sorting and filtering, full-text search, light/dark theme,
   build-time syntax highlighting and Mermaid diagrams;
@@ -264,6 +265,25 @@ script and the payload is embedded, so neither format depends on a server.
   reference statically (`.doc-link-missing`), and nothing about the route
   grammar changes. Reference definitions resolved through `refdefs` carry the
   same mark, so a link is treated identically wherever the author wrote it.
+- **A preview can be pinned.** Every delay in the popover is a guess at what
+  the pointer meant; a click on the panel is not a guess, so it turns all of
+  them off. A click inside the panel — or on its pin button — marks the popover
+  `data-pinned` and from then on the pointer may leave, the reader may click
+  elsewhere, follow another reference or land in another document without the
+  panel going away. Only an explicit act ends it: the close button, the pin
+  again, a second click on the reference the panel describes (which closes
+  instead of navigating, since the reader is already looking at that chapter),
+  or Escape. The guard sits in the three places that dismiss the panel
+  automatically — the close timer, the scroll handler and the click on the
+  document — so a new dismissal path cannot forget it.
+- **Pinned means held in place, not following.** The panel is positioned once,
+  against the link it describes, and `position: fixed` does not travel with the
+  document; re-anchoring it on scroll would drag it away from the chapter it
+  shows, and re-pointing it at a link in the next document would park it beside
+  a paragraph the reader is no longer reading. A pinned panel therefore keeps
+  both its place and its content. The head carries a pin and a close button, so
+  the two readings — "held" and "closed" — are separate acts rather than one
+  click that has to guess.
 - **Hovering a broken reference shows a notice, not the banner.** There is no
   chapter to preview, and saying so where the pointer already is answers the
   question it is asking. The notice reuses the block-reference popover — same
@@ -336,4 +356,3 @@ Quality gates for any change: `cargo fmt --check`,
 | Raw HTML passthrough | XSS if untrusted Markdown is compiled | documented as trusted-input behaviour; no sanitizer |
 | No incremental build | full rebuild on every run | acceptable at folder scale; the artifacts are deterministic |
 | A block ends at the next heading of *any* level, so it holds its own content only | none for a consumer: the block carries the outline itself, and `subtree` names the block plus every block nested under it, so a whole chapter is a lookup rather than a walk | the alternative — one block per chapter including its descendants — would repeat every paragraph under every ancestor and grow the payload with nesting depth; the compressed form is one body copy plus a few indices per block, and `tests/e2e.rs` asserts the join reproduces `doc.html` exactly |
-| `package-lock.json` resolves through an internal mirror | publishing outside that network needs a regenerated lockfile | regenerate against the public registry before release |

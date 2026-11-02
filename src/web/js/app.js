@@ -11,6 +11,7 @@
  * exports the controller so the same functions stay testable in isolation.
  */
 import * as Router from "./router.js";
+import * as Links from "./links.js";
 import * as Search from "./search.js";
 import * as DocList from "./doc-list.js";
 import * as Toc from "./toc.js";
@@ -173,19 +174,100 @@ export function start() {
     }
   }
 
+  /**
+   * Walk the reader to `route`'s chapter without rebuilding the document.
+   *
+   * Used when the requested address is the one already showing: the browser
+   * fires no `hashchange` for it, and a render here would tear the article down
+   * and put a fresh copy back — losing the very scroll position it had just
+   * been asked to reach. The document is already the right one, so only the
+   * chapter is resolved. An unknown document or chapter is not an error: the
+   * reader stays where they are, exactly as a navigation to nothing would.
+   */
+  function scrollToAnchorOnly(route) {
+    var doc = route && route.id ? byId.get(route.id) : null;
+    if (!doc) {
+      return;
+    }
+
+    docList.render(listedIds(doc.id), doc.id);
+    graph.setActive(doc.id);
+
+    if (!route.anchor) {
+      if (typeof globalThis.scrollTo === "function") {
+        globalThis.scrollTo(0, 0);
+      }
+      return;
+    }
+
+    scrollToAnchor(findAnchor(doc, route.anchor));
+  }
+
+  /**
+   * Scroll to `anchor` once more after the document has settled.
+   *
+   * A render inserts markup whose height keeps changing for a moment: diagrams
+   * replace their source blocks asynchronously, images arrive, fonts reflow.
+   * The scroll a render performs is therefore only the first attempt, and it
+   * can leave the reader short of the chapter. Two frames later the layout is
+   * stable enough to correct it. Environments without
+   * `requestAnimationFrame` — the node tests — get the single attempt.
+   */
+  function settleAtAnchor(doc, anchor, frames) {
+    if (!anchor) {
+      return;
+    }
+
+    var remaining = typeof frames === "number" ? frames : 2;
+    if (remaining <= 0 || typeof globalThis.requestAnimationFrame !== "function") {
+      scrollToAnchor(findAnchor(doc, anchor));
+      return;
+    }
+
+    globalThis.requestAnimationFrame(function () {
+      scrollToAnchor(findAnchor(doc, anchor));
+      settleAtAnchor(doc, anchor, remaining - 1);
+    });
+  }
+
   function navigate(id, anchor) {
     setDrawer(false);
     var hash = Router.formatHash(id, anchor);
-    if (globalThis.location.hash === hash) {
-      render();
-    } else {
-      globalThis.location.hash = hash;
+    // Compared as routes, not as strings: the address bar may hold either
+    // spelling of the same chapter, and only a *different* route makes the
+    // browser fire `hashchange`.
+    if (Links.isSameRoute(globalThis.location.hash, hash)) {
+      // The address already says this: setting it again would fire nothing, so
+      // the chapter is walked to directly instead of through a render.
+      scrollToAnchorOnly(Router.resolveRoute(hash, ids));
+      return;
     }
+
+    globalThis.location.hash = hash;
   }
 
   /** Ids matching the current filter, or `null` when the filter is empty. */
   function filteredIds() {
     return filter ? Search.search(index, filter.value) : null;
+  }
+
+  /**
+   * Ids the document list should show, keeping the open document in reach.
+   *
+   * The list is both a filter result and the place the reader looks to see what
+   * they are reading, so a filter that hides the open document would leave the
+   * sidebar pointing at nothing while the article behind it is on screen: a
+   * block reference followed while a filter is typed in would look like it went
+   * nowhere. The open document is therefore always listed; the filter decides
+   * only which of the *other* documents are.
+   */
+  function listedIds(activeId) {
+    var matched = filteredIds();
+    if (matched === null || !activeId || matched.indexOf(activeId) !== -1) {
+      return matched;
+    }
+
+    return [activeId].concat(matched);
   }
 
   /** Banner for a chapter the current document does not contain. */
@@ -309,7 +391,7 @@ export function start() {
       document.title = doc.title ? doc.title + " · " + bundle.title : bundle.title;
     }
 
-    docList.render(filteredIds(), route.id);
+    docList.render(listedIds(route.id), route.id);
     graph.setActive(route.id);
 
     // A banner explains the *previous* navigation, so it never outlives it.
@@ -326,6 +408,9 @@ export function start() {
     var found = findAnchor(doc, route.anchor);
     if (found) {
       scrollToAnchor(found);
+      // Fresh markup changes height while it settles — that is what diagrams
+      // and images do — so the chapter is walked to again once it has.
+      settleAtAnchor(doc, route.anchor);
     } else if (wanted && wanted.anchor) {
       showMissingChapter(wanted);
       // The document is opened from its top: there is no chapter to scroll to.
@@ -373,7 +458,7 @@ export function start() {
 
   if (filter) {
     filter.addEventListener("input", function () {
-      docList.render(filteredIds(), currentId);
+      docList.render(listedIds(currentId), currentId);
     });
     filter.addEventListener("keydown", function (event) {
       if (event.key === "Escape" && filter.value) {

@@ -379,6 +379,35 @@ fn the_page_carries_the_hover_preview() {
 }
 
 #[test]
+fn a_block_reference_addresses_the_anchor_its_document_emits() {
+    let bundle = build(&fixture_root(), "Fixture");
+    let readme = bundle
+        .docs
+        .iter()
+        .find(|doc| doc.id == "README.md")
+        .expect("the fixture has a README");
+
+    // The reader follows a block reference with the browser, so the href has to
+    // be the whole story: a route to the document *and* the chapter, naming the
+    // anchor the document really emits. Anything less and a click lands at the
+    // top of the page with nothing to scroll to.
+    for chapter in ["getting-started", "details"] {
+        let href = format!("#/doc/guide/intro.md#{chapter}");
+        assert!(
+            readme.html.contains(&format!(r#"href="{href}""#)),
+            "the block reference must carry {href}, found: {}",
+            readme.html
+        );
+    }
+
+    assert!(
+        !readme.html.contains(r#"data-wikicc-missing-anchor="#),
+        "a chapter of an existing document is not a missing chapter: {}",
+        readme.html
+    );
+}
+
+#[test]
 fn the_page_carries_the_missing_chapter_banner() {
     let bundle = build(&fixture_root(), "Fixture");
     let page = render(&bundle);
