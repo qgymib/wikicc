@@ -7,13 +7,11 @@
 
 use std::path::{Path, PathBuf};
 
-use mailparse::MailHeaderMap;
 use wikicc::options::OutputFormat;
 use wikicc::render::{RenderedSite, render_site};
 use wikicc::scan::scan;
 use wikicc::site::{SiteBuild, build_site};
-use wikicc::writers::mhtml::boundary_for;
-use wikicc::writers::{self, ASSETS_DIR_NAME, HTML_FILE_NAME, MHTML_FILE_NAME, WriteReport};
+use wikicc::writers::{self, ASSETS_DIR_NAME, HTML_FILE_NAME, WriteReport};
 
 /// Reference prefixes a `single-html` artifact may still contain.
 ///
@@ -29,13 +27,6 @@ const ALLOWED_REFERENCE_PREFIXES: [&str; 7] =
 const HTML_DIR_REFERENCE_PREFIXES: [&str; 7] = [
     "assets/", "#", "http://", "https://", "mailto:", "tel:", "//",
 ];
-
-/// Reference prefixes an `mhtml` artifact may contain.
-///
-/// Assets are MIME parts, so they are addressed by `cid:`; everything else is
-/// the same set of routes and author URLs as the other two formats.
-const MHTML_REFERENCE_PREFIXES: [&str; 7] =
-    ["cid:", "#", "http://", "https://", "mailto:", "tel:", "//"];
 
 /// The committed site fixture, which is `--strict` clean.
 fn fixture_root() -> PathBuf {
@@ -115,36 +106,6 @@ fn entry_names(dir: &Path) -> Vec<String> {
 
 fn read_page(dir: &Path) -> String {
     std::fs::read_to_string(dir.join(HTML_FILE_NAME)).expect("index.html is readable")
-}
-
-/// Parse `bytes` as a MIME message.
-///
-/// The archive is checked by a third-party parser instead of by string
-/// matching, so a header that only *looks* right does not pass the test.
-fn parse_archive(bytes: &[u8]) -> mailparse::ParsedMail<'_> {
-    mailparse::parse_mail(bytes).expect("the archive is a valid MIME message")
-}
-
-/// First value of header `name` on `part`, with folding removed.
-fn header(part: &mailparse::ParsedMail<'_>, name: &str) -> Option<String> {
-    part.get_headers().get_first_value(name)
-}
-
-/// The page the archive must carry: the rendered page with every placeholder
-/// replaced by the `cid:` reference of its asset.
-///
-/// This is computed independently of the writer (one `str::replace` per asset,
-/// where the writer does a single scan), so the comparison actually proves the
-/// addressing rather than re-running the same code.
-fn expected_mhtml_page() -> String {
-    let build = fixture_build();
-    let mut page = render(&build).html;
-
-    for (hash, _) in build.assets.iter() {
-        page = page.replace(&format!("wikicc-asset:{hash}"), &format!("cid:{hash}"));
-    }
-
-    page
 }
 
 /// Payload text embedded in a rendered page.
@@ -340,206 +301,28 @@ fn a_foreign_directory_is_refused_without_force() {
 }
 
 #[test]
-fn mhtml_writes_one_archive_file() {
+fn a_retired_archive_directory_is_refused_without_force() {
     let dir = tempfile::tempdir().expect("temp dir");
-    let report = write_fixture_in(OutputFormat::Mhtml, dir.path());
-
-    assert_eq!(entry_names(dir.path()), [MHTML_FILE_NAME]);
-    assert_eq!(report.files, 1);
-    assert_eq!(report.assets, fixture_build().assets.len());
-    assert_eq!(report.assets, 1);
-    assert_eq!(
-        report.bytes,
-        std::fs::metadata(dir.path().join(MHTML_FILE_NAME))
-            .expect("artifact metadata")
-            .len(),
-        "the report counts the bytes it wrote"
-    );
-    assert!(
-        report.bytes > 1_000_000,
-        "archive is {} bytes",
-        report.bytes
-    );
-}
-
-#[test]
-fn mhtml_archive_parses_into_one_part_per_resource() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    write_fixture_in(OutputFormat::Mhtml, dir.path());
-    let bytes = std::fs::read(dir.path().join(MHTML_FILE_NAME)).expect("archive");
-    let archive = parse_archive(&bytes);
+    std::fs::write(dir.path().join("index.mhtml"), "MIME-Version: 1.0").expect("write marker");
     let build = fixture_build();
+    let rendered = render(&build);
 
-    assert_eq!(archive.ctype.mimetype, "multipart/related");
-    assert_eq!(
-        archive.ctype.params.get("type").map(String::as_str),
-        Some("text/html")
-    );
-    let boundary = archive
-        .ctype
-        .params
-        .get("boundary")
-        .expect("the root declares its boundary");
-    assert_eq!(
-        boundary,
-        &boundary_for(&render(&build).html),
-        "the boundary must be derived from the page, so builds stay reproducible"
-    );
-    assert_eq!(
-        archive.subparts.len(),
-        1 + build.assets.len(),
-        "one HTML part plus one part per unique asset"
-    );
+    let error = writers::write_site(
+        OutputFormat::SingleHtml,
+        &build,
+        &rendered,
+        dir.path(),
+        false,
+    )
+    .expect_err("a directory holding only a retired artifact must be refused");
 
-    let root = &archive.subparts[0];
-    assert_eq!(root.ctype.mimetype, "text/html");
-    assert_eq!(root.ctype.charset, "utf-8");
-    assert_eq!(
-        header(root, "content-location").as_deref(),
-        Some("index.html")
-    );
-    assert_eq!(
-        header(root, "content-transfer-encoding").as_deref(),
-        Some("base64")
-    );
-
-    for (part, (hash, asset)) in archive.subparts[1..].iter().zip(build.assets.iter()) {
-        let location = writers::asset_relative_path(asset);
-        assert_eq!(hash, asset.hash, "parts follow the hash order of the table");
-        assert_eq!(
-            header(part, "content-location").as_deref(),
-            Some(&*location)
-        );
-        assert_eq!(header(part, "content-type").as_deref(), Some(&*asset.mime));
-        assert_eq!(
-            header(part, "content-id").as_deref(),
-            Some(&*format!("<{hash}>")),
-            "a `cid:` reference is only resolvable through Content-ID"
-        );
-        assert_eq!(
-            part.get_body_raw().expect("the part body decodes"),
-            asset.bytes,
-            "the part carries the original resource, not an encoding of it"
-        );
-    }
-}
-
-#[test]
-fn mhtml_html_part_is_the_rendered_page_with_cid_references() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    write_fixture_in(OutputFormat::Mhtml, dir.path());
-    let bytes = std::fs::read(dir.path().join(MHTML_FILE_NAME)).expect("archive");
-    let archive = parse_archive(&bytes);
-    let root = &archive.subparts[0];
-    let page = String::from_utf8(root.get_body_raw().expect("the page decodes"))
-        .expect("the page is UTF-8");
-
-    assert_eq!(
-        page,
-        expected_mhtml_page(),
-        "the HTML part is the single-html body with `cid:` instead of `data:`"
-    );
-    assert!(!page.contains("wikicc-asset:"));
     assert!(
-        !page.contains("data:image"),
-        "this format never inlines a payload into the markup"
+        error.to_string().contains("use --force to overwrite"),
+        "unexpected message: {error}"
     );
-
-    let value: serde_json::Value =
-        serde_json::from_str(payload_of(&page)).expect("the payload is still valid JSON");
-    assert_eq!(value["title"], "Fixture");
-    assert_eq!(value["docs"].as_array().map(Vec::len), Some(3));
-
-    let mut checked = 0;
-    for doc in value["docs"].as_array().expect("docs") {
-        let html = doc["html"].as_str().expect("doc html");
-        for attribute in ["src", "href"] {
-            for target in attribute_values(html, attribute) {
-                assert!(
-                    MHTML_REFERENCE_PREFIXES
-                        .iter()
-                        .any(|prefix| target.starts_with(prefix)),
-                    "{attribute}=\"{target}\" in {} is not a part, a route or an author URL",
-                    doc["id"]
-                );
-                if target.starts_with("cid:") {
-                    let hash = target.strip_prefix("cid:").expect("prefix");
-                    assert!(
-                        archive
-                            .subparts
-                            .iter()
-                            .any(|part| header(part, "content-id").as_deref()
-                                == Some(&*format!("<{hash}>"))),
-                        "cid:{hash} has no MIME part"
-                    );
-                    checked += 1;
-                }
-            }
-        }
-    }
-
-    assert!(checked >= 1, "the fixture references one asset");
-}
-
-#[test]
-fn mhtml_envelope_is_crlf_only_and_folded() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    write_fixture_in(OutputFormat::Mhtml, dir.path());
-    let bytes = std::fs::read(dir.path().join(MHTML_FILE_NAME)).expect("archive");
-
-    for (index, byte) in bytes.iter().enumerate() {
-        if *byte == b'\n' {
-            assert!(
-                index > 0 && bytes[index - 1] == b'\r',
-                "a bare LF at offset {index} would break the MIME envelope"
-            );
-        }
-    }
-
-    let text = String::from_utf8(bytes).expect("the envelope is ASCII");
-    let mut folded_lines = 0;
-    for line in text.split("\r\n") {
-        let is_base64 = !line.is_empty()
-            && line
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || "+/=".contains(character));
-        if is_base64 {
-            assert!(
-                line.len() <= 76,
-                "a base64 line is {} characters: {line}",
-                line.len()
-            );
-            folded_lines += 1;
-        }
-    }
-    assert!(folded_lines > 100, "the page alone spans many lines");
-}
-
-#[test]
-fn mhtml_builds_are_byte_identical() {
-    let first = tempfile::tempdir().expect("temp dir");
-    let second = tempfile::tempdir().expect("temp dir");
-
-    write_fixture_in(OutputFormat::Mhtml, first.path());
-    write_fixture_in(OutputFormat::Mhtml, second.path());
-
-    assert_eq!(tree(first.path()), tree(second.path()));
-}
-
-#[test]
-fn mhtml_rebuild_replaces_the_previous_archive() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    write_fixture_in(OutputFormat::Mhtml, dir.path());
-    let first = tree(dir.path());
-
-    std::fs::write(dir.path().join("stale.txt"), "old").expect("write stale file");
-
-    write_fixture_in(OutputFormat::Mhtml, dir.path());
-
-    assert_eq!(
-        tree(dir.path()),
-        first,
-        "rebuilding must leave exactly the files of the new build"
+    assert!(
+        dir.path().join("index.mhtml").is_file(),
+        "nothing may be removed"
     );
 }
 

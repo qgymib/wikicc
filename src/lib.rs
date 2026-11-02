@@ -13,10 +13,9 @@
 //! content hash, the assembly stage that folds all of it into one
 //! deterministic, serialisable [`SiteBundle`], the render stage that turns that
 //! bundle into the self-contained reader page (template, styles, scripts and
-//! payload), the three writers that address the referenced resources in their
-//! own way (one page with `data:` URIs, one page next to an `assets/` folder,
-//! and one `multipart/related` archive with `cid:` references), and
-//! [`pipeline`], which runs the stages in order and owns the summary.
+//! payload), the two writers that address the referenced resources in their
+//! own way (one page with `data:` URIs, one page next to an `assets/` folder),
+//! and [`pipeline`], which runs the stages in order and owns the summary.
 
 pub mod assets;
 pub mod cli;
@@ -45,10 +44,8 @@ pub use render::{
 pub use scan::{Diagnostic, ScanReport, Severity, SourceDoc};
 pub use site::{DocModel, Edge, SiteBuild, SiteBundle, Stats, build_edges, build_site};
 pub use writers::html_dir::HtmlDirWriter;
-pub use writers::mhtml::MhtmlWriter;
 pub use writers::single_html::{SingleHtmlWriter, data_uri};
 pub use writers::{
-    ASSETS_DIR_NAME, BUILD_MARKERS, HTML_FILE_NAME, MHTML_FILE_NAME, SiteWriter, WriteReport,
-    asset_file_name, asset_relative_path, expand_placeholders, prepare_output_dir, write_site,
-    writer_for,
+    ASSETS_DIR_NAME, BUILD_MARKERS, HTML_FILE_NAME, SiteWriter, WriteReport, asset_file_name,
+    asset_relative_path, expand_placeholders, prepare_output_dir, write_site, writer_for,
 };

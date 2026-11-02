@@ -9,16 +9,15 @@
 //! 4. report every diagnostic on stderr,
 //! 5. apply the `--strict` gate,
 //! 6. summarise the warnings,
-//! 7. note the MHTML browser limitation when that format was selected,
-//! 8. render the page and write the artifact,
-//! 9. print the summary line (unless `--quiet`).
+//! 7. render the page and write the artifact,
+//! 8. print the summary line (unless `--quiet`).
 //!
 //! The gate comes before rendering and writing on purpose: a build that fails
 //! on warnings must neither create an artifact nor empty a previous one.
 //!
 //! Everything the run prints goes through a [`std::io::Write`] sink rather than
-//! `println!`, so the wording, the gate, `--quiet` and the MHTML note are unit
-//! tested without spawning a process.
+//! `println!`, so the wording, the gate and `--quiet` are unit tested without
+//! spawning a process.
 //!
 //! Determinism: the only clock read is the elapsed time that goes into the
 //! summary line on stdout. Nothing here reaches an artifact.
@@ -27,21 +26,11 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
-use crate::options::{Options, OutputFormat};
+use crate::options::Options;
 use crate::render;
 use crate::scan;
 use crate::site::{self, Stats};
 use crate::writers::{self, WriteReport};
-
-/// Note printed on stderr when the `mhtml` format is selected.
-///
-/// Chromium and Edge load the MHTML main frame in a sandbox without
-/// `allow-scripts`, so the reader never boots and the page shows its
-/// `<noscript>` notice. The archive itself is correct (markup, stylesheet and
-/// `cid:` resources all render); this is a browser policy that no archive can
-/// lift, so the CLI says so instead of leaving the user with a blank reader.
-pub const MHTML_NOTE: &str = "note: Chromium and Edge do not run scripts inside MHTML, so the reader stops at \
-     its <noscript> notice; use --format html-dir for an interactive reader";
 
 /// Result of a successful run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,8 +83,8 @@ pub fn strict_message(warnings: usize) -> String {
 
 /// Run the whole pipeline for `options`.
 ///
-/// Diagnostics, the warning summary and the MHTML note go to `err`; the
-/// summary line goes to `out` unless `--quiet` was passed. Both sinks are
+/// Diagnostics and the warning summary go to `err`; the summary line goes to
+/// `out` unless `--quiet` was passed. Both sinks are
 /// flushed by their owners, so a caller that owns a buffer sees everything
 /// after the call returns.
 pub fn run(options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> Result<BuildOutcome> {
@@ -122,9 +111,6 @@ pub fn run(options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     }
     if warnings > 0 {
         writeln!(err, "{}", warning_summary(warnings))?;
-    }
-    if options.format == OutputFormat::Mhtml {
-        writeln!(err, "{MHTML_NOTE}")?;
     }
 
     // Rendering and writing happen only after the `--strict` gate, so a build
@@ -167,6 +153,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+    use crate::options::OutputFormat;
 
     /// Options for one run, built without going through clap.
     fn options(input: &Path, out: &Path, format: OutputFormat) -> Options {
@@ -400,30 +387,36 @@ mod tests {
     }
 
     #[test]
-    fn the_mhtml_note_appears_only_for_that_format() {
+    fn a_clean_build_prints_no_format_specific_note() {
         let dir = fixture();
-        let mhtml = options(dir.path(), &dir.path().join("m"), OutputFormat::Mhtml);
-        let (outcome, _, stderr) = execute(&mhtml);
+        for format in OutputFormat::ALL {
+            let mut options = options(dir.path(), &dir.path().join(format.as_str()), format);
+            options.quiet = true;
 
-        assert_eq!(outcome.expect("the build succeeds").written.files, 1);
-        assert!(stderr.contains(MHTML_NOTE), "{stderr}");
-        assert!(stderr.contains("--format html-dir"), "{stderr}");
+            let (outcome, stdout, stderr) = execute(&options);
+            let outcome = outcome.expect("the build succeeds");
 
-        let single = options(dir.path(), &dir.path().join("s"), OutputFormat::SingleHtml);
-        let (_, _, stderr) = execute(&single);
-        assert!(!stderr.contains("MHTML"), "{stderr}");
-    }
-
-    #[test]
-    fn the_mhtml_note_survives_quiet() {
-        let dir = fixture();
-        let mut options = options(dir.path(), &dir.path().join("m"), OutputFormat::Mhtml);
-        options.quiet = true;
-
-        let (_, stdout, stderr) = execute(&options);
-
-        assert_eq!(stdout, "");
-        assert!(stderr.contains(MHTML_NOTE), "{stderr}");
+            // `single-html` folds the asset into the page, `html-dir` writes it
+            // as a sibling file.
+            let expected_files = match format {
+                OutputFormat::SingleHtml => 1,
+                OutputFormat::HtmlDir => 1 + outcome.written.assets,
+            };
+            assert_eq!(outcome.written.files, expected_files, "{format}");
+            assert!(
+                outcome.written.assets > 0,
+                "{format}: the fixture has one asset"
+            );
+            assert_eq!(stdout, "", "{format}: --quiet silences stdout");
+            assert!(
+                !stderr.to_lowercase().contains("note: chromium"),
+                "{format}: no format implies a browser limitation any more: {stderr}"
+            );
+            assert!(
+                !stderr.contains("warning"),
+                "{format}: a clean build reports no warning: {stderr}"
+            );
+        }
     }
 
     #[test]

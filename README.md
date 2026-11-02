@@ -43,9 +43,8 @@ there is no sanitizer — do not compile untrusted documents.
 | --- | --- | --- | --- |
 | `single-html` (default) | one `index.html` | inlined as `data:` URIs | one file to send anywhere; ~4/3 the asset bytes, no browser caching |
 | `html-dir` | `index.html` + `assets/` | `assets/<hash>.<ext>` | smallest artifact, copyable or servable as-is, one file per unique resource |
-| `mhtml` | one `index.mhtml` | `cid:<hash>` parts | a mail-style archive; scripts do not run in Chromium (see below) |
 
-All three carry the same page. Assets are content-addressed by a truncated
+Both formats carry the same page. Assets are content-addressed by a truncated
 SHA-256, so identical bytes are stored once no matter how many documents
 reference them, and names are stable across builds and machines.
 
@@ -57,19 +56,10 @@ reference them, and names are stable across builds and machines.
   folder. Every reference in the page is relative, so the whole directory can be
   copied, zipped or served statically. A site without assets writes only the
   page — no empty folder.
-- **`mhtml`** writes the same page as a single `multipart/related` archive. The
-  HTML part comes first, every resource travels as a base64 part addressed by
-  `cid:<hash>`, and each part also carries
-  `Content-Location: assets/<hash>.<ext>` for readers that follow RFC 2557.
 
-**Chromium-based browsers read the MHTML archive but do not run scripts inside
-it.** The main frame is sandboxed without `allow-scripts`, so the reader stops
-at its "This reader needs JavaScript to display the documents" notice: the
-markup, the stylesheet and the `cid:` images do render, but the document list,
-the search, the graph and the diagrams do not. This is a browser policy that no
-archive can lift. Use `single-html` or `html-dir` for a reader you can navigate,
-and `mhtml` for archives that have to travel as one mail-style file. The CLI
-repeats this note on stderr when the format is selected.
+Both artifacts are plain HTML that any browser opens directly from disk: the
+reader script is a classic inline script and needs no `file://` privileges
+beyond the ones a local page always has.
 
 ### Offline and determinism
 
@@ -106,7 +96,7 @@ travel inside the artifact.
 wikicc <INPUT_DIR> [OPTIONS]
 
   -o, --out <DIR>        Output directory [default: <INPUT_DIR>/dist]
-      --format <FMT>     single-html | html-dir | mhtml [default: single-html]
+      --format <FMT>     single-html | html-dir [default: single-html]
       --title <TITLE>    Site title [default: input folder name]
       --strict           Treat warnings (broken links, missing assets) as errors
       --force            Overwrite the output directory without confirmation
@@ -128,14 +118,16 @@ A successful build prints one line on stdout:
 compiled 3 documents, 1 asset -> path/to/docs/dist (single-html) in 84 ms
 ```
 
-Diagnostics — notes, warnings, the warning count and the MHTML note — go to
-stderr. `--quiet` suppresses only the summary line.
+Diagnostics — notes, warnings and the warning count — go to stderr. `--quiet`
+suppresses only the summary line.
 
 ### Output directory rules
 
 - A missing directory is created; an empty one is used as it is.
-- A directory that holds a previous artifact (`index.html` or `index.mhtml`) is
-  emptied and reused, so rebuilding needs no flags and leaves no stale files.
+- A directory that holds a previous artifact (`index.html`) is emptied and
+  reused, so rebuilding needs no flags and leaves no stale files. A directory
+  with only an artifact from a retired format is treated as foreign and needs
+  `--force`.
 - Any other non-empty directory is refused with a `--force` hint, because
   `--out` can point anywhere and silently deleting unrelated files is data loss.
   Only the entries *inside* the directory are removed; symbolic links are

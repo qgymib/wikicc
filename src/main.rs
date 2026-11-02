@@ -3,8 +3,8 @@
 //! The binary owns only three things: reading the arguments with `clap`,
 //! handing the resolved [`wikicc::Options`] to [`wikicc::pipeline::run`], and
 //! turning a failure into the documented exit code. Everything else — the
-//! stage order, the `--strict` gate, the warnings, the MHTML note and the
-//! summary line — lives in the library, where it is unit tested.
+//! stage order, the `--strict` gate, the warnings and the summary line — lives
+//! in the library, where it is unit tested.
 
 use std::io;
 

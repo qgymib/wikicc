@@ -92,7 +92,7 @@ fn unknown_format_exits_with_2() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains(
-            "invalid format 'pdf', expected one of: single-html, html-dir, mhtml",
+            "invalid format 'pdf', expected one of: single-html, html-dir",
         ));
 }
 
@@ -204,39 +204,15 @@ fn a_foreign_output_directory_needs_force() {
 }
 
 #[test]
-fn mhtml_format_writes_one_archive() {
-    let dir = fixture();
-    std::fs::create_dir(dir.path().join("assets")).expect("create the asset directory");
-    std::fs::write(dir.path().join("assets").join("logo.svg"), "<svg/>").expect("write asset");
-    std::fs::write(
-        dir.path().join("intro.md"),
-        "# Intro\n\n![Logo](assets/logo.svg)\n",
-    )
-    .expect("write fixture");
-
+fn the_removed_mhtml_format_is_a_usage_error() {
     wikicc()
-        .arg(dir.path())
+        .arg(fixture().path())
         .args(["--format", "mhtml"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("(mhtml) in "))
-        .stdout(predicate::str::contains("compiled 1 document, 1 asset"))
-        .stderr(predicate::str::contains("do not run scripts inside MHTML"));
-
-    let out = dir.path().join("dist");
-    let entries: Vec<_> = std::fs::read_dir(&out)
-        .expect("the output directory exists")
-        .collect();
-    assert_eq!(entries.len(), 1, "mhtml writes exactly one file");
-
-    let archive =
-        std::fs::read_to_string(out.join("index.mhtml")).expect("index.mhtml is readable");
-    assert!(archive.starts_with("MIME-Version: 1.0\r\n"));
-    assert!(archive.contains("multipart/related; type=\"text/html\""));
-    assert!(
-        !archive.contains("wikicc-asset:"),
-        "every asset placeholder must be replaced"
-    );
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid format 'mhtml', expected one of: single-html, html-dir",
+        ));
 }
 
 #[test]

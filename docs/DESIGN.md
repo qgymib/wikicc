@@ -8,16 +8,7 @@ per-stage implementation details.
 ## 1. Purpose and scope
 
 `wikicc` compiles a folder of Markdown documents into a **fully self-contained,
-offline, double-clickable static HTML reader**. The reader has a fixed
-three-column layout:
-
-```
-+-----------+---------------------------+-------------------+
-| document  |                           | link graph        |
-| list      |     document content      |-------------------|
-| (search)  |                           | chapter outline   |
-+-----------+---------------------------+-------------------+
-```
+offline, double-clickable static HTML reader**.
 
 In scope:
 
@@ -27,7 +18,7 @@ In scope:
 - link graph derived from relative Markdown links;
 - table sorting and filtering, full-text search, light/dark theme,
   build-time syntax highlighting and Mermaid diagrams;
-- three output formats that differ only in how assets are addressed.
+- two output formats that differ only in how assets are addressed.
 
 Out of scope (explicit non-goals):
 
@@ -45,7 +36,7 @@ Out of scope (explicit non-goals):
 wikicc <INPUT_DIR> [OPTIONS]
 
   -o, --out <DIR>        Output directory [default: <INPUT_DIR>/dist]
-      --format <FMT>     single-html | html-dir | mhtml [default: single-html]
+      --format <FMT>     single-html | html-dir [default: single-html]
       --title <TITLE>    Site title [default: input folder name]
       --strict           Treat warnings (broken links, missing assets) as errors
       --force            Overwrite the output directory without confirmation
@@ -77,9 +68,9 @@ Behavioural rules:
 
 The output directory is created when missing and used as-is when empty. An
 existing directory is only emptied when it holds a previous artifact
-(`index.html` or `index.mhtml`) or when `--force` is passed; any other non-empty
-directory is refused, because `--out` can point anywhere and an unconditional
-recursive delete is real data loss. Only the entries *inside* the directory are
+(`index.html`) or when `--force` is passed; any other non-empty directory is
+refused, because `--out` can point anywhere and an unconditional recursive
+delete is real data loss. Only the entries *inside* the directory are
 removed, and symbolic links are removed as links, never followed.
 
 Three combinations are always rejected before anything is written: the output
@@ -96,7 +87,6 @@ hard requirement, not an aspiration, and it constrains every stage:
   sorted;
 - assets are named after their content hash, so duplicates collapse and names
   do not depend on discovery order;
-- the MHTML boundary is derived from the rendered page, not from the clock;
 - no artifact contains a timestamp, an absolute path, a host name or a random
   value. The elapsed time exists only in the stdout summary.
 
@@ -115,7 +105,7 @@ hard requirement, not an aspiration, and it constrains every stage:
 
 ```
 scan ──▶ parse ──▶ resolve ──▶ assemble ──▶ render ──▶ write
- .md      HTML +     link/asset   SiteBundle   shell     3 formats
+ .md      HTML +     link/asset   SiteBundle   shell     2 formats
  files    TOC +      rewriting,   (JSON)       HTML      via
           highlight  asset bytes               string    SiteWriter
 ```
@@ -167,7 +157,7 @@ Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` �
    mapped before `push_html`, so link and image destinations are rewritten
    structurally. Regex post-processing of HTML is rejected because attribute
    quoting and nesting make it unsound.
-2. **One page, three addressing schemes.** The document HTML is rendered once
+2. **One page, two addressing schemes.** The document HTML is rendered once
    and carries an opaque placeholder (`wikicc-asset:<hash>`) wherever a local
    resource is referenced. Writers expand the placeholder into the addressing
    form of their format. The placeholder only ever appears inside the JSON
@@ -192,19 +182,13 @@ Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` �
 | --- | --- | --- | --- |
 | `single-html` (default) | one `index.html` | `data:<mime>;base64,…` | one file to move around; ~4/3 the asset bytes and no browser caching |
 | `html-dir` | `index.html` + `assets/<hash>.<ext>` | relative path | smallest artifact, copyable directory, one file per unique resource |
-| `mhtml` | one `index.mhtml` | `cid:<hash>` | mail-style archive; scripts do not run in Chromium (see below) |
 
-The three writers share the page and the asset table; they never re-render
+The two writers share the page and the asset table; they never re-render
 markup. `html-dir` writes the page last, so the artifact never references a file
 that is not on disk, and a site without assets writes no empty `assets/` folder.
 
-**MHTML limitation.** Chromium and Edge load the MHTML main frame in a sandbox
-without `allow-scripts`, so the reader script never boots: the markup, the
-stylesheet and the `cid:` images render, but the page stops at its `<noscript>`
-notice. This is a browser policy that no archive can lift, so the CLI prints a
-note on stderr when the format is selected and the README says it plainly.
-Making the format interactive would require a script-free static rendering of
-the documents, which is a product change rather than a writer change.
+Both artifacts are opened directly from disk: the reader is one classic inline
+script and the payload is embedded, so neither format depends on a server.
 
 ## 5. Front end
 
@@ -234,13 +218,11 @@ the documents, which is a product change rather than a writer change.
   document ids, the same generator feeds the initial jitter and
   `simulation.randomSource()`, and the simulation is stepped synchronously, so
   the same input always produces the same picture.
-- **Theme and responsiveness.** Light and dark are one set of CSS custom
-  properties on the root element; the toggle only swaps an attribute. Layout
-  collapses at two breakpoints, and the right-hand panel switches between the
-  graph and the chapter outline. Mermaid re-measures geometry, so the
-  reduced-motion media query disables transitions outright inside diagram
-  containers — a merely tiny duration still creates a transition and distorts
-  the measurement.
+- **Theme and diagrams.** Light and dark are one set of CSS custom properties
+  on the root element; the toggle only swaps an attribute. Mermaid re-measures
+  geometry, so the reduced-motion media query disables transitions outright
+  inside diagram containers — a merely tiny duration still creates a transition
+  and distorts the measurement.
 - **Weight.** Minification is what keeps the page at ~5 MB (the diagram engine
   alone is ~12 MB unminified). A size guard in `render.rs` fails the build if
   the bundle regresses, and the tests assert string literals rather than
@@ -251,7 +233,7 @@ the documents, which is a product change rather than a writer change.
 | Layer | Location | Tooling | Covers |
 | --- | --- | --- | --- |
 | Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline |
-| Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates`, `mailparse` | CLI, scan, markdown, writers, end to end |
+| Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, markdown, writers, end to end |
 | Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search adapter, table sort/filter model, graph layout |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the JS suite inside `cargo test` |
 
@@ -268,7 +250,6 @@ Quality gates for any change: `cargo fmt --check`,
 
 | Limitation | Impact | Mitigation |
 | --- | --- | --- |
-| Chromium/Edge sandbox MHTML without `allow-scripts` | the `mhtml` artifact is not interactive there | documented in README, noted on stderr, `single-html`/`html-dir` recommended for reading |
 | Embedded diagram engine (~5 MB minified) | every format carries the engine | minify plus a size guard; the engine is only initialised when the current document has a diagram |
 | Front-end dependencies are installed outside Cargo | `cargo build` needs `npm ci` first | `build.rs` fails with an actionable message; versions and bytes are pinned |
 | `file://` restrictions (CORS, module scripts) | a naive SPA would break | payload inlined, no `fetch`, one classic script |

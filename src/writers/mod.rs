@@ -7,22 +7,16 @@
 //! puts the result on disk:
 //!
 //! - `single-html` → `data:<mime>;base64,…` inside one `index.html`;
-//! - `html-dir` → `assets/<hash>.<ext>` next to `index.html`;
-//! - `mhtml` → `cid:<hash>` inside a `multipart/related` file.
+//! - `html-dir` → `assets/<hash>.<ext>` next to `index.html`.
 //!
-//! The asset file name is a shared concern rather than a `html-dir` detail:
-//! `mhtml` addresses the same bytes as `assets/<hash>.<ext>` in its
-//! `Content-Location` headers, so [`asset_file_name`] and
-//! [`asset_relative_path`] live here and both formats use them.
-//!
-//! Addressing is the only thing the three formats differ in, so the writers stay
+//! Addressing is the only thing the two formats differ in, so the writers stay
 //! thin and never duplicate rendering.
 //!
 //! The placeholders only ever appear inside the JSON payload that sits in the
 //! `<script type="application/json">` element. Every substitution value is a
-//! data URI, a relative path or a `cid:` reference, none of which contains a
-//! quote, a backslash or a control character, so replacing them keeps the
-//! payload valid JSON and the page inert.
+//! data URI or a relative path, none of which contains a quote, a backslash or
+//! a control character, so replacing them keeps the payload valid JSON and the
+//! page inert.
 //!
 //! Determinism: the artifact is the rendered page with a deterministic
 //! substitution applied, [`crate::assets::AssetTable`] iterates in hash order,
@@ -38,18 +32,13 @@ use crate::render::RenderedSite;
 use crate::site::SiteBuild;
 
 pub mod html_dir;
-pub mod mhtml;
 pub mod single_html;
 
 pub use html_dir::HtmlDirWriter;
-pub use mhtml::MhtmlWriter;
 pub use single_html::{SingleHtmlWriter, data_uri};
 
 /// Name of the HTML artifact, used by `single-html` and `html-dir`.
 pub const HTML_FILE_NAME: &str = "index.html";
-
-/// Name of the MHTML artifact.
-pub const MHTML_FILE_NAME: &str = "index.mhtml";
 
 /// Directory that holds the assets of the `html-dir` format.
 ///
@@ -83,7 +72,12 @@ pub fn asset_relative_path(asset: &Asset) -> String {
 /// emptied without `--force`: the default `<input>/dist` always carries one of
 /// these after the first build, so rebuilding stays frictionless, while an
 /// unrelated directory the user pointed `--out` at is left untouched.
-pub const BUILD_MARKERS: [&str; 2] = [HTML_FILE_NAME, MHTML_FILE_NAME];
+///
+/// Only the artifacts the current writers emit are listed, so a directory that
+/// holds nothing but a retired artifact (for example an `index.mhtml` left by an
+/// older version) is refused like any other foreign directory and needs
+/// `--force`.
+pub const BUILD_MARKERS: [&str; 1] = [HTML_FILE_NAME];
 
 /// What one write produced, for the summary line.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -125,12 +119,10 @@ pub trait SiteWriter {
 pub fn writer_for(format: OutputFormat) -> &'static dyn SiteWriter {
     static SINGLE_HTML: SingleHtmlWriter = SingleHtmlWriter;
     static HTML_DIR: HtmlDirWriter = HtmlDirWriter;
-    static MHTML: MhtmlWriter = MhtmlWriter;
 
     match format {
         OutputFormat::SingleHtml => &SINGLE_HTML,
         OutputFormat::HtmlDir => &HTML_DIR,
-        OutputFormat::Mhtml => &MHTML,
     }
 }
 
@@ -457,13 +449,20 @@ mod tests {
     }
 
     #[test]
-    fn an_mhtml_build_marker_is_recognised_too() {
+    fn a_directory_holding_only_a_retired_artifact_is_refused_without_force() {
         let dir = tempfile::tempdir().expect("temp dir");
-        fs::write(dir.path().join(MHTML_FILE_NAME), "MIME-Version: 1.0").expect("write marker");
+        fs::write(dir.path().join("index.mhtml"), "MIME-Version: 1.0").expect("write marker");
 
-        prepare_output_dir(dir.path(), false).expect("prepare");
+        let error = prepare_output_dir(dir.path(), false).expect_err("retired artifact");
 
-        assert_eq!(fs::read_dir(dir.path()).expect("read dir").count(), 0);
+        assert!(
+            error.to_string().contains("use --force to overwrite"),
+            "unexpected message: {error}"
+        );
+        assert!(
+            dir.path().join("index.mhtml").is_file(),
+            "nothing may be removed"
+        );
     }
 
     #[test]

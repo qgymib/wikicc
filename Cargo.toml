@@ -34,7 +34,6 @@ walkdir = "2.5.0"
 
 [dev-dependencies]
 assert_cmd = "2"
-mailparse = "0.18"
 predicates = "3"
 tempfile = "3"
 

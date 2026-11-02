@@ -20,7 +20,7 @@ use assert_cmd::Command;
 use wikicc::options::OutputFormat;
 use wikicc::scan::scan;
 use wikicc::site::build_site;
-use wikicc::writers::{ASSETS_DIR_NAME, HTML_FILE_NAME, MHTML_FILE_NAME};
+use wikicc::writers::{ASSETS_DIR_NAME, HTML_FILE_NAME};
 use wikicc::{APP_BUNDLE, RenderedSite, SiteBundle, render_site, theme_css};
 
 /// Prefix of the opaque asset placeholder the writers replace.
@@ -448,21 +448,6 @@ fn every_format_writes_its_documented_artifacts() {
         page.contains(asset),
         "the page must address {asset} by its relative path"
     );
-
-    let archive = tempfile::tempdir().expect("temp dir");
-    let output = build_with(&fixture_root(), archive.path(), &["--format", "mhtml"]);
-    assert!(output.status.success(), "{}", stderr_of(&output));
-    let files = tree(archive.path());
-    assert_eq!(
-        files
-            .iter()
-            .map(|(path, _)| path.as_str())
-            .collect::<Vec<_>>(),
-        [MHTML_FILE_NAME]
-    );
-    let envelope = String::from_utf8(files[0].1.clone()).expect("the archive is utf-8");
-    assert!(envelope.starts_with("MIME-Version: 1.0\r\n"));
-    assert!(!envelope.contains("wikicc-asset:"));
 }
 
 #[test]
@@ -557,19 +542,24 @@ fn usage_errors_exit_with_two_and_runtime_errors_with_one() {
 }
 
 #[test]
-fn the_mhtml_format_notes_the_browser_limitation() {
-    let out = tempfile::tempdir().expect("temp dir");
-    let output = build_with(&fixture_root(), out.path(), &["--format", "mhtml"]);
+fn a_clean_build_prints_no_note() {
+    for format in OutputFormat::ALL {
+        let out = tempfile::tempdir().expect("temp dir");
+        let output = build_with(&fixture_root(), out.path(), &["--format", format.as_str()]);
+        let stderr = stderr_of(&output);
 
-    assert!(output.status.success(), "{}", stderr_of(&output));
-    let stderr = stderr_of(&output);
-    assert!(
-        stderr.contains("do not run scripts inside MHTML"),
-        "the limitation must be stated: {stderr}"
-    );
-    assert!(
-        stderr.contains("--format html-dir"),
-        "the note must point at a format that works: {stderr}"
-    );
-    assert!(stdout_of(&output).contains("(mhtml) in "));
+        assert!(output.status.success(), "{stderr}");
+        assert!(
+            !stderr.contains("warning"),
+            "{format}: the fixture is --strict clean, so nothing may warn: {stderr}"
+        );
+        assert!(
+            !stderr.to_lowercase().contains("mhtml"),
+            "{format}: no format carries a special note any more: {stderr}"
+        );
+        assert!(
+            stdout_of(&output).contains(&format!("({format}) in ")),
+            "{format}: the summary names the format"
+        );
+    }
 }

@@ -22,20 +22,17 @@ pub enum OutputFormat {
     SingleHtml,
     /// `index.html` plus a deduplicated `assets/` directory.
     HtmlDir,
-    /// One `multipart/related` `.mhtml` file.
-    Mhtml,
 }
 
 impl OutputFormat {
     /// Every accepted format, in CLI order.
-    pub const ALL: [OutputFormat; 3] = [Self::SingleHtml, Self::HtmlDir, Self::Mhtml];
+    pub const ALL: [OutputFormat; 2] = [Self::SingleHtml, Self::HtmlDir];
 
     /// CLI spelling of the format.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::SingleHtml => "single-html",
             Self::HtmlDir => "html-dir",
-            Self::Mhtml => "mhtml",
         }
     }
 }
@@ -55,7 +52,7 @@ impl FromStr for OutputFormat {
             .find(|format| format.as_str() == value)
             .ok_or_else(|| {
                 Error::InvalidInput(format!(
-                    "invalid format '{value}', expected one of: single-html, html-dir, mhtml"
+                    "invalid format '{value}', expected one of: single-html, html-dir"
                 ))
             })
     }
@@ -275,10 +272,6 @@ mod tests {
             "html-dir".parse::<OutputFormat>().unwrap(),
             OutputFormat::HtmlDir
         );
-        assert_eq!(
-            "mhtml".parse::<OutputFormat>().unwrap(),
-            OutputFormat::Mhtml
-        );
     }
 
     #[test]
@@ -287,14 +280,24 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "invalid format 'pdf', expected one of: single-html, html-dir, mhtml"
+            "invalid format 'pdf', expected one of: single-html, html-dir"
         );
         assert_eq!(error.exit_code(), crate::error::EXIT_FAILURE);
     }
 
     #[test]
+    fn a_removed_format_is_an_unknown_format() {
+        let error = "mhtml".parse::<OutputFormat>().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "invalid format 'mhtml', expected one of: single-html, html-dir"
+        );
+    }
+
+    #[test]
     fn format_parsing_is_case_sensitive() {
-        assert!("MHTML".parse::<OutputFormat>().is_err());
+        assert!("Single-Html".parse::<OutputFormat>().is_err());
         assert!(" single-html".parse::<OutputFormat>().is_err());
     }
 
@@ -324,7 +327,7 @@ mod tests {
         let mut cli = cli_for(dir.path());
         cli.out = Some(PathBuf::from("build"));
         cli.title = Some("Handbook".to_string());
-        cli.format = OutputFormat::Mhtml;
+        cli.format = OutputFormat::HtmlDir;
         cli.strict = true;
         cli.force = true;
         cli.quiet = true;
@@ -333,7 +336,7 @@ mod tests {
 
         assert_eq!(options.out, PathBuf::from("build"));
         assert_eq!(options.title, "Handbook");
-        assert_eq!(options.format, OutputFormat::Mhtml);
+        assert_eq!(options.format, OutputFormat::HtmlDir);
         assert!(options.strict);
         assert!(options.force);
         assert!(options.quiet);

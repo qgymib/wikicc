@@ -93,13 +93,13 @@ mod tests {
     #[test]
     fn parses_every_option() {
         let cli = parse(&[
-            "wikicc", "docs", "--out", "build", "--format", "mhtml", "--title", "Handbook",
+            "wikicc", "docs", "--out", "build", "--format", "html-dir", "--title", "Handbook",
             "--strict", "--force", "--quiet",
         ]);
 
         assert_eq!(cli.input, PathBuf::from("docs"));
         assert_eq!(cli.out, Some(PathBuf::from("build")));
-        assert_eq!(cli.format, OutputFormat::Mhtml);
+        assert_eq!(cli.format, OutputFormat::HtmlDir);
         assert_eq!(cli.title.as_deref(), Some("Handbook"));
         assert!(cli.strict);
         assert!(cli.force);
@@ -119,7 +119,6 @@ mod tests {
         for (value, expected) in [
             ("single-html", OutputFormat::SingleHtml),
             ("html-dir", OutputFormat::HtmlDir),
-            ("mhtml", OutputFormat::Mhtml),
         ] {
             let cli = parse(&["wikicc", "docs", "--format", value]);
             assert_eq!(cli.format, expected);
@@ -133,8 +132,7 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::ValueValidation);
         let rendered = error.to_string();
         assert!(
-            rendered
-                .contains("invalid format 'pdf', expected one of: single-html, html-dir, mhtml"),
+            rendered.contains("invalid format 'pdf', expected one of: single-html, html-dir"),
             "unexpected error text: {rendered}"
         );
     }
