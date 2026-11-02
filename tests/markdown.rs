@@ -185,6 +185,70 @@ fn rendering_the_same_source_twice_is_byte_identical() {
     assert_eq!(first.toc, second.toc);
 }
 
+/// Body plus the reference definitions a `[[n]][n]` citation points at.
+fn cited(body: &str) -> String {
+    format!("{body}\n\n[1]: https://example.com/1\n[2]: https://example.com/2\n")
+}
+
+#[test]
+fn a_bracketed_citation_renders_as_one_link_like_typora() {
+    let doc = render_document(&cited("散射机理[[1]][1]"));
+
+    assert_eq!(
+        doc.html, "<p>散射机理<a href=\"https://example.com/1\">[1]</a></p>\n",
+        "html: {}",
+        doc.html
+    );
+    assert_eq!(doc.text, "散射机理[1]", "text: {}", doc.text);
+}
+
+#[test]
+fn a_bracketed_citation_collapses_inside_a_table_cell() {
+    let doc = render_document(&cited(
+        "| 技术 | 引用 |\n| ---- | ---- |\n| 光纤 | 散射[[1]][1] |",
+    ));
+
+    assert!(
+        doc.html
+            .contains("<td>散射<a href=\"https://example.com/1\">[1]</a></td>"),
+        "html: {}",
+        doc.html
+    );
+    assert_eq!(doc.html.matches("<a ").count(), 1, "html: {}", doc.html);
+}
+
+#[test]
+fn a_bracketed_citation_in_a_heading_feeds_the_outline() {
+    let doc = render_document(&cited("## 参考 [[1]][1]"));
+
+    assert!(
+        doc.html
+            .contains("<h2 id=\"参考-1\">参考 <a href=\"https://example.com/1\">[1]</a>"),
+        "html: {}",
+        doc.html
+    );
+    assert_eq!(doc.toc[0].text, "参考 [1]");
+}
+
+#[test]
+fn adjacent_identical_links_are_not_collapsed() {
+    let doc = render_document("[1](https://example.com)[1](https://example.com)\n");
+
+    assert_eq!(
+        doc.html.matches("<a ").count(),
+        2,
+        "only the bracketed citation is normalised: {}",
+        doc.html
+    );
+}
+
+#[test]
+fn an_undefined_citation_stays_verbatim() {
+    let doc = render_document("散射[[1]][1]\n");
+
+    assert!(doc.html.contains("散射[[1]][1]"), "html: {}", doc.html);
+}
+
 #[test]
 fn author_written_html_is_passed_through() {
     let doc = render_document("<figure><img src=\"a.png\"></figure>\n");

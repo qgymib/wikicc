@@ -22,6 +22,20 @@
 //! and asset placeholders. [`render_document`] keeps the destinations verbatim
 //! and is therefore byte-for-byte identical to the pre-resolution renderer.
 //!
+//! One authoring idiom is normalised before the rewriter sees it: Typora users
+//! wrap a numbered citation in a second pair of brackets, writing `[[1]][1]`
+//! for a citation whose definition block is `[1]: https://…`. CommonMark reads
+//! that as a literal `[`, the reference link `[1]`, a literal `]` and a second
+//! reference link `[1]`, so the reader would show `[1]1`. [`fold_bracketed_reference`]
+//! collapses the sequence into the single link `[1]` Typora displays.
+//!
+//! Folding therefore has to happen before the destinations are rewritten, and
+//! it can only be recognised once the *second* link closes. A link that may
+//! open such a citation is kept pending instead of being rewritten at its own
+//! closing event; the next event settles the question. The swallowed duplicate
+//! consequently never reaches the resolver, so it cannot produce a second
+//! diagnostic or a second link-graph edge.
+//!
 //! The same pass also collects the plain text of the document, which is what
 //! the front end searches. Keeping it here rather than in a second parse means
 //! `html`, `toc` and `text` always describe exactly the same source.
@@ -32,7 +46,9 @@ pub mod slug;
 pub mod toc;
 
 use pulldown_cmark::html::push_html;
-use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    CodeBlockKind, CowStr, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd,
+};
 
 use highlight::code_block_html;
 
@@ -101,6 +117,48 @@ struct OpenHeading<'a> {
     text: String,
 }
 
+/// Link whose destination has not been rewritten yet.
+///
+/// Links are rewritten when they close, not when they open, because a
+/// `[[n]][n]` citation is only recognisable at the closing event of its second
+/// link — and by then one of the two must be gone, so the resolver is called
+/// exactly once.
+struct OpenLink {
+    /// Position of the opening event in the buffer.
+    index: usize,
+    /// 1-based source line the link starts on.
+    line: usize,
+    /// Byte length of the plain text when the link opened.
+    text_start: usize,
+}
+
+/// Rewrite the destination of the link whose `Start` is at `index`.
+///
+/// A no-op when the event there is no longer a link, which keeps the caller
+/// free of extra bookkeeping.
+fn rewrite_link_at<R: LinkRewriter + ?Sized>(
+    events: &mut [Event<'_>],
+    index: usize,
+    rewriter: &mut R,
+    line: usize,
+) {
+    let Some(Event::Start(Tag::Link {
+        link_type,
+        dest_url,
+        title,
+        id,
+    })) = events.get(index)
+    else {
+        return;
+    };
+    events[index] = Event::Start(Tag::Link {
+        link_type: *link_type,
+        dest_url: CowStr::from(rewriter.rewrite(dest_url, line)),
+        title: title.clone(),
+        id: id.clone(),
+    });
+}
+
 /// Fenced or indented code block whose text is still being collected.
 struct CodeBlockBuffer {
     /// Fence info string, `None` for an indented block.
@@ -131,6 +189,11 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
     let mut slugger = Slugger::new();
     let mut open: Option<OpenHeading<'_>> = None;
     let mut code_block: Option<CodeBlockBuffer> = None;
+    let mut open_links: Vec<OpenLink> = Vec::new();
+    // Link whose rewrite waits until it is known whether it opens a
+    // `[[n]][n]` citation. At most one such link can be pending: the shape
+    // only ever spans two adjacent links.
+    let mut pending: Option<OpenLink> = None;
 
     for (event, range) in Parser::new_ext(source, PARSER_OPTIONS).into_offset_iter() {
         match event {
@@ -140,13 +203,22 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
                 title,
                 id,
             }) => {
-                let line = line_of(&line_starts, range.start);
+                // The destination is rewritten when the fold is settled, not
+                // here: a `[[n]][n]` pair must be matched on the destinations
+                // the author wrote, and a swallowed duplicate must never reach
+                // the resolver.
                 events.push(Event::Start(Tag::Link {
                     link_type,
-                    dest_url: CowStr::from(rewriter.rewrite(&dest_url, line)),
+                    dest_url,
                     title,
                     id,
                 }));
+                open_links.push(OpenLink {
+                    index: events.len() - 1,
+                    line: line_of(&line_starts, range.start),
+                    // The plain text does not hold this link's own content yet.
+                    text_start: text.len(),
+                });
             }
             Event::Start(Tag::Image {
                 link_type,
@@ -161,6 +233,65 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
                     title,
                     id,
                 }));
+            }
+            Event::End(TagEnd::Link) => {
+                events.push(Event::End(TagEnd::Link));
+                let Some(open_link) = open_links.pop() else {
+                    continue;
+                };
+                // A fold can only be recognised once the *second* link closes,
+                // so the first link of a possible `[[n]][n]` is kept pending.
+                // Rewriting it now would leave the two destinations different
+                // and the fold would never match.
+                if pending.is_none() && looks_like_wrap_candidate(&events, open_link.index) {
+                    pending = Some(open_link);
+                    continue;
+                }
+
+                match pending
+                    .as_ref()
+                    .and_then(|pending_link| fold_bracketed_reference(&mut events, pending_link))
+                {
+                    Some(fold) => {
+                        // The citation reads as `[n]`, not as `[[n]][n]`. The
+                        // plain text holds `[`, `n`, `]` and then the duplicate
+                        // `n`; `text_start` marks the `n` of the surviving link,
+                        // so keeping it and closing the bracket is the citation.
+                        let keep = fold.text_start + fold.duplicate_len;
+                        text.truncate(keep);
+                        text.push_str(CLOSING_BRACKET);
+                        if let Some(heading) = open.as_mut() {
+                            heading.text.truncate(keep.min(heading.text.len()));
+                            heading.text.push_str(CLOSING_BRACKET);
+                        }
+                        // The two links are settled; the pending slot is free.
+                        pending = None;
+                        // Only the surviving link reaches the resolver, and it
+                        // keeps the line it starts on.
+                        rewrite_link_at(&mut events, fold.link_start, &mut *rewriter, fold.line);
+                    }
+                    None => {
+                        // No citation here. When a link was pending, *this* link
+                        // is the one that broke the shape, so the pending link
+                        // is rewritten first and this one after it; otherwise
+                        // only this link is rewritten.
+                        let earlier = pending.take();
+                        if let Some(pending_link) = earlier {
+                            rewrite_link_at(
+                                &mut events,
+                                pending_link.index,
+                                &mut *rewriter,
+                                pending_link.line,
+                            );
+                        }
+                        rewrite_link_at(
+                            &mut events,
+                            open_link.index,
+                            &mut *rewriter,
+                            open_link.line,
+                        );
+                    }
+                }
             }
             Event::Start(Tag::Heading {
                 level,
@@ -249,6 +380,19 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
                 events.push(other);
             }
             other => {
+                // A pending link waits for the event after it to prove whether it
+                // opens a citation. Only the `]` that would separate the two
+                // links keeps it waiting; anything else settles the question.
+                if !is_literal(&other, CLOSING_BRACKET)
+                    && let Some(pending_link) = pending.take()
+                {
+                    rewrite_link_at(
+                        &mut events,
+                        pending_link.index,
+                        &mut *rewriter,
+                        pending_link.line,
+                    );
+                }
                 // Block boundaries become spaces, so a table row reads as
                 // `name value` instead of `namevalue` in the index. Inline
                 // elements are deliberately not boundaries: `[a](b.md).` must
@@ -283,6 +427,259 @@ fn separate(text: &mut String) {
     if !text.is_empty() && !text.ends_with(char::is_whitespace) {
         text.push(' ');
     }
+}
+
+/// The character that opens a citation wrap, `[[n]][n]`.
+const OPENING_BRACKET: &str = "[";
+/// The literal that separates the two links of `[[n]][n]`.
+const CLOSING_BRACKET: &str = "]";
+
+/// What a successful fold did, so the caller can keep its own bookkeeping in
+/// step with the events it just replaced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Folded {
+    /// Index of the surviving link's `Start` after the fold.
+    link_start: usize,
+    /// Source line the surviving link starts on, for the resolver's diagnostics.
+    line: usize,
+    /// Byte length of the plain text when the surviving link opened.
+    text_start: usize,
+    /// Byte length of the citation's visible text, which is `n` for `[[n]][n]`.
+    duplicate_len: usize,
+}
+
+/// Whether the link starting at `index` may open a `[[n]][n]` citation.
+///
+/// Only a reference link preceded by a `[` text event can, which is a cheap
+/// test that keeps ordinary links on the immediate-rewrite path.
+fn looks_like_wrap_candidate(events: &[Event<'_>], index: usize) -> bool {
+    let Some(opening) = index.checked_sub(1) else {
+        return false;
+    };
+    let Some(Event::Text(text)) = events.get(opening) else {
+        return false;
+    };
+    if !text.ends_with(OPENING_BRACKET) {
+        return false;
+    }
+    matches!(
+        events.get(index),
+        Some(Event::Start(Tag::Link { link_type, .. })) if is_reference(*link_type)
+    )
+}
+
+/// Fold a Typora-style `[[n]][n]` citation into the single link `[n]`.
+///
+/// The event stream the parser produces for `[[1]][1]` is a literal `[`, a
+/// reference link `[1]`, a literal `]` and a second, identical reference link
+/// `[1]`. Serialising that yields `[<a>1</a>]<a>1</a>`, which a reader shows as
+/// `[1]1`; Typora instead shows one `[1]` link. This function runs right after
+/// the closing event of a link has been pushed and, when the last events form
+/// exactly that shape, rewrites them into `<a href="…">[1]</a>`:
+///
+/// * the `[` that opened the wrap is dropped from the preceding text event,
+/// * the `]` between the links is dropped,
+/// * the second link is dropped entirely, and
+/// * `[` and `]` are pushed inside the first link, so the brackets become part
+///   of its visible text instead of anonymous text around it.
+///
+/// Both links must be reference links (`Shortcut` or `Collapsed`) to the same
+/// destination with the same visible text; an inline `[1](url)` pair is left
+/// alone, because there the brackets are the author's own syntax rather than a
+/// wrap around a citation. Folding stops at any other event, so a match can
+/// never cross a block or inline boundary.
+///
+/// Returns `None` when the tail is not a `[[n]][n]`, which is the common case.
+fn fold_bracketed_reference(events: &mut Vec<Event<'_>>, pending: &OpenLink) -> Option<Folded> {
+    let Shape {
+        first_end,
+        second_start,
+        opening,
+        opening_is_empty,
+        ..
+    } = bracket_shape(events)?;
+
+    // Drop the duplicate link together with the `]` that separated the two
+    // links. Removing from the back keeps the surviving indices valid.
+    events.truncate(second_start);
+    events.pop();
+
+    // The `[` that opened the wrap goes next: either the whole text event when
+    // it held nothing else, or just the bracket when it was glued to the text
+    // in front of it (`text[[1]][1]`).
+    if opening_is_empty {
+        events.remove(opening);
+    } else if let Event::Text(text) = &events[opening] {
+        let prefix = text.strip_suffix(OPENING_BRACKET).unwrap_or(text);
+        events[opening] = Event::Text(CowStr::from(prefix.to_string()));
+    }
+    // Only the `[` event, when it was dropped whole, sat before the surviving
+    // link; the removals below it never shift its indices.
+    let shift = usize::from(opening_is_empty);
+    let link_start = opening + (1 - shift);
+    let link_end = first_end - shift;
+
+    // The brackets move inside the link, so the reader sees the same `[1]`
+    // Typora shows instead of anonymous text around a link. Insert from the
+    // back so the earlier index stays valid.
+    events.insert(link_end, Event::Text(CowStr::Borrowed(CLOSING_BRACKET)));
+    events.insert(
+        link_start + 1,
+        Event::Text(CowStr::Borrowed(OPENING_BRACKET)),
+    );
+
+    Some(Folded {
+        link_start,
+        line: pending.line,
+        text_start: pending.text_start,
+        duplicate_len: visible_text(events, link_start)
+            .trim_start_matches(OPENING_BRACKET)
+            .trim_end_matches(CLOSING_BRACKET)
+            .len(),
+    })
+}
+
+/// Indices of the events that make up one `[[n]][n]` at the tail of the buffer.
+struct Shape {
+    /// Index of the surviving link's `End`.
+    first_end: usize,
+    /// Index of the dropped link's `Start`.
+    second_start: usize,
+    /// Index of the text event that ends with the wrap's `[`.
+    opening: usize,
+    /// Whether that text event holds nothing but the `[`.
+    opening_is_empty: bool,
+}
+
+/// Recognise the tail of `events` as `[[n]][n]` and return its layout.
+///
+/// Returns `None` for every other shape, which is the common case: the checks
+/// are a handful of index lookups, so the fast path stays cheap.
+fn bracket_shape(events: &[Event<'_>]) -> Option<Shape> {
+    // The buffer always ends with the dropped link's `End`.
+    let second_end = events.len().checked_sub(1)?;
+    match events.get(second_end)? {
+        Event::End(TagEnd::Link) => {}
+        _ => return None,
+    }
+    let second_start = find_link_start(events, second_end)?;
+
+    // Between the links sits exactly one `]` text event.
+    let separator = second_start.checked_sub(1)?;
+    if !is_literal(events.get(separator)?, CLOSING_BRACKET) {
+        return None;
+    }
+
+    // Before the surviving candidate: its `End`, then the text that ends with
+    // the `[` that opened the wrap.
+    let first_end = separator.checked_sub(1)?;
+    match events.get(first_end)? {
+        Event::End(TagEnd::Link) => {}
+        _ => return None,
+    }
+    let first_start = find_link_start(events, first_end)?;
+    let opening = first_start.checked_sub(1)?;
+    let Event::Text(text) = events.get(opening)? else {
+        return None;
+    };
+    let opening_is_empty = text.strip_suffix(OPENING_BRACKET)?.is_empty();
+
+    if !same_reference(events, first_start, second_start)
+        || !same_visible_text(events, first_start, second_start)
+    {
+        return None;
+    }
+
+    Some(Shape {
+        first_end,
+        second_start,
+        opening,
+        opening_is_empty,
+    })
+}
+
+/// Index of the `Start(Tag::Link)` that opened the link closing at `end`.
+///
+/// The scan walks backwards over inline events only: any other link, block or
+/// inline container means the closing event does not belong to a plain link
+/// here, and the shape is rejected.
+fn find_link_start(events: &[Event<'_>], end: usize) -> Option<usize> {
+    let mut index = end;
+    while index > 0 {
+        index -= 1;
+        match &events[index] {
+            Event::Start(Tag::Link { .. }) => return Some(index),
+            Event::Start(_) | Event::End(_) | Event::Html(_) | Event::InlineHtml(_) => {
+                return None;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether the two links are reference links to the same destination.
+///
+/// Both destinations are compared as written. The surviving link may already
+/// have been rewritten when a previous `End(Link)` was handled, so the
+/// rewritten form is stripped back to the author's destination first.
+fn same_reference(events: &[Event<'_>], first_start: usize, second_start: usize) -> bool {
+    let (
+        Event::Start(Tag::Link {
+            link_type: first_type,
+            dest_url: first_dest,
+            title: first_title,
+            ..
+        }),
+        Event::Start(Tag::Link {
+            link_type: second_type,
+            dest_url: second_dest,
+            title: second_title,
+            ..
+        }),
+    ) = (&events[first_start], &events[second_start])
+    else {
+        return false;
+    };
+
+    is_reference(*first_type)
+        && is_reference(*second_type)
+        && first_dest == second_dest
+        && first_title == second_title
+}
+
+/// Whether a link type is `[n]` / `[n][]` rather than `[n](url)`.
+fn is_reference(link_type: LinkType) -> bool {
+    matches!(link_type, LinkType::Shortcut | LinkType::Collapsed)
+}
+
+/// Whether the two links render the same visible text.
+fn same_visible_text(events: &[Event<'_>], first_start: usize, second_start: usize) -> bool {
+    let first = visible_text(events, first_start);
+    let second = visible_text(events, second_start);
+    !first.is_empty() && first == second
+}
+
+/// Visible text of the link that starts at `start`, up to its `End`.
+///
+/// Only plain text and code spans count: anything else (emphasis, an image, a
+/// nested link) makes the link uninteresting to the fold, and an empty string
+/// is returned so the comparison fails.
+fn visible_text(events: &[Event<'_>], start: usize) -> String {
+    let mut text = String::new();
+    for event in &events[start + 1..] {
+        match event {
+            Event::Text(value) | Event::Code(value) => text.push_str(value),
+            Event::End(TagEnd::Link) => break,
+            _ => return String::new(),
+        }
+    }
+    text
+}
+
+/// Whether `event` is a text event holding exactly `literal`.
+fn is_literal(event: &Event<'_>, literal: &str) -> bool {
+    matches!(event, Event::Text(value) if value.as_ref() == literal)
 }
 
 /// Whether opening `tag` starts a new block in the plain text.
@@ -696,5 +1093,156 @@ fn main() {}
         let doc = render_document("alpha\n\nbeta **gamma** delta\n");
 
         assert_eq!(doc.text, "alpha beta gamma delta");
+    }
+
+    /// A document whose `[1]` and `[2]` are reference link definitions.
+    fn citation_source(body: &str) -> String {
+        format!("{body}\n\n[1]: https://example.com/1\n[2]: https://example.com/2\n")
+    }
+
+    #[test]
+    fn bracketed_citation_collapses_to_one_link() {
+        let doc = render_document(&citation_source("text[[1]][1] more"));
+
+        assert_eq!(
+            doc.html, "<p>text<a href=\"https://example.com/1\">[1]</a> more</p>\n",
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.html.matches("<a ").count(), 1, "one link only");
+    }
+
+    #[test]
+    fn bracketed_citation_reads_as_a_citation_in_the_text() {
+        let doc = render_document(&citation_source("text[[1]][1] more"));
+
+        assert_eq!(doc.text, "text[1] more");
+    }
+
+    #[test]
+    fn bracketed_citation_inside_a_table_cell_collapses() {
+        let source = citation_source("| a | b |\n| - | - |\n| x[[1]][1] | y |");
+        let doc = render_document(&source);
+
+        assert!(
+            doc.html
+                .contains("<td>x<a href=\"https://example.com/1\">[1]</a></td>"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.html.matches("<a ").count(), 1);
+        assert_eq!(doc.text, "a b x[1] y");
+    }
+
+    #[test]
+    fn bracketed_citation_inside_a_heading_updates_text_and_anchor() {
+        let doc = render_document(&citation_source("## Ref [[1]][1]"));
+
+        assert!(
+            doc.html
+                .contains("<h2 id=\"ref-1\">Ref <a href=\"https://example.com/1\">[1]</a>"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.toc[0].text, "Ref [1]");
+    }
+
+    #[test]
+    fn several_citations_in_one_paragraph_each_collapse() {
+        let doc = render_document(&citation_source("a[[1]][1]b[[2]][2]c"));
+
+        assert_eq!(
+            doc.html,
+            "<p>a<a href=\"https://example.com/1\">[1]</a>b<a href=\"https://example.com/2\">[2]</a>c</p>\n",
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "a[1]b[2]c");
+    }
+
+    #[test]
+    fn a_wrapped_link_without_its_duplicate_is_left_alone() {
+        let doc = render_document(&citation_source("text[[1]] more"));
+
+        assert!(
+            doc.html
+                .contains("text[<a href=\"https://example.com/1\">1</a>] more"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "text[1] more");
+    }
+
+    #[test]
+    fn adjacent_inline_links_are_not_folded() {
+        let source = "[1](https://example.com)[1](https://example.com)\n";
+        let doc = render_document(source);
+
+        assert_eq!(
+            doc.html,
+            "<p><a href=\"https://example.com\">1</a><a href=\"https://example.com\">1</a></p>\n",
+            "inline brackets are author syntax, not a wrap: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn adjacent_reference_links_without_a_wrap_are_not_folded() {
+        let doc = render_document(&citation_source("[1] [1]"));
+
+        assert_eq!(doc.html.matches("<a ").count(), 2, "html: {}", doc.html);
+    }
+
+    #[test]
+    fn an_undefined_reference_is_left_verbatim() {
+        let doc = render_document("text[[1]][1] more\n");
+
+        assert!(doc.html.contains("text[[1]][1] more"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn citations_inside_code_are_never_folded() {
+        let source = "`[[1]][1]`\n\n```\n[[1]][1]\n```\n\n[1]: https://example.com/1\n";
+        let doc = render_document(source);
+
+        assert!(
+            doc.html.contains("<code>[[1]][1]</code>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("<a "), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn the_folded_citation_resolves_to_one_destination() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with(&citation_source("x[[1]][1]y"), &mut recorder);
+
+        assert_eq!(
+            recorder.seen,
+            [("https://example.com/1".to_string(), 1)],
+            "only the surviving link reaches the resolver"
+        );
+        assert_eq!(
+            doc.html.matches("href=").count(),
+            1,
+            "the duplicate link must not survive: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_pending_link_that_ends_a_paragraph_is_still_rewritten() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with(&citation_source("see [[1]]"), &mut recorder);
+
+        assert_eq!(recorder.seen, [("https://example.com/1".to_string(), 1)]);
+        assert_eq!(
+            doc.html, "<p>see [<a href=\"rewritten:https://example.com/1\">1</a>]</p>\n",
+            "html: {}",
+            doc.html
+        );
     }
 }
