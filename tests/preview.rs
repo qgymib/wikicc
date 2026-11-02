@@ -1,16 +1,16 @@
-//! End-to-end regression for the block reference that stopped previewing.
+//! End-to-end regression for a block reference that stopped previewing.
 //!
-//! The reported document links to a numbered CJK chapter of another document:
+//! The source document links to a numbered CJK heading of another document:
 //!
 //! ```text
 //! [测试](<./笔记/旅行清单.md#1.4 配色与字体>)
 //! ```
 //!
-//! while that document carries `### 1.4 配色与字体`. The chapter exists,
-//! so the reference has to become a route to the anchor the document really
-//! emits (`14-配色与字体`), the payload has to carry a block with exactly
-//! that id, and nothing may be marked as a broken reference — otherwise the
-//! reader opens a notice instead of a preview.
+//! while that document carries `### 1.4 配色与字体`. The heading exists, so the
+//! reference has to become a route to the anchor the document really emits
+//! (`14-配色与字体`), the payload has to carry a block with exactly that id,
+//! and nothing may be marked as a broken reference — otherwise the reader opens
+//! a notice instead of a preview.
 //!
 //! The hover itself was broken in the view layer, not here: `preview-view.js`
 //! built its icon `<path>` elements through the parent `<svg>`, and a real
@@ -24,17 +24,29 @@ use std::path::Path;
 use wikicc::scan::scan;
 use wikicc::site::{SiteBuild, build_site};
 
+/// The site title the fixture is built under.
+const SITE_TITLE: &str = "随手记";
+
 /// Document the reference is written in.
 const SOURCE_ID: &str = "书架.md";
 
 /// Document the reference points at.
 const TARGET_ID: &str = "笔记/旅行清单.md";
 
-/// The chapter as the author spelled it.
+/// The heading as the author spelled it.
 const AUTHORED_CHAPTER: &str = "1.4 配色与字体";
 
-/// The anchor the renderer emits for that chapter.
+/// The anchor the renderer emits for that heading.
 const EMITTED_ANCHOR: &str = "14-配色与字体";
+
+/// The body of the previewed heading.
+const CHAPTER_BODY: &str = "海边的日落很好看。";
+
+/// The body of the heading nested under it.
+const NESTED_BODY: &str = "第二天去了旧书店。";
+
+/// The body of the parent heading, which no preview may carry.
+const PARENT_BODY: &str = "出发前先看了天气。";
 
 /// Write one document into the temporary site.
 fn write(root: &Path, relative: &str, contents: &str) {
@@ -45,15 +57,15 @@ fn write(root: &Path, relative: &str, contents: &str) {
     std::fs::write(path, contents).expect("write fixture file");
 }
 
-/// Build the site the report describes, then hand it back with its root.
+/// Build the site the scenario describes, then hand it back with its root.
 fn reported_site() -> (tempfile::TempDir, SiteBuild) {
     let dir = tempfile::tempdir().expect("temp dir");
 
     write(
         dir.path(),
         SOURCE_ID,
-        "# 随手记 书架\n\n\
-         | 能力 | 说明 |\n\
+        "# 书架\n\n\
+         | 书名 | 备注 |\n\
          | --- | --- |\n\
          | 旅行清单 | 还没读完 |\n\n\
          [测试](<./笔记/旅行清单.md#1.4 配色与字体>)\n",
@@ -61,17 +73,19 @@ fn reported_site() -> (tempfile::TempDir, SiteBuild) {
     write(
         dir.path(),
         TARGET_ID,
-        "# 旅行清单\n\n\
-         ## 1. 出行准备\n\n\
-         还没读完。\n\n\
-         ### 1.4 配色与字体\n\n\
-         出发前先看了天气。\n\n\
-         #### 1.4.1 字体大小\n\n\
-         第二天去了旧书店。\n",
+        &format!(
+            "# 旅行清单\n\n\
+             ## 1. 出行准备\n\n\
+             {PARENT_BODY}\n\n\
+             ### {AUTHORED_CHAPTER}\n\n\
+             {CHAPTER_BODY}\n\n\
+             #### 1.4.1 字体大小\n\n\
+             {NESTED_BODY}\n"
+        ),
     );
 
     let report = scan(dir.path(), &dir.path().join("dist")).expect("scan");
-    let build = build_site("随手记", dir.path(), &report.docs);
+    let build = build_site(SITE_TITLE, dir.path(), &report.docs);
 
     (dir, build)
 }
@@ -167,7 +181,7 @@ fn the_target_document_carries_the_block_the_preview_reads() {
         block.html
     );
     assert!(
-        block.html.contains("出发前先看了天气"),
+        block.html.contains(CHAPTER_BODY),
         "the block carries the chapter's own text: {}",
         block.html
     );
@@ -194,11 +208,11 @@ fn previewing_the_reported_chapter_shows_its_own_chapter_only() {
         "the preview opens with the chapter heading: {chapter}"
     );
     assert!(
-        chapter.contains("第二天去了旧书店"),
+        chapter.contains(NESTED_BODY),
         "a nested chapter belongs to the preview: {chapter}"
     );
     assert!(
-        !chapter.contains("还没读完"),
+        !chapter.contains(PARENT_BODY),
         "the parent chapter is not part of the preview: {chapter}"
     );
     assert!(

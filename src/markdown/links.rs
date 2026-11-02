@@ -927,14 +927,14 @@ mod tests {
     fn a_numbered_chapter_resolves_to_the_anchor_the_reader_emits() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut context = context(dir.path(), &["a.md", "b.md"]);
-        // `### 1.4 配色与字体` slugs to `14-配色与字体`: the dot
-        // is dropped and the space becomes a dash.
+        // `### 1.4 配色与字体` slugs to `14-配色与字体`: the dot is dropped and
+        // the space becomes a dash.
         context.register_anchors("b.md", ["14-配色与字体".to_string()]);
         let mut resolver = context.for_doc("a.md");
 
         assert_eq!(
             resolver.resolve("b.md#1.4 配色与字体", 1).dest,
-            "#/doc/b.md#34-%E6%8A%80%E6%9C%AF%E9%A3%8E%E9%99%A9%E4%B8%8E%E5%A4%87%E9%80%89%E8%B7%AF%E7%BA%BF",
+            "#/doc/b.md#14-%E9%85%8D%E8%89%B2%E4%B8%8E%E5%AD%97%E4%BD%93",
             "a route must name an anchor a browser can find"
         );
         drop(resolver);

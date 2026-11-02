@@ -211,7 +211,7 @@ test("showing a broken reference fills in the document and the chapter", () => {
 
   assert.match(text, /Chapter not found/);
   assert.match(text, /guide\/intro\.md/);
-  assert.match(text, /1\.4 配色与字体与字体/);
+  assert.match(text, /1\.4 配色与字体/);
 });
 
 test("the document and the chapter are their own elements, never concatenated html", () => {

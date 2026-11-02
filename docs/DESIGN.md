@@ -321,6 +321,24 @@ script and the payload is embedded, so neither format depends on a server.
   document ids, the same generator feeds the initial jitter and
   `simulation.randomSource()`, and the simulation is stepped synchronously, so
   the same input always produces the same picture.
+- **A node click is a press and a release, not a `click` event.** `d3-drag`
+  takes a press on a node and keeps the pointer capture on the window, and
+  Chrome then announces no `click` for that gesture at all, so a graph waiting
+  for one silently ignored the first click and opened the document on the
+  second. The release is therefore observed directly (it is what tells a click
+  from a drag, by how far the pointer travelled) and the native `click` is only
+  the fallback for a gesture the module never saw, such as keyboard activation.
+  A node is never a `click` away from the document already on screen: reopening
+  it would re-render the page under the reader and lose their position, so such
+  a press does nothing — which is also what keeps a double click from opening
+  the same document twice. The gesture state belongs to this module alone: a
+  press is recorded even when someone else has already cancelled it, because
+  `d3-drag` and `d3-zoom` cancel every press they take and a browser cancels the
+  one that follows a link, so the cancellation says nothing about whose gesture
+  it is. Only a `blur` on a window that no longer holds the focus ends a press
+  early — a press inside the page moves the focus and `d3-zoom` provokes a
+  `blur` of its own, so waiting for a `blur` to mean "the reader left" is what
+  made a single click disappear.
 - **Outline scroll-spy.** The active chapter is decided by position, not by
   visibility: each heading's absolute top is measured once, `pickActive` finds
   the last heading above a reading line at 25% of the viewport, and scrolling

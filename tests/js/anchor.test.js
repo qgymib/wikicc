@@ -15,7 +15,7 @@ import { resolveDocAnchor, resolveEntry } from "../../src/web/js/anchor.js";
 /** A document whose heading `1.4 配色与字体` slugs to `14-配色与字体`. */
 function doc() {
   return withBlocks({
-    id: "笔记/大纲.md",
+    id: "笔记/旅行清单.md",
     toc: [
       {
         id: "1-出行准备",
