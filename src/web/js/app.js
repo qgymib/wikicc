@@ -13,6 +13,7 @@
 import * as Router from "./router.js";
 import * as Links from "./links.js";
 import * as Search from "./search.js";
+import * as SearchView from "./search-view.js";
 import * as DocList from "./doc-list.js";
 import * as Toc from "./toc.js";
 import * as TableView from "./table-view.js";
@@ -122,7 +123,6 @@ export function start() {
 
   var content = document.getElementById("doc-content");
   var article = document.getElementById("doc-article");
-  var filter = document.getElementById("doc-filter");
   var stats = document.getElementById("stats");
   var inspector = document.getElementById("inspector");
   var sidebarToggle = document.getElementById("sidebar-toggle");
@@ -199,6 +199,57 @@ export function start() {
     });
   }
 
+  /**
+   * The search panel, which owns its own markup and asks for content here.
+   *
+   * A reader picks a document from it and lands in the article: the panel
+   * closes first, inside the view, so the navigation it causes is not fighting
+   * a panel still covering the page.
+   */
+  var searchButton = document.getElementById("search-toggle");
+
+  var searchView = SearchView.createSearchView({
+    container: document.getElementById("search-panel"),
+    // The button asks the panel to open and to close; the view leaves the
+    // button's own presses alone so the click below decides which.
+    toggle: searchButton,
+    onQuery: function (query) {
+      searchView.setResults(searchResults(query), 0);
+    },
+    onSelect: function (id, anchor) {
+      navigate(id, anchor);
+    },
+  });
+
+  /** Show the panel and say so on the button that asked for it. */
+  function openSearch() {
+    searchView.open();
+    if (searchButton) {
+      searchButton.setAttribute("aria-expanded", "true");
+    }
+  }
+
+  function closeSearch() {
+    searchView.close();
+    if (searchButton) {
+      searchButton.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  if (searchButton) {
+    // The button describes the panel from the start, so a reader arriving with
+    // a screen reader hears a control that is closed rather than one that says
+    // nothing about what it controls.
+    searchButton.setAttribute("aria-expanded", "false");
+    searchButton.addEventListener("click", function () {
+      if (searchView.isOpen()) {
+        closeSearch();
+        return;
+      }
+      openSearch();
+    });
+  }
+
   function setDrawer(open) {
     document.body.setAttribute("data-drawer", open ? "open" : "closed");
     if (sidebarToggle) {
@@ -225,7 +276,7 @@ export function start() {
       return;
     }
 
-    docList.render(listedIds(doc.id), doc.id);
+    docList.render(null, doc.id);
     graph.setActive(doc.id);
 
     if (!route.anchor) {
@@ -279,30 +330,6 @@ export function start() {
     }
 
     globalThis.location.hash = hash;
-  }
-
-  /** Ids matching the current filter, or `null` when the filter is empty. */
-  function filteredIds() {
-    return filter ? Search.search(index, filter.value) : null;
-  }
-
-  /**
-   * Ids the document list should show, keeping the open document in reach.
-   *
-   * The list is both a filter result and the place the reader looks to see what
-   * they are reading, so a filter that hides the open document would leave the
-   * sidebar pointing at nothing while the article behind it is on screen: a
-   * block reference followed while a filter is typed in would look like it went
-   * nowhere. The open document is therefore always listed; the filter decides
-   * only which of the *other* documents are.
-   */
-  function listedIds(activeId) {
-    var matched = filteredIds();
-    if (matched === null || !activeId || matched.indexOf(activeId) !== -1) {
-      return matched;
-    }
-
-    return [activeId].concat(matched);
   }
 
   /** Banner for a chapter the current document does not contain. */
@@ -426,7 +453,7 @@ export function start() {
       document.title = doc.title ? doc.title + " · " + bundle.title : bundle.title;
     }
 
-    docList.render(listedIds(route.id), route.id);
+    docList.render(null, route.id);
     graph.setActive(route.id);
 
     // A banner explains the *previous* navigation, so it never outlives it.
@@ -491,19 +518,61 @@ export function start() {
 
   /* ---------- search ---------- */
 
-  if (filter) {
-    filter.addEventListener("input", function () {
-      docList.render(listedIds(currentId), currentId);
-    });
-    filter.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && filter.value) {
-        filter.value = "";
-        docList.render(null, currentId);
-      }
-    });
+  /**
+   * The documents matching `query`, each with the passage it matched in.
+   *
+   * The ranking is the engine's: `search` decides the order, and `contexts`
+   * only annotates the ids it was given, so the list a reader sees is the one
+   * the index scored. Drawing is left to the view, which is asked again on
+   * every pause in the typing.
+   */
+  function searchResults(query) {
+    var ids = Search.search(index, query);
+    if (!ids) {
+      return [];
+    }
+
+    return Search.contexts(docs, ids, query);
   }
 
   /* ---------- layout controls ---------- */
+
+  /**
+   * The bar's last button meets the panels' right edge.
+   *
+   * The stylesheet reserves the inspector a stable scrollbar gutter and pads
+   * the top bar by `--panel-gutter`; this measures the gutter the engine
+   * really reserved — one custom scrollbar under a classic scrollbar, none
+   * under an overlay one — so the two right-hand axes stay one line whatever
+   * the platform draws. The collapsed inspector hides the panel and pins the
+   * bar's padding by the same media rules, so there is nothing to measure.
+   */
+  var graphPanel = document.getElementById("graph-panel");
+
+  function syncPanelGutter() {
+    if (!inspector || !graphPanel) {
+      return;
+    }
+
+    var panel = graphPanel.getBoundingClientRect();
+    if (panel.width === 0) {
+      return;
+    }
+
+    var inset = inspector.getBoundingClientRect().right - panel.right - 16;
+    document.documentElement.style.setProperty("--panel-gutter", inset + "px");
+  }
+
+  if (inspector && typeof ResizeObserver === "function") {
+    // Content-box changes are what move the gutter: a breakpoint switch
+    // relayouts the whole column, and the panels' own scroll states are
+    // pinned by the stable gutter rather than by the scrollbar coming and
+    // going.
+    new ResizeObserver(syncPanelGutter).observe(inspector);
+  } else if (inspector) {
+    globalThis.addEventListener("resize", syncPanelGutter);
+  }
+  syncPanelGutter();
 
   if (sidebarToggle) {
     sidebarToggle.addEventListener("click", function () {
@@ -531,7 +600,25 @@ export function start() {
   });
 
   document.addEventListener("keydown", function (event) {
+    // `Ctrl`/`Cmd`+`F` is the reader asking for search, wherever the focus is.
+    // The browser's own find bar would search the rendered page, which is not
+    // the same thing: this search reads the whole site, including documents
+    // that are not open. A repeat — the key held down — is still one request.
+    if (SearchView.isSearchShortcut(event)) {
+      event.preventDefault();
+      openSearch();
+      return;
+    }
+
     if (event.key === "Escape") {
+      // The panel has the first claim on Escape: it is the thing on top.
+      if (searchView.isOpen()) {
+        closeSearch();
+        if (searchButton) {
+          searchButton.focus();
+        }
+        return;
+      }
       setDrawer(false);
     }
   });

@@ -22,7 +22,6 @@ import assert from "node:assert/strict";
 const SHELL_IDS = [
   "doc-content",
   "doc-article",
-  "doc-filter",
   "stats",
   "inspector",
   "sidebar-toggle",
@@ -33,6 +32,8 @@ const SHELL_IDS = [
   "graph",
   "graph-fit",
   "graph-mode",
+  "search-toggle",
+  "search-panel",
   "doc-alert",
 ];
 
@@ -90,7 +91,12 @@ function fakeElement(tagName) {
         handler(event || {});
       });
     },
-    focus() {},
+    focus() {
+      this.focused = true;
+    },
+    select() {
+      this.selected = true;
+    },
     querySelector() {
       return null;
     },
@@ -100,8 +106,15 @@ function fakeElement(tagName) {
     scrollIntoView(options) {
       this.scrollCalls.push(options || {});
     },
+    // Containment is decided over the whole subtree, as the browser does: the
+    // search panel asks whether a press landed inside it.
     contains(node) {
-      return node === this;
+      if (node === this) {
+        return true;
+      }
+      return this.children.some(function (child) {
+        return typeof child.contains === "function" && child.contains(node);
+      });
     },
   };
 
@@ -180,7 +193,14 @@ function withSession(options, body) {
     matchMedia: globalThis.matchMedia,
     localStorage: globalThis.localStorage,
     addEventListener: globalThis.addEventListener,
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
   };
+
+  // The search panel debounces its query, so the timers it schedules are kept
+  // for the test to run instead of waiting for them.
+  const timers = [];
+  let timerIds = 0;
 
   const shell = new Map();
   SHELL_IDS.forEach(function (id) {
@@ -291,6 +311,11 @@ function withSession(options, body) {
         handler({});
       });
     },
+    fireEvent(type, event) {
+      (doc.listeners[type] || []).slice().forEach(function (handler) {
+        handler(event);
+      });
+    },
   };
 
   const frames = [];
@@ -330,6 +355,19 @@ function withSession(options, body) {
   globalThis.scrollTo = function (x, y) {
     scrollTop = y;
   };
+  globalThis.setTimeout = function (callback) {
+    timerIds += 1;
+    timers.push({ id: timerIds, callback: callback });
+    return timerIds;
+  };
+  globalThis.clearTimeout = function (id) {
+    const index = timers.findIndex(function (timer) {
+      return timer.id === id;
+    });
+    if (index >= 0) {
+      timers.splice(index, 1);
+    }
+  };
 
   try {
     return body({
@@ -354,6 +392,13 @@ function withSession(options, body) {
           frames.shift()();
         }
       },
+      /** Run the timers the session scheduled, which is what a debounce is. */
+      runTimers() {
+        const pending = timers.splice(0, timers.length);
+        pending.forEach(function (timer) {
+          timer.callback();
+        });
+      },
       scrollTop() {
         return scrollTop;
       },
@@ -367,6 +412,8 @@ function withSession(options, body) {
     globalThis.matchMedia = previous.matchMedia;
     globalThis.localStorage = previous.localStorage;
     globalThis.addEventListener = previous.addEventListener;
+    globalThis.setTimeout = previous.setTimeout;
+    globalThis.clearTimeout = previous.clearTimeout;
   }
 }
 
@@ -463,21 +510,32 @@ test("clicking the document already open walks to its chapter", async () => {
   });
 });
 
-test("the open document stays highlighted when the filter hides it", async () => {
+test("the document list keeps every document and highlights the open one", async () => {
   withSession({ hash: "#/doc/guide/intro.md#getting-started" }, (session) => {
     startSession();
 
-    assert.ok(activeEntry(session.shell), "the open document is highlighted");
-
-    const filter = session.shell.get("doc-filter");
-    filter.value = "zzz-no-such-document";
-    filter.fire("input", { target: filter });
-
     const entry = activeEntry(session.shell);
-    assert.ok(entry, "the open document is still listed and highlighted");
+    assert.ok(entry, "the open document is highlighted");
     assert.equal(entry.textContent, "Intro");
+
+    // The sidebar no longer filters: searching is the panel's job, so the list
+    // is the site's table of contents for the whole session.
+    assert.equal(countLinks(session.shell.get("doc-list")), 2, "both documents are listed");
   });
 });
+
+/** How many document links the list holds. */
+function countLinks(container) {
+  var count = 0;
+  (function walk(node) {
+    if (node.tagName === "A") {
+      count += 1;
+    }
+    (node.children || []).forEach(walk);
+  })(container);
+
+  return count;
+}
 
 test("a document with no chapters opens at the top", async () => {
   withSession({ hash: "#/doc/index.md#top" }, (session) => {
@@ -530,6 +588,127 @@ test("the mode survives a navigation to another document", async () => {
 
     assert.equal(button.getAttribute("aria-pressed"), "true", "the reader chose the global view, not one document");
     assert.equal(button.textContent, "Global");
+  });
+});
+
+/* ---------- search panel ---------- */
+
+/** The query field the panel built, found by its class. */
+function searchInput(shell) {
+  var found = null;
+  (function walk(node) {
+    if (found) {
+      return;
+    }
+    if (node.tagName === "INPUT" && String(node.className).indexOf("search-input") !== -1) {
+      found = node;
+      return;
+    }
+    (node.children || []).forEach(walk);
+  })(shell.get("search-panel"));
+
+  return found;
+}
+
+/** Every element of the panel with `className`. */
+function searchParts(shell, className) {
+  var found = [];
+  (function walk(node) {
+    (node.children || []).forEach(function (child) {
+      if (String(child.className).split(" ").indexOf(className) !== -1) {
+        found.push(child);
+      }
+      walk(child);
+    });
+  })(shell.get("search-panel"));
+
+  return found;
+}
+
+/** Keyboard event shaped the way the session reads it. */
+function keydown(key, extra) {
+  return Object.assign({ key: key, preventDefault() {} }, extra || {});
+}
+
+test("the toolbar button opens the search panel and says so", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const button = session.shell.get("search-toggle");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+
+    button.fire("click");
+
+    assert.equal(button.getAttribute("aria-expanded"), "true");
+    assert.equal(session.shell.get("search-panel").hidden, false);
+  });
+});
+
+test("the toolbar button is a switch: pressing it again closes the panel", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+    const button = session.shell.get("search-toggle");
+
+    button.fire("click");
+    button.fire("click");
+
+    assert.equal(session.shell.get("search-panel").hidden, true);
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+  });
+});
+
+test("Ctrl+F opens the search panel instead of the browser's find", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    let prevented = false;
+    session.doc.fireEvent("keydown", {
+      key: "f",
+      ctrlKey: true,
+      preventDefault() {
+        prevented = true;
+      },
+    });
+
+    assert.equal(prevented, true, "the browser's own find bar must not open");
+    assert.equal(session.shell.get("search-panel").hidden, false);
+    assert.equal(session.shell.get("search-toggle").getAttribute("aria-expanded"), "true");
+  });
+});
+
+test("Escape closes the search panel and returns the focus to its button", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+    const button = session.shell.get("search-toggle");
+
+    button.fire("click");
+    session.doc.fireEvent("keydown", keydown("Escape"));
+
+    assert.equal(session.shell.get("search-panel").hidden, true);
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    assert.equal(button.focused, true, "the keyboard reader lands back on the button");
+  });
+});
+
+test("the search panel finds documents by their text", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const button = session.shell.get("search-toggle");
+    button.fire("click");
+
+    const input = searchInput(session.shell);
+    assert.ok(input, "the panel built a field to type in");
+    input.value = "getting";
+    input.fire("input", { target: input });
+
+    // The debounce fires through the fake timers the session installed.
+    session.runTimers();
+
+    const titles = searchParts(session.shell, "search-result-title").map(function (node) {
+      return node.textContent;
+    });
+    assert.deepEqual(titles, ["Intro"], "the document whose heading matches is listed");
   });
 });
 

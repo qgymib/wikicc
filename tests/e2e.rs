@@ -21,7 +21,7 @@ use wikicc::options::OutputFormat;
 use wikicc::scan::scan;
 use wikicc::site::build_site;
 use wikicc::writers::{ASSETS_DIR_NAME, HTML_FILE_NAME};
-use wikicc::{APP_BUNDLE, RenderedSite, SiteBundle, render_site, theme_css};
+use wikicc::{APP_BUNDLE, RenderedSite, SHELL_CSS, SiteBundle, render_site, theme_css};
 
 /// Prefix of the opaque asset placeholder the writers replace.
 const ASSET_PREFIX: &str = "wikicc-asset:";
@@ -66,11 +66,82 @@ fn the_page_carries_every_required_marker() {
         r#"id="graph-fit""#,
         r#"id="toc""#,
         r#"id="theme-toggle""#,
-        r#"id="doc-filter""#,
+        r#"id="search-toggle""#,
+        r#"id="search-panel""#,
         r#"id="wikicc-payload""#,
     ] {
         assert!(page.html.contains(marker), "missing {marker}");
     }
+
+    assert!(
+        !page.html.contains(r#"id="doc-filter""#),
+        "the sidebar carries no permanent search field: searching is the panel's job"
+    );
+}
+
+#[test]
+fn the_search_button_lives_in_the_top_toolbar() {
+    let page = render(&build(&fixture_root(), "Fixture"));
+
+    // Searching belongs to the whole reader, not to one panel: the button is
+    // the top bar's own control, and the panel it opens is a child of the app
+    // that follows the inspector instead of living inside the graph panel.
+    let bar = page.html.find(r#"class="topbar""#).expect("top bar");
+    let button = page
+        .html
+        .find(r#"id="search-toggle""#)
+        .expect("search button");
+    let panel = page
+        .html
+        .find(r#"id="search-panel""#)
+        .expect("search panel");
+    let graph = page
+        .html
+        .find(r#"<div class="graph" id="graph">"#)
+        .expect("graph box");
+
+    assert!(bar < button, "the button belongs to the top bar");
+    assert!(button < panel, "the panel follows the button that opens it");
+    assert!(
+        graph < panel,
+        "the panel is a sibling of the panels, not a child of the graph panel"
+    );
+    assert!(
+        !page.html.contains("graph-toolbar"),
+        "the graph panel no longer carries a search row"
+    );
+    assert!(
+        page.html.contains(r#"aria-controls="search-panel""#),
+        "the button names the panel it controls"
+    );
+    assert!(
+        page.html.contains(r#"aria-expanded="false""#),
+        "the button starts out describing a closed panel"
+    );
+}
+
+#[test]
+fn the_theme_switch_sits_beside_search_in_the_top_bar() {
+    let page = render(&build(&fixture_root(), "Fixture"));
+
+    // The theme is an app-level control like search, so it belongs at the far
+    // end of the top bar, after the button it sits beside. The sidebar header
+    // is left holding nothing but the site title.
+    let bar = page.html.find(r#"class="topbar""#).expect("top bar");
+    let search = page.html.find(r#"id="search-toggle""#).expect("search button");
+    let theme = page.html.find(r#"id="theme-toggle""#).expect("theme button");
+    let header = page.html.find(r#"class="sidebar-header""#).expect("sidebar header");
+    let header_end = page.html[header..]
+        .find("</header>")
+        .expect("sidebar header end")
+        + header;
+
+    assert!(bar < search, "search belongs to the top bar");
+    assert!(search < theme, "the theme switch is the bar's last control");
+    assert!(
+        !page.html[header..header_end].contains("theme-toggle"),
+        "the sidebar header keeps nothing but the site title"
+    );
 }
 
 #[test]
@@ -192,6 +263,359 @@ fn the_link_graph_is_rendered_by_the_page_instead_of_a_placeholder() {
         3,
         "the fixture has three edges for the graph to draw"
     );
+}
+
+/// The declarations of one rule, `selector` included, without needing a real
+/// CSS parser: the sheet is hand-written in one declaration per line, so the
+/// block is the text between its opening brace and the next closing one.
+fn rule_of<'a>(css: &'a str, selector: &str) -> &'a str {
+    let start = css.find(selector).unwrap_or_else(|| panic!("no {selector}"));
+    let open = css[start..].find('{').expect("rule body") + start;
+    let close = css[open..].find('}').expect("rule end") + open;
+
+    &css[start..close]
+}
+
+/// The last declaration of `property` in a block, which is the one a cascade
+/// inside the block would apply.
+fn declaration<'a>(block: &'a str, property: &str) -> Option<&'a str> {
+    block
+        .lines()
+        .filter_map(|line| {
+            let (name, value) = line.trim_end_matches(';').trim().split_once(':')?;
+            (name == property).then(|| value.trim())
+        })
+        .next_back()
+}
+
+#[test]
+fn the_toolbar_is_painted_as_the_head_of_the_panel_column() {
+    // On a wide screen the top bar is not a strip laid across the panel column
+    // but the head of it: same surface, same left rule, no rule across the join.
+    // Asserted as a contract because the seam it removes is invisible once it
+    // is wrong — only a hue step and a broken vertical line remain.
+    let css = SHELL_CSS;
+
+    assert!(
+        css.contains("--shell-top:") && css.contains("--shell-bottom:"),
+        "the column surface is defined by shared tokens"
+    );
+    assert!(
+        css.contains("--shell-line:"),
+        "the column's left rule has a token of its own"
+    );
+    assert_eq!(
+        css.matches("--shell-top:").count(),
+        3,
+        "dark, explicit light and system light each declare the column surface"
+    );
+
+    let bar = rule_of(css, ".topbar {");
+    assert_eq!(
+        declaration(bar, "border-left").as_deref(),
+        Some("1px solid var(--shell-line)"),
+        "the column's left rule starts at the top of the bar, not under it"
+    );
+    assert_eq!(
+        declaration(bar, "border-bottom"),
+        None,
+        "a rule across the column would draw the seam the shared surface removes"
+    );
+    assert!(
+        declaration(bar, "background").is_some_and(|value| value.contains("--shell-top")),
+        "the bar carries the column's own surface: {bar}"
+    );
+    assert_eq!(
+        declaration(bar, "padding").as_deref(),
+        Some("0 calc(16px + var(--panel-gutter, 8px)) 0 16px"),
+        "the bar's right edge meets the panels' stable-gutter edge, scrollbar or not"
+    );
+}
+
+#[test]
+fn the_narrow_toolbar_goes_back_to_being_a_strip() {
+    // Below the inspector's width the bar lies across content that scrolls
+    // under it, so the strip, its bottom rule and its blur come back and the
+    // column's left rule goes away with the column.
+    let css = SHELL_CSS;
+    let narrow = media_block(css, "max-width: 900px");
+    let bar = rule_of(narrow, ".topbar {");
+
+    assert_eq!(
+        declaration(bar, "border-left").as_deref(),
+        Some("0"),
+        "nothing is that edge any more"
+    );
+    assert!(
+        declaration(bar, "border-bottom").is_some(),
+        "a strip over moving content needs a rule under it: {bar}"
+    );
+    assert_eq!(
+        declaration(bar, "background").as_deref(),
+        Some("var(--bg-panel)"),
+        "the strip keeps its own translucent surface"
+    );
+    assert_eq!(
+        declaration(bar, "backdrop-filter").as_deref(),
+        Some("blur(16px)"),
+        "and the blur that lets the page show through it"
+    );
+}
+
+#[test]
+fn the_bar_and_the_panels_share_one_right_axis() {
+    // The inspector's scrollbar would steal 8px of the panels' right edge only
+    // while the content overflows, drifting that edge away from the top bar's
+    // buttons as documents change height. A stable gutter pins the edge, and
+    // the bar pads by the same total, so the two right ends meet in every
+    // scroll state.
+    let css = SHELL_CSS;
+
+    let inspector = main_inspector_rule(css);
+    assert_eq!(
+        declaration(inspector, "scrollbar-gutter").as_deref(),
+        Some("stable"),
+        "the panels' right edge holds still whether or not the scrollbar shows"
+    );
+    let bar = rule_of(css, ".topbar {");
+    assert_eq!(
+        declaration(bar, "padding").as_deref(),
+        Some("0 calc(16px + var(--panel-gutter, 8px)) 0 16px"),
+        "the bar's right padding is the panels' padding plus one gutter"
+    );
+
+    // Both concessions are wide-screen furniture: the collapsed inspector no
+    // longer scrolls and the strip lies across the whole width again.
+    let narrow = media_block(css, "max-width: 900px");
+    let bar = rule_of(narrow, ".topbar {");
+    assert_eq!(
+        declaration(bar, "padding-right").as_deref(),
+        Some("16px"),
+        "the full-width strip returns to the plain 16px axis"
+    );
+    let inspector = rule_of(narrow, ".inspector {");
+    assert_eq!(
+        declaration(inspector, "scrollbar-gutter").as_deref(),
+        Some("auto"),
+        "the collapsed panel reserves no empty strip"
+    );
+
+    // The narrowest width narrows the panels' padding, and the bar follows it.
+    let smallest = media_block(css, "max-width: 640px");
+    let bar = rule_of(smallest, ".topbar {");
+    assert_eq!(
+        declaration(bar, "padding-right").as_deref(),
+        Some("14px"),
+        "the bar keeps meeting the panels at 14px here"
+    );
+}
+
+#[test]
+fn the_search_panel_opens_as_a_centered_dialog() {
+    // The reader asked the whole reader to find something, so the panel is a
+    // dialog that takes most of the page and sits in its middle — not the
+    // corner drop-down it once was. `inset` plus `margin: auto` is what
+    // centres a fixed box without transforms, which the opening animation
+    // keeps for itself.
+    let css = SHELL_CSS;
+    let panel = rule_of(css, ".search-panel {");
+
+    assert_eq!(declaration(panel, "position").as_deref(), Some("fixed"));
+    assert_eq!(declaration(panel, "inset").as_deref(), Some("0"));
+    assert_eq!(declaration(panel, "margin").as_deref(), Some("auto"));
+
+    let width = declaration(panel, "width").expect("panel width");
+    assert!(
+        width.starts_with("min(") && width.contains("96vw"),
+        "the dialog spans nearly the whole viewport: {width}"
+    );
+    let height = declaration(panel, "height").expect("panel height");
+    assert!(
+        height.starts_with("min(") && height.contains("92vh"),
+        "the dialog fills nearly all of the viewport's height: {height}"
+    );
+
+    // While the dialog is up, one translucent layer sits between the reader
+    // and the page: the app's own pseudo-element, keyed on the open panel, a
+    // layer under the dialog itself.
+    let dim = ".app:has(.search-panel:not([hidden]))::after";
+    let backdrop = rule_of(css, &format!("{dim} {{"));
+    assert_eq!(
+        declaration(backdrop, "position").as_deref(),
+        Some("fixed"),
+        "the dim covers the viewport, not the app's box"
+    );
+    let layer: u32 = declaration(backdrop, "z-index")
+        .expect("dim layer")
+        .parse()
+        .expect("numeric z-index");
+    let panel_layer: u32 = declaration(panel, "z-index")
+        .expect("panel layer")
+        .parse()
+        .expect("numeric z-index");
+    assert!(layer < panel_layer, "the dialog stays above the dim");
+
+    // Light themes dim with a lighter hand, in both the explicit and the
+    // system-following variant; printing takes the dim away with the panel.
+    assert_eq!(
+        css.matches(dim).count(),
+        4,
+        "dark, explicit light, system light and the print opt-out declare the dim"
+    );
+    assert!(css.contains(&format!(":root[data-theme=\"light\"] {dim}")));
+    assert!(css.contains(&format!(":root:not([data-theme=\"dark\"]) {dim}")));
+
+    // Down the breakpoints the dialog keeps a fixed margin instead of a share
+    // of the viewport, so the smaller the window the closer it is to filling
+    // it.
+    let narrow = media_block(css, "max-width: 900px");
+    let panel = rule_of(narrow, ".search-panel {");
+    assert_eq!(
+        declaration(panel, "width").as_deref(),
+        Some("calc(100vw - 16px)"),
+        "the dialog fills the narrow screen but for one margin"
+    );
+    assert_eq!(declaration(panel, "height").as_deref(), Some("calc(100vh - 16px)"));
+
+    let smallest = media_block(css, "max-width: 640px");
+    let panel = rule_of(smallest, ".search-panel {");
+    assert_eq!(
+        declaration(panel, "width").as_deref(),
+        Some("calc(100vw - 12px)"),
+        "the smallest screens shrink the margin, not the dialog"
+    );
+    assert_eq!(declaration(panel, "height").as_deref(), Some("calc(100dvh - 12px)"));
+    assert_eq!(declaration(panel, "border-radius").as_deref(), Some("12px"));
+}
+
+#[test]
+fn the_search_panel_splits_itself_between_what_it_found() {
+    // The list and the preview are one answer read twice — which documents,
+    // and where in one of them — so the dialog gives them the same half of
+    // itself instead of letting the list take almost all of it. Both grow from
+    // a zero basis, and neither may state a cap of its own.
+    let css = SHELL_CSS;
+    let results = rule_of(css, ".search-results {");
+    let preview = rule_of(css, ".search-preview {");
+
+    assert_eq!(
+        declaration(results, "flex").as_deref(),
+        Some("1 1 0"),
+        "the list takes an even share of the dialog"
+    );
+    assert_eq!(
+        declaration(preview, "flex").as_deref(),
+        Some("1 1 0"),
+        "the preview takes the same share as the list"
+    );
+    assert_eq!(
+        declaration(preview, "max-height"),
+        None,
+        "no share of the dialog is reserved for the list"
+    );
+
+    // An empty half names itself in its own middle, and that label leaves as
+    // soon as the half holds something.
+    let empty = rule_of(css, ".search-empty {");
+    assert_eq!(declaration(empty, "display").as_deref(), Some("flex"));
+    assert_eq!(declaration(empty, "align-items").as_deref(), Some("center"));
+    assert_eq!(
+        declaration(empty, "justify-content").as_deref(),
+        Some("center"),
+        "the label is centred across the half it describes"
+    );
+}
+
+/// The main `.inspector` rule, found by its position: the sheet declares
+/// `.inspector` four times — an early grid-placement rule, the main one that
+/// carries the scroll behaviour, and the two breakpoint overrides. The main
+/// rule is the second occurrence, so the search starts after the first.
+fn main_inspector_rule(css: &str) -> &str {
+    let first = css.find(".inspector {").expect("inspector rule");
+    let main_rule = css[first + 1..]
+        .find(".inspector {")
+        .expect("main inspector rule")
+        + first
+        + 1;
+
+    rule_of(&css[main_rule..], ".inspector {")
+}
+
+#[test]
+fn the_toolbar_icons_stay_compact() {
+    // The bar's round buttons are quiet furniture at the far end of the column:
+    // a small box with a glyph one step inside it, so the controls read as part
+    // of the strip instead of competing with the panels below.
+    let css = SHELL_CSS;
+
+    let button = rule_of(css, ".icon-button {");
+    assert_eq!(
+        declaration(button, "width").as_deref(),
+        Some("28px"),
+        "the round buttons are 28px boxes"
+    );
+    assert_eq!(
+        declaration(button, "height").as_deref(),
+        Some("28px"),
+        "the round buttons are 28px boxes"
+    );
+
+    let glyph = rule_of(css, ".icon-button svg {");
+    assert_eq!(
+        declaration(glyph, "width").as_deref(),
+        Some("14px"),
+        "the glyph sits one step inside the box"
+    );
+    assert_eq!(
+        declaration(glyph, "height").as_deref(),
+        Some("14px"),
+        "the glyph sits one step inside the box"
+    );
+}
+
+#[test]
+fn the_column_opens_with_the_panels_own_gap() {
+    // The air under the bar's buttons is the same air the panels are held
+    // apart by: the 52px bar centres its 28px buttons and leaves 12px under
+    // them, so the column opens with the remaining 2px of the 14px gap.
+    let css = SHELL_CSS;
+    let inspector = main_inspector_rule(css);
+
+    assert_eq!(
+        declaration(inspector, "gap").as_deref(),
+        Some("14px"),
+        "the panels are held apart by the column's rhythm"
+    );
+    assert_eq!(
+        declaration(inspector, "padding").as_deref(),
+        Some("2px 16px 18px"),
+        "the column carries only the gap's remainder below the bar's buttons"
+    );
+}
+
+/// The body of the first `@media (...)` whose condition contains `query`.
+fn media_block<'a>(css: &'a str, query: &str) -> &'a str {
+    let start = css
+        .find(query)
+        .unwrap_or_else(|| panic!("no @media {query}"));
+    let open = css[start..].find('{').expect("media body") + start;
+    let mut depth = 0usize;
+
+    for (offset, ch) in css[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+
+                if depth == 0 {
+                    return &css[open..offset + open];
+                }
+            }
+            _ => {}
+        }
+    }
+
+    panic!("@media {query} is never closed")
 }
 
 #[test]

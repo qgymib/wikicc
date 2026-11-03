@@ -25,6 +25,14 @@
   --sidebar-width: 260px;
   --inspector-width: 320px;
   --topbar-height: 52px;
+  /* The last column is one surface, not two. The toolbar sits at the top of the
+     panel column and the panels scroll under it, so both are painted from these
+     two stops: the toolbar takes the first one and the column starts from it.
+     Sharing the values is what makes the seam between them invisible — a
+     separate value for the bar always shows up as a step at the join. */
+  --shell-top: rgba(17, 23, 31, 0.55);
+  --shell-bottom: rgba(11, 15, 20, 0.35);
+  --shell-line: var(--border);
 }
 
 /* Light palette, applied explicitly by the toggle and implicitly by the OS. */
@@ -41,6 +49,8 @@
   --border-strong: rgba(27, 36, 48, 0.18);
   --accent-soft: rgba(76, 141, 255, 0.12);
   --shadow: 0 18px 48px rgba(27, 36, 48, 0.12);
+  --shell-top: rgba(255, 255, 255, 0.6);
+  --shell-bottom: rgba(246, 247, 249, 0.4);
 }
 
 @media (prefers-color-scheme: light) {
@@ -57,6 +67,8 @@
     --border-strong: rgba(27, 36, 48, 0.18);
     --accent-soft: rgba(76, 141, 255, 0.12);
     --shadow: 0 18px 48px rgba(27, 36, 48, 0.12);
+    --shell-top: rgba(255, 255, 255, 0.6);
+    --shell-bottom: rgba(246, 247, 249, 0.4);
   }
 }
 
@@ -66,6 +78,9 @@
 
 html {
   scroll-behavior: smooth;
+  /* The top bar is sticky at every width, so an anchor has to stop short of
+     it or the chapter it names opens underneath the bar. */
+  scroll-padding-top: var(--topbar-height);
   -webkit-text-size-adjust: 100%;
 }
 
@@ -106,15 +121,79 @@ a {
 
 /* ---------- shell ---------- */
 
+/* Two rows, not one: the first row is the toolbar's, the second is the
+   reader's. Only the third column has a toolbar above it — the toolbar is the
+   inspector's, so the document list and the article start at the top of the
+   page with nothing over them. */
 .app {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
+  grid-template-rows: var(--topbar-height) auto;
   align-items: start;
   min-height: 100vh;
 }
 
+/* The top bar is the app's own toolbar and stays on screen at every width.
+   On a wide screen it spans the inspector's column alone — the strip sits over
+   the panel column it belongs to instead of cutting across the article — and
+   the drawer toggle and the site title are narrow-screen furniture that only
+   come back once the columns collapse.
+
+   On that wide screen the bar is not a strip laid across the column: it is the
+   column's own head. It carries the same surface (`--shell-top`, the first stop
+   of the column's gradient) and the same left rule, so the rule runs unbroken
+   from the top of the page and the paint never steps at the join. This is also
+   why there is no bottom border here — a line across the column would draw the
+   seam the shared surface is there to hide, and nothing scrolls out from under
+   a bar whose column is pinned below it anyway. The narrow-screen rule further
+   down puts the strip, its rule and its blur back, because there the bar really
+   does lie across content that scrolls beneath it. */
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  grid-row: 1;
+  grid-column: 3;
+  display: flex;
+  /* Pinned to its row's top edge, so it stays on screen while the panels
+    underneath scroll. `stretch` gives it the row's height; the bar's own
+    height then follows that row rather than the other way round. */
+  align-self: stretch;
+  align-items: center;
+  gap: 12px;
+  /* The bar's controls share one right-hand axis with the panels below them.
+     The inspector reserves a stable scrollbar gutter, so its panels always end
+     16px of padding plus one gutter from the column edge, in every scroll
+     state; the bar pads by the same total to meet them there. The script
+     measures the gutter the engine really reserved into `--panel-gutter` —
+     8px under the custom classic scrollbar, none under an overlay one — and
+     the 8px here is only the fallback for when it has not run yet. */
+  padding: 0 calc(16px + var(--panel-gutter, 8px)) 0 16px;
+  border-left: 1px solid var(--shell-line);
+  background: linear-gradient(180deg, var(--shell-top), var(--shell-top));
+}
+
+/* Only the panel column starts under the toolbar; the document list and the
+   article have no bar over them, so they run from the very top of the page —
+   which is what the two-row grid is for. */
+.sidebar,
+.content {
+  grid-row: 1 / span 2;
+}
+
+.inspector {
+  grid-row: 2;
+}
+
+.topbar-title,
+#sidebar-toggle {
   display: none;
+}
+
+/* With the narrow-screen furniture hidden, the search button is the only
+   control left on the bar, so it takes the far end the way a toolbar does. */
+#search-toggle {
+  margin-left: auto;
 }
 
 .skip-link {
@@ -147,6 +226,8 @@ a {
 
 .sidebar {
   position: sticky;
+  /* Nothing is above the sidebar in its own column — the toolbar belongs to
+     the inspector's column — so it owns the full height of the viewport. */
   top: 0;
   display: flex;
   flex-direction: column;
@@ -196,8 +277,8 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 50%;
@@ -213,9 +294,16 @@ a {
   transform: translateY(-1px);
 }
 
+/* Open is a state, not a hover: the button says the thing it controls is up. */
+.icon-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
 .icon-button svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
@@ -243,46 +331,6 @@ a {
   :root:not([data-theme="dark"]) #theme-toggle .icon-moon {
     display: none;
   }
-}
-
-.search-box {
-  position: relative;
-}
-
-.search-icon {
-  position: absolute;
-  top: 50%;
-  left: 11px;
-  width: 15px;
-  height: 15px;
-  transform: translateY(-50%);
-  fill: none;
-  stroke: var(--text-dim);
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  pointer-events: none;
-}
-
-.search-input {
-  width: 100%;
-  padding: 9px 12px 9px 34px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-hover);
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.search-input::placeholder {
-  color: var(--text-dim);
-}
-
-.search-input:focus {
-  outline: none;
-  border-color: rgba(76, 141, 255, 0.65);
-  box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.16);
 }
 
 .doc-list {
@@ -1441,27 +1489,29 @@ a {
 
 /* ---------- inspector ---------- */
 
+/* The panel column starts below the toolbar that sits in its first row, so it
+   only has the toolbar's height to give up: it sticks to the top edge of its
+   own row, which is already under the bar. */
 .inspector {
   position: sticky;
-  top: 0;
+  top: var(--topbar-height);
   display: flex;
   flex-direction: column;
   gap: 14px;
-  height: 100vh;
-  padding: 18px 16px;
-  border-left: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(17, 23, 31, 0.55), rgba(11, 15, 20, 0.35));
+  height: calc(100vh - var(--topbar-height));
+  grid-column: 3;
+  /* The air under the bar's buttons is the gap the panels are held apart by:
+     the 52px bar centres its 28px buttons and leaves 12px under them, so the
+     column itself carries only the remaining 2px of the 14px rhythm. */
+  padding: 2px 16px 18px;
+  border-left: 1px solid var(--shell-line);
+  background: linear-gradient(180deg, var(--shell-top), var(--shell-bottom));
   overflow-y: auto;
-}
-
-:root[data-theme="light"] .inspector {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(246, 247, 249, 0.4));
-}
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .inspector {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(246, 247, 249, 0.4));
-  }
+  /* A classic scrollbar steals 8px of the panels' right edge only when the
+     content overflows, so the edge would drift from the top bar's buttons as
+     documents change height. A stable gutter pins the panels at their scrolled
+     position in every state, which is the axis the bar's buttons align to. */
+  scrollbar-gutter: stable;
 }
 
 .inspector-tabs {
@@ -1552,6 +1602,268 @@ a {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--text);
+}
+
+/* ---------- search panel ---------- */
+
+.search-panel {
+  /* A centered dialog, not a drop-down: the reader asked the whole reader to
+     find something, so the window takes nearly all of the page and sits in
+     its middle. `inset` plus `margin: auto` is what centres a fixed box
+     without transforms, which the opening animation keeps for itself. */
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  margin: auto;
+  width: min(1600px, 96vw);
+  height: min(1100px, 92vh);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow), 0 32px 90px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  /* Opening is a small lift, not a zoom: the dialog arrives from slightly
+     above its own centre while the page behind it never moves. */
+  animation: search-in 160ms ease-out;
+}
+
+.search-panel[hidden] {
+  display: none;
+}
+
+/* While the dialog is up, the page behind it steps back: one translucent
+   layer between the reader and everything the dialog is not. It is the app's
+   own pseudo-element keyed on the open panel, so it costs no markup and no
+   script; a press on it lands outside the panel, which is how the dim closes
+   the search. Its layer stays one step under the dialog itself. */
+.app:has(.search-panel:not([hidden]))::after {
+  content: "";
+  position: fixed;
+  z-index: 29;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+:root[data-theme="light"] .app:has(.search-panel:not([hidden]))::after {
+  background: rgba(27, 36, 48, 0.28);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .app:has(.search-panel:not([hidden]))::after {
+    background: rgba(27, 36, 48, 0.28);
+  }
+}
+
+@keyframes search-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-panel {
+    animation: none;
+  }
+}
+
+.search-field {
+  position: relative;
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-icon {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  width: 15px;
+  height: 15px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 13px 40px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.search-input::placeholder {
+  color: var(--text-dim);
+}
+
+.search-input:focus {
+  outline: none;
+}
+
+/* The whole field answers the focus, because the input itself has no frame. */
+.search-field:focus-within {
+  background: var(--accent-soft);
+}
+
+.search-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+/* The cross is drawn from text so the button carries no second glyph. */
+.search-clear::before {
+  content: "\00d7";
+}
+
+.search-clear:hover,
+.search-clear:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.search-clear[hidden] {
+  display: none;
+}
+
+.search-results {
+  /* The list and the preview divide the dialog's height evenly: both grow from
+     a zero basis, so neither can starve the other, and a short list leaves the
+     lower half as large as a long one would. */
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  /* Results arrive in one breath: holding the gutter open keeps the rows from
+     shifting sideways the moment a scrollbar appears under them. */
+  scrollbar-gutter: stable;
+}
+
+/* A result is two lines — where it is, and why it is here — and the accent bar
+   on the left is what marks the one the preview describes. */
+.search-result {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 16px 10px 18px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.search-result::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 6px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.search-result[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+
+.search-result[aria-selected="true"]::before {
+  background: var(--accent);
+}
+
+.search-result-title {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-result-context {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.45;
+  /* The wide dialog can afford two lines of context, which is closer to how
+     the passage actually reads than one cut-off line. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.search-preview {
+  /* Half the dialog, whatever the list holds: the passage is what the reader
+     came to read, so it is given the same room as the rows it came from
+     rather than an eighth of it. */
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+.search-passage {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* The matched words, in the context line and in the passage alike. */
+.search-panel mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.search-empty {
+  /* An empty half says what it is, in its own middle: the label is a caption
+     for the area, so it centres in both directions and leaves with the first
+     row or passage that arrives. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  text-align: center;
 }
 
 .graph {
@@ -1733,17 +2045,55 @@ a {
   }
 }
 
+/* Below the inspector's own width the third column is gone, so there is no
+   panel column for the toolbar to sit over: it goes back to being the strip
+   across the top of the page, and the panels go back to starting under it. */
 @media (max-width: 900px) {
   .app {
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+
+  /* Across the top the bar lies over content that scrolls beneath it, so it
+     goes back to being a strip: its own surface, a rule under it to stop the
+     text at the edge, and the blur that lets the page show through. The left
+     rule goes with the column it belonged to — at this width the article is on
+     that edge, not a panel. */
+  .topbar {
+    grid-row: auto;
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-bottom: 1px solid var(--shell-line);
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px);
+    /* Across the whole width again, so the bar no longer shares the panels'
+       column: its right edge goes back to the plain 16px axis the collapsed
+       inspector's own controls sit on. */
+    padding-right: 16px;
+  }
+
+  /* The bar is across the top again, so the two regions that were spanning
+     both rows go back to being ordinary row items under it. */
+  .sidebar,
+  .content {
+    grid-row: auto;
+  }
+
+  .sidebar {
+    top: var(--topbar-height);
+    height: calc(100vh - var(--topbar-height));
   }
 
   .inspector {
     position: static;
+    grid-row: auto;
     grid-column: 1 / -1;
     height: auto;
     border-top: 1px solid var(--border);
     border-left: 0;
+    /* The collapsed panel no longer scrolls — the page does — so a reserved
+       gutter would just be an empty strip on its right edge. */
+    scrollbar-gutter: auto;
   }
 
   .inspector-tabs {
@@ -1758,28 +2108,31 @@ a {
   .toc {
     max-height: none;
   }
+
+  /* The dialog follows the screen down: a fixed margin rather than a share of
+    the viewport, so the smaller the window the closer the dialog is to
+    filling it. */
+  .search-panel {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+  }
 }
 
 @media (max-width: 640px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
   }
 
-  .topbar {
-    position: sticky;
-    top: 0;
-    z-index: 25;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    height: var(--topbar-height);
-    padding: 0 14px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-panel);
-    backdrop-filter: blur(16px);
+  /* The narrow screen brings back the drawer toggle and gives the site title
+     the middle of the bar, so the three controls read left to right. */
+  #sidebar-toggle {
+    display: inline-flex;
   }
 
   .topbar-title {
+    display: block;
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     color: var(--text);
@@ -1789,9 +2142,13 @@ a {
     white-space: nowrap;
   }
 
+  /* A drawer, so it is positioned against the viewport and keeps the height a
+     fixed box already has: neither the sticky offset nor the viewport height
+     the wider layout gives it applies here. */
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
+    top: 0;
     width: 84vw;
     max-width: 320px;
     height: 100%;
@@ -1816,9 +2173,25 @@ a {
     padding: 26px 18px 90px;
   }
 
+  .topbar {
+    /* The panel column narrows its padding to 14px here, so the bar follows it
+       to keep the two right-hand axes on one line. */
+    padding-right: 14px;
+  }
+
   .inspector {
     padding: 14px 14px 24px;
   }
+
+  /* The dialog keeps one margin step on each side and sheds the corners the
+    desktop panel rounds. The two halves stay even here: a phone gets the same
+    symmetry, not a list with a footnote under it. */
+  .search-panel {
+    width: calc(100vw - 12px);
+    height: calc(100dvh - 12px);
+    border-radius: 12px;
+  }
+
 
   /* `.content` narrows its padding, so the banner follows it to stay exactly
      as wide as the article. */
@@ -1863,8 +2236,16 @@ a {
   .sidebar,
   .inspector,
   .topbar,
+  .search-panel,
   .skip-link {
     display: none;
+  }
+
+  /* The dim is keyed on the panel being open, and a reader can print with the
+     panel open: taking the pseudo-element away is what keeps the dim from
+     printing over the page. */
+  .app:has(.search-panel:not([hidden]))::after {
+    content: none;
   }
 
   .app {

@@ -19,6 +19,10 @@ implemented; the rules behind them live in `docs/design.md`.
   documents, so a small neighbourhood stays centered and readable instead of
   being stretched to the corners of the panel; nodes and labels are drawn
   larger to match.
+- The search button lives in the top bar, which is now visible at every width
+  as the app's own toolbar, instead of in a row inside the graph panel; the
+  search panel drops down beneath the bar rather than covering the graph, and
+  pressing the button again closes it.
 
 ## [1.0.0] - 2026-11-03
 
