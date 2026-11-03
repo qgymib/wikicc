@@ -404,7 +404,7 @@ export function createGraph(options) {
         .attr("class", "graph-label")
         .attr("text-anchor", "middle")
         .attr("dy", function (node) {
-          return node.radius + 11;
+          return node.radius + 13;
         })
         .text(function (node) {
           return labelFor(docById.get(node.id));

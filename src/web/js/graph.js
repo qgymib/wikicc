@@ -29,9 +29,44 @@ export var LAYOUT_DEFAULTS = {
   linkDistance: 46,
   linkStrength: 0.6,
   chargeStrength: -170,
-  collideRadius: 9,
+  collideRadius: 12,
   isolateScale: 1.3,
+  maxUpscale: 1,
 };
+
+/**
+ * The node count at which the frame reaches its default size.
+ *
+ * Below it the frame shrinks, which lets the display magnify the picture and is
+ * what keeps a small neighbourhood readable; above it the frame grows until
+ * `MAX_SPREAD` caps it, so a whole site still lays out into one frame.
+ */
+export var REF_NODES = 12;
+
+/** Bounds of the per-node frame scaling factor. */
+export var MIN_SPREAD = 0.6;
+export var MAX_SPREAD = 3;
+
+/**
+ * Frame geometry for a node count, in layout units.
+ *
+ * The frame scales with the square root of the node count: twice as many
+ * documents need twice the area, so the average spacing a reader sees stays
+ * roughly constant instead of growing with the emptiness of a fixed frame.
+ */
+export function frameFor(count) {
+  var total = Number(count);
+  if (!Number.isFinite(total) || total <= 0) {
+    total = 1;
+  }
+
+  var spread = Math.min(MAX_SPREAD, Math.max(MIN_SPREAD, Math.sqrt(total / REF_NODES)));
+  return {
+    width: LAYOUT_DEFAULTS.width * spread,
+    height: LAYOUT_DEFAULTS.height * spread,
+    padding: LAYOUT_DEFAULTS.padding * spread,
+  };
+}
 
 /** FNV-1a over UTF-16 code units, so the seed never depends on the locale. */
 export function hashSeed(text) {
@@ -67,13 +102,13 @@ export function shouldSimplify(nodeCount) {
 /** Radius of a node in layout units; larger degrees read as more important. */
 export function nodeRadius(degree, simplified) {
   var value = Number(degree);
-  var base = simplified ? 2.6 : 3.6;
+  var base = simplified ? 1.5 : 2.5;
 
   if (!Number.isFinite(value) || value <= 0) {
     return base;
   }
 
-  return base + Math.min(simplified ? 1.6 : 6, Math.sqrt(value) * 2.2);
+  return base + Math.min(simplified ? 1 : 3.5, Math.sqrt(value) * 1.1);
 }
 
 /** Trim an edge endpoint to a string, `""` for anything unusable. */
@@ -313,10 +348,12 @@ function maxRadius(nodes, center) {
 }
 
 /**
- * Scale and center the layout into `[padding, width - padding]` by
+ * Scale and center the layout inside `[padding, width - padding]` by
  * `[padding, height - padding]`, keeping the aspect ratio.
  *
- * A degenerate bounding box (one node, or every node on a line) collapses one
+ * Content larger than the frame is scaled down to fit; content smaller than
+ * the frame is centered without being stretched, up to `maxUpscale`. A
+ * degenerate bounding box (one node, or every node on a line) collapses one
  * axis; the uniform scale then centers the cluster on that axis instead of
  * stretching it.
  */
@@ -349,6 +386,13 @@ function normalize(nodes, settings) {
     scale = 1;
   }
 
+  // A frame smaller than its content is scaled down to fit; a frame larger
+  // than its content is not stretched to fill. Stretching a settled force
+  // layout is what used to fling a small neighbourhood to the corners of the
+  // panel and leave the middle empty, so the scale stops at `maxUpscale` and
+  // the surplus frame stays around the centered cluster.
+  scale = Math.min(scale, settings.maxUpscale);
+
   var offsetX = settings.padding + (innerWidth - spanX * scale) / 2;
   var offsetY = settings.padding + (innerHeight - spanY * scale) / 2;
 
@@ -364,14 +408,16 @@ function normalize(nodes, settings) {
  * Steps: seed the PRNG from the document ids, spread the initial positions on a
  * golden-angle disc, run `d3-force` for `iterations` synchronous ticks, move the
  * isolated nodes onto a ring around the connected cluster, then normalise into
- * the viewport. `opts` overrides [`LAYOUT_DEFAULTS`].
+ * the frame. Unless `opts` pins an explicit viewport, the frame is sized by
+ * `frameFor` from the node count. `opts` overrides [`LAYOUT_DEFAULTS`].
  *
  * Returns `{ width, height, links, nodes: [{ id, x, y, degree, radius }] }`;
  * nodes keep the order of `ids` and `links` is the deduplicated edge list the
  * renderer draws.
  */
 export function layout(ids, edges, options) {
-  var settings = Object.assign({}, LAYOUT_DEFAULTS, options || {});
+  var overrides = options || {};
+  var settings = Object.assign({}, LAYOUT_DEFAULTS, overrides);
   var seen = new Set();
   var list = [];
 
@@ -389,6 +435,19 @@ export function layout(ids, edges, options) {
 
   if (!list.length) {
     return { width: settings.width, height: settings.height, links: [], nodes: [] };
+  }
+
+  // An explicit viewport wins; otherwise the frame follows the node count, so
+  // a two-document neighbourhood is not laid out into a frame sized for a
+  // whole site — the display then magnifies the small picture instead of
+  // scattering it across a large, empty one.
+  if (overrides.width === undefined && overrides.height === undefined) {
+    var frame = frameFor(list.length);
+    settings.width = frame.width;
+    settings.height = frame.height;
+    if (overrides.padding === undefined) {
+      settings.padding = frame.padding;
+    }
   }
 
   var random = mulberry32(hashSeed(list.join("\u0000")));

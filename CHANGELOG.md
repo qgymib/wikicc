@@ -15,6 +15,10 @@ implemented; the rules behind them live in `docs/design.md`.
   well as the version (`wikicc-ubuntu-amd64-v<semver>-<sha>.tar.gz`,
   `wikicc-windows-amd64-v<semver>-<sha>.zip`) instead of the vaguer
   `wikicc-linux-release-…` / `wikicc-windows-release-…` names.
+- The link graph is laid out into a frame that follows the number of
+  documents, so a small neighbourhood stays centered and readable instead of
+  being stretched to the corners of the panel; nodes and labels are drawn
+  larger to match.
 
 ## [1.0.0] - 2026-11-03
 

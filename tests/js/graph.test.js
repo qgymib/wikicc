@@ -112,9 +112,10 @@ test("simplifies large graphs only above the threshold", () => {
 test("grows node radius with degree and shrinks it in simplified mode", () => {
   assert.ok(graph.nodeRadius(0) < graph.nodeRadius(1));
   assert.ok(graph.nodeRadius(1) < graph.nodeRadius(9));
-  assert.equal(graph.nodeRadius(9), graph.nodeRadius(100), "radius is clamped");
+  assert.equal(graph.nodeRadius(16), graph.nodeRadius(100), "radius is clamped");
   assert.ok(graph.nodeRadius(3, true) < graph.nodeRadius(3));
   assert.ok(graph.nodeRadius(0) > 0);
+  assert.ok(graph.nodeRadius(1) > 3, "a connected node stays readable on its own");
 });
 
 test("lays the same graph out identically twice", () => {
@@ -126,10 +127,11 @@ test("lays the same graph out identically twice", () => {
 
 test("keeps every node inside the normalised box", () => {
   const result = graph.layout(IDS, EDGES);
-  const padding = graph.LAYOUT_DEFAULTS.padding;
+  const frame = graph.frameFor(IDS.length);
+  const padding = frame.padding;
 
-  assert.equal(result.width, graph.LAYOUT_DEFAULTS.width);
-  assert.equal(result.height, graph.LAYOUT_DEFAULTS.height);
+  assert.equal(result.width, frame.width, "the frame follows the node count");
+  assert.equal(result.height, frame.height);
   assert.equal(result.nodes.length, IDS.length);
   assert.equal(result.links.length, EDGES.length);
 
@@ -151,6 +153,44 @@ test("honours a custom viewport", () => {
     assert.ok(node.x >= 10 - 1e-9 && node.x <= 590 + 1e-9, `x in box: ${node.x}`);
     assert.ok(node.y >= 10 - 1e-9 && node.y <= 190 + 1e-9, `y in box: ${node.y}`);
   }
+});
+
+test("shrinks the frame for a small neighbourhood", () => {
+  const pair = graph.layout(["a.md", "b.md"], [{ from: "a.md", to: "b.md" }]);
+
+  assert.equal(pair.nodes.length, 2);
+  assert.equal(pair.width, graph.frameFor(2).width, "the frame follows the node count");
+  assert.ok(pair.width < graph.LAYOUT_DEFAULTS.width, "two documents share a smaller frame");
+  assert.ok(pair.height < graph.LAYOUT_DEFAULTS.height, "two documents share a smaller frame");
+});
+
+test("caps the frame for a large site", () => {
+  const largeIds = Array.from({ length: 100 }, (_, index) => `d${index}.md`);
+  const largeEdges = largeIds.slice(1).map((id, index) => ({ from: largeIds[index], to: id }));
+  const result = graph.layout(largeIds, largeEdges);
+
+  assert.equal(result.width, graph.frameFor(100).width);
+  assert.ok(
+    result.width <= graph.LAYOUT_DEFAULTS.width * graph.MAX_SPREAD + 1e-9,
+    "the frame never outgrows its cap",
+  );
+  assert.ok(result.width > graph.LAYOUT_DEFAULTS.width, "a large site still widens the frame");
+});
+
+test("does not stretch a small layout to fill its frame", () => {
+  const pair = graph.layout(["a.md", "b.md"], [{ from: "a.md", to: "b.md" }]);
+  const pad = graph.frameFor(2).padding;
+
+  // A stretched layout pins a node to the padding edge on each axis; a
+  // centered one keeps every node strictly inside it.
+  for (const node of pair.nodes) {
+    assert.ok(node.x > pad + 1e-6 && node.x < pair.width - pad - 1e-6, `x not pinned: ${node.x}`);
+    assert.ok(node.y > pad + 1e-6 && node.y < pair.height - pad - 1e-6, `y not pinned: ${node.y}`);
+  }
+
+  const distance = Math.hypot(pair.nodes[0].x - pair.nodes[1].x, pair.nodes[0].y - pair.nodes[1].y);
+  const innerWidth = pair.width - 2 * pad;
+  assert.ok(distance < innerWidth * 0.8, `a pair keeps its natural spacing: ${distance}`);
 });
 
 test("centers a single document", () => {
