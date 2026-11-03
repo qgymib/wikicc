@@ -32,6 +32,7 @@ const SHELL_IDS = [
   "toc",
   "graph",
   "graph-fit",
+  "graph-mode",
   "doc-alert",
 ];
 
@@ -486,6 +487,49 @@ test("a document with no chapters opens at the top", async () => {
 
     assert.equal(session.scrollTop(), 0);
     assert.ok(activeEntry(session.shell), "the list follows the document");
+  });
+});
+
+test("the graph starts in the local view and the button says so", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const button = session.shell.get("graph-mode");
+    assert.equal(button.textContent, "Local");
+    assert.equal(button.getAttribute("aria-pressed"), "false");
+    assert.equal(button.getAttribute("aria-label"), "Show the whole graph");
+    assert.equal(button.getAttribute("title"), "Show the whole graph");
+  });
+});
+
+test("the mode button switches the graph and describes the next state", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+    const button = session.shell.get("graph-mode");
+
+    button.fire("click");
+
+    assert.equal(button.textContent, "Global");
+    assert.equal(button.getAttribute("aria-pressed"), "true");
+    assert.equal(button.getAttribute("aria-label"), "Show only this document and its neighbours");
+
+    button.fire("click");
+
+    assert.equal(button.textContent, "Local");
+    assert.equal(button.getAttribute("aria-pressed"), "false");
+  });
+});
+
+test("the mode survives a navigation to another document", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+    const button = session.shell.get("graph-mode");
+
+    button.fire("click");
+    session.follow("#/doc/guide/intro.md#getting-started");
+
+    assert.equal(button.getAttribute("aria-pressed"), "true", "the reader chose the global view, not one document");
+    assert.equal(button.textContent, "Global");
   });
 });
 

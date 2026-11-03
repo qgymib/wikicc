@@ -1512,13 +1512,14 @@ a {
 .panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   margin-bottom: 10px;
 }
 
 .panel-header .panel-heading {
-  margin: 0;
+  /* The heading takes the free space, so the controls line up on the right
+     however many of them a panel has. */
+  margin: 0 auto 0 0;
 }
 
 .panel-action {
@@ -1530,13 +1531,27 @@ a {
   font: inherit;
   font-size: 11px;
   cursor: pointer;
-  transition: color 150ms ease, border-color 150ms ease;
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
 }
 
 .panel-action:hover,
 .panel-action:focus-visible {
   color: var(--text);
   border-color: var(--border-strong);
+}
+
+/* The graph's mode is a switch rather than an action: its pressed state is
+   drawn so the current extent of the picture is readable at a glance. */
+#graph-mode {
+  /* A hint of extra width keeps the two labels from shunting the Fit button
+     around as the reader toggles. */
+  min-width: 54px;
+}
+
+#graph-mode[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
 }
 
 .graph {

@@ -103,6 +103,12 @@ function fakeClearTimeout(id) {
  * Only the timers that already exist run: d3 arms a timeout again from inside
  * some of its timers (the touch "ghost click" window, the wheel idle signal), and
  * draining whatever those add would never end.
+ *
+ * What those timers add is cancelled rather than left to the real timer queue:
+ * a d3 handler that wakes up after the fake page is gone touches an `SVGElement`
+ * that no longer exists, and the runtime reports that as an asynchronous failure
+ * of whichever test happened to be running. Cancelling is exact — the pending
+ * timeouts are the leftovers of the gesture, not work anyone is waiting for.
  */
 function withTimers(work) {
   const realSetTimeout = globalThis.setTimeout;
@@ -123,6 +129,9 @@ function withTimers(work) {
     const pending = queue.splice(0, queue.length);
     for (const timer of pending) {
       timer.callback();
+    }
+    for (const timer of queue.splice(0, queue.length)) {
+      realClearTimeout(timer.id);
     }
   }
 }
@@ -322,6 +331,7 @@ function withGraph(run, options) {
         container: payload.container === null ? null : container,
         docs: payload.docs || DOCS,
         edges: payload.edges || EDGES,
+        mode: payload.mode,
         onSelect(id) {
           selected.push(id);
           // A real click on a node changes the route, and the render that
@@ -650,23 +660,32 @@ test("a click on the node of the open document does nothing", () => {
   // would re-render the page under them and throw away their position. The node
   // is pressed the way a reader does when a click seems to be ignored — once,
   // twice, and once more with the click the browser announces — and none of
-  // those gestures may navigate.
-  withGraph(function (page) {
-    const readme = nodeFor(page.nodes, "README.md");
+  // those gestures may navigate. The view is global so the node of the open
+  // document is still on screen after the reader has moved away from it: a
+  // local view would have redrawn the neighbourhood around the new document.
+  withGraph(
+    function (page) {
+      // Read back from the page: a global view keeps its markup, but the
+      // assertion may not depend on that.
+      function readme() {
+        return nodeFor(page.container.findAll("graph-node"), "README.md");
+      }
 
-    // The reader arrives somewhere else first, so the node has a document to
-    // stand for that is not the open one.
-    page.nodeClick(nodeFor(page.nodes, "guide/intro.md"));
-    page.graph.setActive("README.md");
+      // The reader arrives somewhere else first, so the node has a document to
+      // stand for that is not the open one.
+      page.nodeClick(nodeFor(page.nodes, "guide/intro.md"));
+      page.graph.setActive("README.md");
 
-    page.nodeClick(readme);
-    page.nodeClick(readme);
-    // The announced-click path as well: a browser reports a click this way when
-    // `d3-drag` never took the press.
-    page.click(readme);
+      page.nodeClick(readme());
+      page.nodeClick(readme());
+      // The announced-click path as well: a browser reports a click this way when
+      // `d3-drag` never took the press.
+      page.click(readme());
 
-    assert.deepEqual(page.selected, ["guide/intro.md"]);
-  });
+      assert.deepEqual(page.selected, ["guide/intro.md"]);
+    },
+    { mode: "global" },
+  );
 });
 
 test("a suppressed click does not open a document twice", () => {
@@ -718,13 +737,16 @@ test("a click on the circle or on the label opens the document", () => {
 });
 
 test("every node opens its own document", () => {
-  withGraph(function (page) {
-    page.nodes.forEach(function (node) {
-      page.click(node);
-    });
+  withGraph(
+    function (page) {
+      page.nodes.forEach(function (node) {
+        page.click(node);
+      });
 
-    assert.deepEqual(page.selected, DOCS.map((doc) => doc.id));
-  });
+      assert.deepEqual(page.selected, DOCS.map((doc) => doc.id));
+    },
+    { mode: "global" },
+  );
 });
 
 test("a double click opens the document exactly once", () => {
@@ -828,57 +850,73 @@ test("the press that ends a drag does not open the document", () => {
 });
 
 test("highlighting follows the pointer", () => {
-  withGraph(function (page) {
-    const intro = nodeFor(page.nodes, "guide/intro.md");
+  withGraph(
+    function (page) {
+      const intro = nodeFor(page.nodes, "guide/intro.md");
 
-    intro.listeners.mouseenter.forEach(function (handler) {
-      handler.call(intro, { type: "mouseenter" });
-    });
+      intro.listeners.mouseenter.forEach(function (handler) {
+        handler.call(intro, { type: "mouseenter" });
+      });
 
-    assert.ok(intro.getAttribute("class").split(" ").includes("is-hot"));
-    assert.ok(
-      nodeFor(page.nodes, "notes.md").getAttribute("class").split(" ").includes("is-dim"),
-      "the unrelated node must be dimmed",
-    );
+      assert.ok(intro.getAttribute("class").split(" ").includes("is-hot"));
+      assert.ok(
+        nodeFor(page.nodes, "notes.md").getAttribute("class").split(" ").includes("is-dim"),
+        "the unrelated node must be dimmed",
+      );
 
-    intro.listeners.mouseleave.forEach(function (handler) {
-      handler.call(intro, { type: "mouseleave" });
-    });
+      intro.listeners.mouseleave.forEach(function (handler) {
+        handler.call(intro, { type: "mouseleave" });
+      });
 
-    assert.ok(!intro.getAttribute("class").split(" ").includes("is-hot"));
-    assert.ok(!nodeFor(page.nodes, "notes.md").getAttribute("class").split(" ").includes("is-dim"));
-  });
+      assert.ok(!intro.getAttribute("class").split(" ").includes("is-hot"));
+      assert.ok(!nodeFor(page.nodes, "notes.md").getAttribute("class").split(" ").includes("is-dim"));
+    },
+    { mode: "global" },
+  );
 });
 
 test("setActive marks the open document and leaves the rest alone", () => {
-  withGraph(function (page) {
-    page.graph.setActive("guide/setup.md");
+  withGraph(
+    function (page) {
+      // Read the nodes back from the page each time: a global view keeps its
+      // markup, but nothing here may depend on that.
+      const nodes = function () {
+        return page.container.findAll("graph-node");
+      };
 
-    assert.ok(nodeFor(page.nodes, "guide/setup.md").getAttribute("class").includes("is-active"));
-    assert.equal(nodeFor(page.nodes, "guide/setup.md").getAttribute("aria-current"), "true");
-    assert.equal(nodeFor(page.nodes, "notes.md").getAttribute("aria-current"), null);
+      page.graph.setActive("guide/setup.md");
 
-    page.graph.setActive(null);
-    assert.ok(!nodeFor(page.nodes, "guide/setup.md").getAttribute("class").includes("is-active"));
-  });
+      assert.ok(nodeFor(nodes(), "guide/setup.md").getAttribute("class").includes("is-active"));
+      assert.equal(nodeFor(nodes(), "guide/setup.md").getAttribute("aria-current"), "true");
+      assert.equal(nodeFor(nodes(), "notes.md").getAttribute("aria-current"), null);
+
+      page.graph.setActive(null);
+      assert.ok(!nodeFor(nodes(), "guide/setup.md").getAttribute("class").includes("is-active"));
+    },
+    { mode: "global" },
+  );
 });
 
 test("fit resets the viewport without opening anything", () => {
-  withGraph(function (page) {
-    assert.doesNotThrow(function () {
-      page.graph.fit();
-    });
-    assert.deepEqual(page.selected, []);
-  });
+  withGraph(
+    function (page) {
+      assert.doesNotThrow(function () {
+        page.graph.fit();
+      });
+      assert.deepEqual(page.selected, []);
+    },
+    { mode: "global" },
+  );
 });
 
 test("a missing container yields a no-op graph", () => {
   const graph = createGraph({ docs: DOCS, edges: EDGES, onSelect() {} });
 
-  assert.deepEqual(Object.keys(graph).sort(), ["fit", "setActive"]);
+  assert.deepEqual(Object.keys(graph).sort(), ["fit", "getMode", "setActive", "setMode"]);
   assert.doesNotThrow(function () {
     graph.setActive("README.md");
     graph.fit();
+    graph.setMode("global");
   });
 });
 
@@ -897,4 +935,204 @@ test("a site without documents shows a hint and never navigates", () => {
     },
     { docs: [], edges: [] },
   );
+});
+
+/** The ids the graph is drawing right now, read back from the page. */
+function drawnIds(container) {
+  return container
+    .findAll("graph-node")
+    .map(function (node) {
+      return decodeURIComponent(node.getAttribute("href").replace(/^#\/doc\//, ""));
+    })
+    .sort();
+}
+
+test("a graph opens on the local view of the document it is given", () => {
+  withGraph(function (page) {
+    page.graph.setActive("guide/intro.md");
+
+    assert.equal(page.graph.getMode(), "local");
+    assert.equal(page.container.getAttribute("data-mode"), "local");
+    assert.deepEqual(drawnIds(page.container), ["README.md", "guide/intro.md", "guide/setup.md"]);
+    assert.equal(
+      page.container.getAttribute("data-nodes"),
+      "3",
+      "the document two hops away is not part of its neighbourhood",
+    );
+    assert.equal(page.container.getAttribute("data-links"), "2");
+  });
+});
+
+test("the local view follows the document the reader opens", () => {
+  withGraph(function (page) {
+    page.graph.setActive("guide/setup.md");
+
+    assert.deepEqual(drawnIds(page.container), ["guide/intro.md", "guide/setup.md"]);
+    assert.equal(nodeFor(page.container.findAll("graph-node"), "guide/setup.md").getAttribute("aria-current"), "true");
+
+    page.graph.setActive("notes.md");
+    assert.deepEqual(drawnIds(page.container), ["notes.md"], "a document with no links stands alone");
+    assert.equal(page.container.getAttribute("data-links"), "0");
+    assert.equal(page.graph.getMode(), "local", "the mode belongs to the panel, not to the document");
+  });
+});
+
+test("a local view of a lone document is a readable single node", () => {
+  withGraph(function (page) {
+    page.graph.setActive("notes.md");
+
+    const node = nodeFor(page.container.findAll("graph-node"), "notes.md");
+    assert.equal(
+      node.getAttribute("aria-label"),
+      "Notes, 0 connections",
+      "the only node still says what it is and that it links nowhere",
+    );
+    assert.equal(page.container.findAll("graph-edge").length, 0);
+    assert.equal(page.container.getAttribute("class"), null, "no hint takes the place of the graph");
+  });
+});
+
+test("switching to the global view draws the whole site", () => {
+  withGraph(function (page) {
+    page.graph.setActive("guide/setup.md");
+    assert.equal(drawnIds(page.container).length, 2);
+
+    page.graph.setMode("global");
+
+    assert.equal(page.graph.getMode(), "global");
+    assert.equal(page.container.getAttribute("data-mode"), "global");
+    assert.deepEqual(drawnIds(page.container), DOCS.map((doc) => doc.id).sort());
+    assert.equal(page.container.getAttribute("data-links"), String(EDGES.length));
+    assert.equal(
+      nodeFor(page.container.findAll("graph-node"), "guide/setup.md").getAttribute("aria-current"),
+      "true",
+      "the document being read stays marked after the switch",
+    );
+  });
+});
+
+test("switching back to the local view narrows the picture again", () => {
+  withGraph(
+    function (page) {
+      page.graph.setActive("guide/setup.md");
+      assert.equal(drawnIds(page.container).length, DOCS.length);
+
+      page.graph.setMode("local");
+
+      assert.equal(page.graph.getMode(), "local");
+      assert.deepEqual(drawnIds(page.container), ["guide/intro.md", "guide/setup.md"]);
+    },
+    { mode: "global" },
+  );
+});
+
+test("a local view is redrawn only when the neighbourhood really changes", () => {
+  withGraph(function (page) {
+    page.graph.setActive("guide/intro.md");
+    const first = nodeFor(page.container.findAll("graph-node"), "guide/intro.md");
+
+    // The same document again, as walking to another chapter of it does: the
+    // picture has nothing new to show, so it keeps the arrangement the reader
+    // may have given it.
+    page.graph.setActive("guide/intro.md");
+    assert.equal(nodeFor(page.container.findAll("graph-node"), "guide/intro.md"), first);
+  });
+});
+
+test("a global view is not rebuilt when the document changes", () => {
+  withGraph(
+    function (page) {
+      const before = page.container.findAll("graph-node");
+
+      page.graph.setActive("guide/setup.md");
+
+      const after = page.container.findAll("graph-node");
+      assert.equal(after.length, before.length);
+      after.forEach(function (node, index) {
+        assert.equal(node, before[index], "the markup is the same objects");
+      });
+    },
+    { mode: "global" },
+  );
+});
+
+test("a mode the graph does not know is ignored", () => {
+  withGraph(function (page) {
+    page.graph.setActive("guide/intro.md");
+    const before = drawnIds(page.container);
+
+    page.graph.setMode("everything");
+    page.graph.setMode(null);
+    page.graph.setMode(undefined);
+
+    assert.equal(page.graph.getMode(), "local");
+    assert.deepEqual(drawnIds(page.container), before);
+  });
+});
+
+test("a local view emphasises the pointer without dimming its neighbours", () => {
+  withGraph(function (page) {
+    page.graph.setActive("guide/intro.md");
+    const intro = nodeFor(page.container.findAll("graph-node"), "guide/intro.md");
+
+    intro.listeners.mouseenter.forEach(function (handler) {
+      handler.call(intro, { type: "mouseenter" });
+    });
+
+    assert.ok(intro.getAttribute("class").split(" ").includes("is-hot"));
+    assert.equal(
+      page.container.findAll("is-dim").length,
+      0,
+      "nothing in the picture is outside the neighbourhood, so nothing may be greyed out",
+    );
+  });
+});
+
+test("a document the site does not have leaves the graph without a picture", () => {
+  withGraph(function (page) {
+    page.graph.setActive("ghost.md");
+
+    assert.equal(page.container.getAttribute("data-nodes"), "0");
+    assert.equal(page.container.findAll("graph-node").length, 0);
+    assert.equal(
+      page.container.children[0].textContent,
+      "No documents",
+      "there is nothing to draw, and the panel says so",
+    );
+  });
+});
+
+test("the first local view before any document is known shows the whole site", () => {
+  // `createGraph` runs before the first render names a document; drawing only
+  // its neighbourhood would draw nothing at all for that moment.
+  withGraph(function (page) {
+    assert.deepEqual(drawnIds(page.container), DOCS.map((doc) => doc.id).sort());
+
+    page.graph.setActive("notes.md");
+    assert.deepEqual(drawnIds(page.container), ["notes.md"]);
+  });
+});
+
+test("the mode survives a switch of document and a switch of mode", () => {
+  withGraph(function (page) {
+    page.graph.setMode("global");
+    page.graph.setActive("notes.md");
+    assert.equal(page.graph.getMode(), "global");
+    assert.equal(drawnIds(page.container).length, DOCS.length);
+
+    page.graph.setMode("local");
+    page.graph.setActive("guide/intro.md");
+    assert.equal(page.graph.getMode(), "local");
+    assert.deepEqual(drawnIds(page.container), ["README.md", "guide/intro.md", "guide/setup.md"]);
+  });
+});
+
+test("a click on the node of the open document does nothing in a local view either", () => {
+  withGraph(function (page) {
+    page.graph.setActive("guide/intro.md");
+
+    page.nodeClick(nodeFor(page.container.findAll("graph-node"), "guide/intro.md"));
+
+    assert.deepEqual(page.selected, []);
+  });
 });

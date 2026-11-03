@@ -49,6 +49,9 @@
     <section class="panel graph-panel" id="graph-panel" aria-labelledby="graph-heading">
       <div class="panel-header">
         <h2 class="panel-heading" id="graph-heading">Graph</h2>
+        <!-- Which documents the graph draws is a property of the panel, not of
+             a document: switching the mode keeps it for the whole session. -->
+        <button class="panel-action" id="graph-mode" type="button" aria-pressed="false" aria-label="Show the whole graph" title="Show the whole graph">Local</button>
         <button class="panel-action" id="graph-fit" type="button" title="Fit graph to view" aria-label="Fit graph to view">Fit</button>
       </div>
       <div class="graph" id="graph"></div>

@@ -96,6 +96,14 @@ fn the_front_end_suite_passes() {
     let output = Command::new("node")
         .arg("--test")
         .arg("--test-reporter=tap")
+        // The front-end tests fake the browser they run in — `SVGElement`,
+        // `document`, `window` — and restore the real globals when a test is
+        // over. Anything the runtime left scheduled against that fake page wakes
+        // up after the test ends and finds the fakes gone, which the runner
+        // reports as an asynchronous failure attributed to whichever test
+        // happened to be running. `--test-force-exit` lets the process leave
+        // without waiting for such leftovers.
+        .arg("--test-force-exit")
         .args(&files)
         .current_dir(root)
         .output()

@@ -86,6 +86,28 @@ export function applyTheme(theme, toggle) {
   }
 }
 
+/**
+ * Describe the graph's mode on its button: what is shown now, and what a click
+ * would show instead.
+ *
+ * The label names the *next* state rather than the current one, as a switch
+ * does: the reader is looking at the panel and can see what it holds, so the
+ * button only has to say where it leads. `aria-pressed` carries the state
+ * itself, which is what a screen reader announces before the label.
+ */
+export function syncModeButton(button, mode) {
+  if (!button) {
+    return;
+  }
+
+  var global = mode === GraphView.GLOBAL_MODE;
+  var label = global ? "Show only this document and its neighbours" : "Show the whole graph";
+  button.textContent = global ? "Global" : "Local";
+  button.setAttribute("aria-pressed", global ? "true" : "false");
+  button.setAttribute("aria-label", label);
+  button.setAttribute("title", label);
+}
+
 export function start() {
   var bundle = readPayload();
   var docs = Array.isArray(bundle.docs) ? bundle.docs : [];
@@ -155,7 +177,20 @@ export function start() {
     docs: docs,
     edges: Array.isArray(bundle.edges) ? bundle.edges : [],
     onSelect: navigate,
+    // A reader lands on the document they came for, not on a picture of the
+    // whole site: the local view answers what this document is connected to.
+    mode: GraphView.LOCAL_MODE,
   });
+
+  var modeButton = document.getElementById("graph-mode");
+  if (modeButton) {
+    syncModeButton(modeButton, graph.getMode());
+    modeButton.addEventListener("click", function () {
+      var next = graph.getMode() === GraphView.GLOBAL_MODE ? GraphView.LOCAL_MODE : GraphView.GLOBAL_MODE;
+      graph.setMode(next);
+      syncModeButton(modeButton, graph.getMode());
+    });
+  }
 
   var fitButton = document.getElementById("graph-fit");
   if (fitButton) {

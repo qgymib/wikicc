@@ -211,6 +211,76 @@ export function neighbors(adjacency, id) {
   return unionNeighbors(adjacency.out ? adjacency.out.get(id) : null, adjacency.incoming ? adjacency.incoming.get(id) : null, id);
 }
 
+/** Hops a local view reaches out from its seed. */
+export var LOCAL_DEPTH = 1;
+
+/**
+ * The neighbourhood of `seed`, ready to be laid out on its own.
+ *
+ * "Related" means linked in either direction — the same relation the hover
+ * highlight traces — so a document that only receives links is as much part of
+ * the local view as one the seed points at. `depth` hops are taken, one by
+ * default: enough that every neighbour is on screen, and small enough that the
+ * picture still says what the current document is.
+ *
+ * Edges are kept only when both ends survive the cut, because a line to a node
+ * that is not drawn is a line to nothing. The result keeps the order of `ids`,
+ * so the same payload always yields the same subgraph — and therefore the same
+ * layout, which is what keeps switching documents from shuffling the picture.
+ *
+ * A seed that is not one of `ids` yields an empty subgraph: nothing is known
+ * about a document that is not on the site, and inventing a lone node for it
+ * would draw a document the reader cannot open.
+ */
+export function subgraph(ids, edges, seed, depth) {
+  var list = [];
+  var seen = new Set();
+
+  (ids || []).forEach(function (id) {
+    var value = endpoint(id);
+    if (!value || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    list.push(value);
+  });
+
+  var anchor = endpoint(seed);
+  if (!anchor || !seen.has(anchor)) {
+    return { ids: [], edges: [] };
+  }
+
+  var hops = Number.isFinite(Number(depth)) && Number(depth) >= 1 ? Math.floor(Number(depth)) : LOCAL_DEPTH;
+  var kept = dedupeEdges(edges, list);
+  var adjacency = buildAdjacency(kept);
+
+  // Breadth-first over the bidirectional relation: every step adds the
+  // neighbours of everything reached so far, which is exactly "depth hops".
+  var inside = new Set([anchor]);
+  var frontier = [anchor];
+  for (var step = 0; step < hops && frontier.length; step += 1) {
+    var next = [];
+    frontier.forEach(function (id) {
+      neighbors(adjacency, id).forEach(function (other) {
+        if (!inside.has(other)) {
+          inside.add(other);
+          next.push(other);
+        }
+      });
+    });
+    frontier = next;
+  }
+
+  return {
+    ids: list.filter(function (id) {
+      return inside.has(id);
+    }),
+    edges: kept.filter(function (edge) {
+      return inside.has(edge.from) && inside.has(edge.to);
+    }),
+  };
+}
+
 /** Non-finite coordinates would poison the normalisation; clamp them to zero. */
 function finiteOrZero(value) {
   return Number.isFinite(value) ? value : 0;

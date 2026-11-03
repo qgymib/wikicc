@@ -220,3 +220,91 @@ test("does not mutate the payload it is given", () => {
   assert.deepEqual(ids, IDS);
   assert.deepEqual(edges, EDGES);
 });
+
+test("a local view keeps the seed and both directions of its links", () => {
+  const result = graph.subgraph(IDS, EDGES, "guide/intro.md", graph.LOCAL_DEPTH);
+
+  assert.deepEqual(result.ids, ["README.md", "guide/intro.md", "guide/setup.md"]);
+  assert.deepEqual(result.edges, [
+    { from: "README.md", to: "guide/intro.md" },
+    { from: "guide/intro.md", to: "guide/setup.md" },
+  ]);
+  assert.equal(
+    result.ids.includes("notes.md"),
+    false,
+    "a document two hops away is not part of the neighbourhood",
+  );
+});
+
+test("a local view of a leaf keeps only the documents it touches", () => {
+  const result = graph.subgraph(IDS, EDGES, "README.md", graph.LOCAL_DEPTH);
+
+  assert.deepEqual(result.ids, ["README.md", "guide/intro.md"]);
+  assert.deepEqual(result.edges, [{ from: "README.md", to: "guide/intro.md" }]);
+});
+
+test("a local view of a document with no links is that document alone", () => {
+  const result = graph.subgraph(IDS, EDGES, "notes.md", graph.LOCAL_DEPTH);
+
+  assert.deepEqual(result.ids, ["notes.md"]);
+  assert.deepEqual(result.edges, []);
+});
+
+test("a local view drops the links to documents it left out", () => {
+  const result = graph.subgraph(IDS, EDGES, "guide/setup.md", 1);
+
+  assert.deepEqual(result.ids, ["guide/intro.md", "guide/setup.md"]);
+  assert.deepEqual(
+    result.edges,
+    [{ from: "guide/intro.md", to: "guide/setup.md" }],
+    "the link from README.md to intro.md has an end outside the view",
+  );
+});
+
+test("a deeper local view reaches further and still closes its edges", () => {
+  const result = graph.subgraph(IDS, EDGES, "README.md", 2);
+
+  assert.deepEqual(result.ids, ["README.md", "guide/intro.md", "guide/setup.md"]);
+  assert.equal(result.edges.length, 2);
+});
+
+test("a local view of a seed the site does not have is empty", () => {
+  assert.deepEqual(graph.subgraph(IDS, EDGES, "ghost.md", 1), { ids: [], edges: [] });
+  assert.deepEqual(graph.subgraph(IDS, EDGES, "", 1), { ids: [], edges: [] });
+  assert.deepEqual(graph.subgraph([], EDGES, "README.md", 1), { ids: [], edges: [] });
+});
+
+test("a local view keeps the document order and collapses duplicate links", () => {
+  const edges = [
+    { from: "guide/setup.md", to: "README.md" },
+    { from: "guide/setup.md", to: "README.md" },
+    { from: "README.md", to: "guide/intro.md" },
+  ];
+  const first = graph.subgraph(IDS, edges, "README.md", 1);
+  const second = graph.subgraph(IDS, edges, "README.md", 1);
+
+  assert.deepEqual(first, second);
+  assert.deepEqual(first.ids, ["README.md", "guide/intro.md", "guide/setup.md"]);
+  assert.deepEqual(first.edges, [
+    { from: "README.md", to: "guide/intro.md" },
+    { from: "guide/setup.md", to: "README.md" },
+  ]);
+});
+
+test("a local view treats a nonsense depth as one hop", () => {
+  assert.deepEqual(
+    graph.subgraph(IDS, EDGES, "README.md", 0),
+    graph.subgraph(IDS, EDGES, "README.md", 1),
+  );
+  assert.deepEqual(
+    graph.subgraph(IDS, EDGES, "README.md", Number.NaN),
+    graph.subgraph(IDS, EDGES, "README.md", 1),
+  );
+  assert.deepEqual(graph.subgraph(IDS, EDGES, "README.md"), graph.subgraph(IDS, EDGES, "README.md", 1));
+});
+
+test("a local view lays out to the same coordinates as the same documents alone", () => {
+  const cut = graph.subgraph(IDS, EDGES, "guide/intro.md", 1);
+
+  assert.deepEqual(graph.layout(cut.ids, cut.edges), graph.layout(cut.ids.slice(), cut.edges.map((edge) => ({ ...edge }))));
+});
