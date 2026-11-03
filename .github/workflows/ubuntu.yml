@@ -38,6 +38,20 @@ jobs:
     permissions:
       contents: write
 
+    # The artifact name spells out where the binary was built: the runner
+    # image (`ubuntu`, not the vaguer `linux`) and the CPU architecture. Both
+    # live here as the single source of truth and are interpolated with
+    # `${{ env.OS }}` / `${{ env.ARCH }}`, so Actions expands them before any
+    # shell sees the line. Do NOT reference them as bare `$OS` / `$ARCH`
+    # shell variables: see the Build step for the PowerShell trap.
+    #
+    # A new runner that builds for another architecture changes `ARCH` here
+    # (for example `arm64`) and nothing else. On a tag push the archive name
+    # becomes `wikicc-ubuntu-amd64-v<semver>-<short sha>.tar.gz`.
+    env:
+      OS: ubuntu
+      ARCH: amd64
+
     strategy:
       # Every combination runs to completion, so one red job still shows whether
       # the other one is green.
@@ -128,6 +142,10 @@ jobs:
     # syntax for bash and another for PowerShell (see the Build step above for
     # what happens when the two are confused). The Windows leg repeats this
     # step with `python`, the only interpreter name its runner provides.
+    #
+    # The script deliberately knows nothing about `OS` / `ARCH`: those are
+    # fixed per workflow, so it returns the bare version and the steps below
+    # assemble `wikicc-${{ env.OS }}-${{ env.ARCH }}-<version>`.
     - name: Get version
       if: matrix.profile == 'release'
       id: version
@@ -135,12 +153,13 @@ jobs:
 
     # Only the release binary is archived. Uploading the whole `target`
     # directory would be gigabytes of intermediate artifacts. The binary
-    # inside the zip keeps its plain name; only the archive name is versioned.
+    # inside the archive keeps its plain name; only the artifact and archive
+    # names carry the platform and version.
     - name: Upload release binary
       if: matrix.profile == 'release'
       uses: actions/upload-artifact@v7
       with:
-        name: wikicc-linux-release-${{ steps.version.outputs.version }}
+        name: wikicc-${{ env.OS }}-${{ env.ARCH }}-${{ steps.version.outputs.version }}
         path: target/x86_64-unknown-linux-musl/release/wikicc
         if-no-files-found: error
 
@@ -162,21 +181,21 @@ jobs:
       run: gh release view ${{ github.ref_name }}
 
     # Platform-conventional archive: tar.gz on Linux, zip on the Windows leg.
-    # The name carries the build version (v<semver>-<short sha>), matching the
-    # artifact above, while the binary inside keeps its plain name. The
-    # version is interpolated by Actions before any shell sees the line — see
-    # the Build step for the shell-variable trap this avoids.
+    # The name repeats the artifact name above plus the extension, so the
+    # archive is recognisable without unpacking it. Every part is interpolated
+    # by Actions before any shell sees the line — see the Build step for the
+    # shell-variable trap this avoids.
     - name: Package release archive
       if: matrix.profile == 'release' && startsWith(github.ref, 'refs/tags/v')
-      run: tar -czf wikicc-linux-release-${{ steps.version.outputs.version }}.tar.gz -C target/x86_64-unknown-linux-musl/release wikicc
+      run: tar -czf wikicc-${{ env.OS }}-${{ env.ARCH }}-${{ steps.version.outputs.version }}.tar.gz -C target/x86_64-unknown-linux-musl/release wikicc
 
     # `--clobber` replaces an existing asset, so re-running the job after a
     # partial or botched upload overwrites the archive instead of failing on
-    # the duplicate name. The two platform legs upload distinct file names, so
-    # their parallel runs cannot collide; `gh` resolves the repository from
-    # `GITHUB_REPOSITORY`.
+    # the duplicate name. The two legs name their archives differently (the
+    # `OS` part), so their parallel runs cannot collide; `gh` resolves the
+    # repository from `GITHUB_REPOSITORY`.
     - name: Upload release assets
       if: matrix.profile == 'release' && startsWith(github.ref, 'refs/tags/v')
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release upload ${{ github.ref_name }} wikicc-linux-release-${{ steps.version.outputs.version }}.tar.gz --clobber
+      run: gh release upload ${{ github.ref_name }} wikicc-${{ env.OS }}-${{ env.ARCH }}-${{ steps.version.outputs.version }}.tar.gz --clobber

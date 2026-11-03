@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Entries describe what a user of the binary can observe, not how the change was
 implemented; the rules behind them live in `docs/design.md`.
 
+## [Unreleased]
+
+### Changed
+
+- Release archives are now named after the build system and architecture as
+  well as the version (`wikicc-ubuntu-amd64-v<semver>-<sha>.tar.gz`,
+  `wikicc-windows-amd64-v<semver>-<sha>.zip`) instead of the vaguer
+  `wikicc-linux-release-…` / `wikicc-windows-release-…` names.
+
 ## [1.0.0] - 2026-11-03
 
 First stable release: the features the reader offers.

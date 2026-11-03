@@ -84,17 +84,19 @@ The compiled binary and the generated HTML have no external dependencies.
 #### Prebuilt binaries
 
 The [releases page](../../releases) carries the binaries CI builds for each
-tagged version, one archive per platform:
+tagged version, one archive per build system and architecture:
 
-| Platform | Archive | Binary inside |
-| --- | --- | --- |
-| Linux x86-64 | `wikicc-linux-release-v<version>-<sha>.tar.gz` | `wikicc` |
-| Windows x86-64 | `wikicc-windows-release-v<version>-<sha>.zip` | `wikicc.exe` |
+| Build system | Architecture | Archive | Binary inside |
+| --- | --- | --- | --- |
+| Ubuntu | amd64 | `wikicc-ubuntu-amd64-v<version>-<sha>.tar.gz` | `wikicc` |
+| Windows | amd64 | `wikicc-windows-amd64-v<version>-<sha>.zip` | `wikicc.exe` |
 
-Unpack it anywhere and put the binary on `PATH`; nothing else has to be
-installed. The Linux binary is statically linked against musl, so it runs on
-any distribution without a matching glibc, and the Windows executable links the
-C runtime statically, so it does not need the VC++ redistributable.
+The archive name states the system it was built on rather than the kernel it
+runs on, so the same archive also tells you which CI image produced it. Unpack
+it anywhere and put the binary on `PATH`; nothing else has to be installed. The
+Ubuntu binary is statically linked against musl, so it runs on any distribution
+without a matching glibc, and the Windows executable links the C runtime
+statically, so it does not need the VC++ redistributable.
 
 ### Command line
 
