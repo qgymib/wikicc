@@ -70,7 +70,9 @@ src/site.rs                 payload types and assembly
 src/render.rs               shell assembly (template, CSS, script, payload), size guard
 src/writers/                one writer per format plus the shared placeholder expansion
 src/web/                    page template, stylesheet and the reader's ES modules
-build.rs                    bundles src/web/js/main.js with esbuild into OUT_DIR
+build.rs                    bundles src/web/js/main.js with esbuild into OUT_DIR,
+                            and embeds docs/logo.ico into the Windows executable
+tools/make-icon.mjs         packs the rendered icon sizes into docs/logo.ico
 ```
 
 Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` →
@@ -165,6 +167,14 @@ one is stated as a contract rather than left to the implementation.
   disk, and an asset-free site writes no empty directory.
 - **Weight.** `render.rs` holds a size guard that fails the build if the bundle
   regresses.
+- **The Windows icon.** A Windows executable shows an icon in the file
+  explorer, and that icon lives in the PE resource section. `docs/logo.svg` is
+  the design source; `docs/logo.ico` is rendered from it and committed, so the
+  build needs no image toolchain and stays reproducible. `build.rs` compiles
+  the icon into the executable for Windows targets only, and every other target
+  produces exactly the binary it produced before. The icon is the only thing
+  the resource section carries, and the program keeps its console subsystem:
+  the CLI writes to stdout and stderr as before.
 
 ## 7. Front end
 
@@ -234,3 +244,4 @@ Quality gates for any change: `cargo fmt --check`,
 | Large media in memory | peak RAM during base64 encoding | single-pass placeholder expansion into one reused buffer, so peak memory is the page plus one asset |
 | Raw HTML passthrough | XSS if untrusted Markdown is compiled | documented as trusted-input behaviour; no sanitizer |
 | No incremental build | full rebuild on every run | acceptable at folder scale; the artifacts are deterministic |
+| The Windows icon is a derived asset | `docs/logo.svg` and `docs/logo.ico` can drift apart | the icon is rendered from the source and committed, and `tools/make-icon.mjs` packs it deterministically; regenerating it after a design change is a documented manual step |

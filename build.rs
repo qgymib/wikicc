@@ -1,11 +1,18 @@
 //! Build script: bundle the front-end sources into the single script that the
-//! reader inlines.
+//! reader inlines, and embed the Windows executable icon.
 //!
 //! The reader has to be a single self-contained page, so every script is inlined
 //! with `include_str!`. The front-end sources are ES modules that import the
 //! third-party engines from `node_modules`, so they cannot be concatenated: this
 //! script runs the npm-installed esbuild once and stages the resulting IIFE
 //! bundle in `OUT_DIR`, which is the only place `src/render.rs` reads it from.
+//!
+//! The script has a second, independent job: Windows executables show an icon
+//! in the file explorer, and that icon lives in the PE resource section. The
+//! icon is a *derived* asset — `docs/logo.svg` is the design source, and
+//! `docs/logo.ico` is rendered from it and committed — so the build needs no
+//! image toolchain and stays reproducible. Only the Windows target gets a
+//! resource; every other target produces exactly the binary it produced before.
 //!
 //! The script deliberately does not run `npm`: a build either finds the
 //! dependencies already installed or fails with an actionable message. Byte
@@ -102,18 +109,40 @@ const BUNDLE_STAGED: &str = "vendor/app.js";
 /// sibling file at runtime and the offline guarantee would be silently broken.
 const LEFTOVER_CHUNK: &str = "chunks/mermaid.core/";
 
+/// Windows executable icon, relative to the crate root.
+///
+/// It is derived from `docs/logo.svg` and committed, so the build stays free
+/// of an image toolchain: the asset is read, never produced.
+const ICON_ASSET: &str = "docs/logo.ico";
+
+/// Resource id of the icon inside the executable.
+///
+/// The resource compiler turns this one entry into the `RT_GROUP_ICON` the
+/// file explorer shows plus the `RT_ICON` images it points at.
+const ICON_RESOURCE_ID: &str = "1";
+
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
     // Printed before any work: the default "watch the whole crate" behaviour is
     // replaced as soon as a `rerun-if-changed` is emitted, so the build script
     // re-runs exactly when a front-end source or a declaration changes.
-    for watched in ["src/web/js", "package.json", "package-lock.json"]
-        .into_iter()
-        .chain(REQUIRED_MANIFESTS)
-        .chain([ESBUILD_MANIFEST])
+    for watched in [
+        "src/web/js",
+        "package.json",
+        "package-lock.json",
+        ICON_ASSET,
+    ]
+    .into_iter()
+    .chain(REQUIRED_MANIFESTS)
+    .chain([ESBUILD_MANIFEST])
     {
         println!("cargo:rerun-if-changed={watched}");
+    }
+
+    if let Err(message) = embed_windows_icon(root) {
+        eprintln!("error: cannot embed the Windows executable icon: {message}");
+        exit(1);
     }
 
     let override_path = env::var_os("ESBUILD_BINARY_PATH").map(PathBuf::from);
@@ -127,6 +156,68 @@ fn main() {
             root.display()
         );
         exit(1);
+    }
+}
+
+/// Embed the Windows executable icon into the binary.
+///
+/// Only a Windows executable has a resource section to embed into, so every
+/// other target returns immediately and produces exactly the binary it
+/// produced before.
+///
+/// The resource compiler is not part of Rust: the MSVC toolchain provides
+/// `rc.exe`, which `embed-resource` locates in the Windows SDK, and a GNU
+/// toolchain provides `windres`. When neither is available the icon is skipped
+/// with a warning instead of failing the build — the program behaves the same
+/// without it — but the reason is always printed, so an executable that lost
+/// its icon is never silently produced.
+fn embed_windows_icon(root: &Path) -> Result<(), String> {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return Ok(());
+    }
+
+    let asset = root.join(ICON_ASSET);
+    if !asset.is_file() {
+        return Err(format!(
+            "{} is missing: the Windows executable icon cannot be embedded",
+            asset.display()
+        ));
+    }
+
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").map_err(|error| format!("OUT_DIR is not set: {error}"))?);
+
+    // The resource script names the icon, and the resource compiler resolves
+    // that name through the include directory `embed-resource` passes, which
+    // is `OUT_DIR`. Copying the icon next to the script therefore keeps an
+    // absolute path — and its backslashes — out of the generated script.
+    let icon = out_dir.join("logo.ico");
+    fs::copy(&asset, &icon).map_err(|error| {
+        format!(
+            "cannot copy {} to {}: {error}",
+            asset.display(),
+            icon.display()
+        )
+    })?;
+
+    let script = out_dir.join("wikicc.rc");
+    fs::write(&script, format!("{ICON_RESOURCE_ID} ICON \"logo.ico\"\n"))
+        .map_err(|error| format!("cannot write {}: {error}", script.display()))?;
+
+    match embed_resource::compile(&script, embed_resource::NONE) {
+        embed_resource::CompilationResult::Ok => Ok(()),
+        embed_resource::CompilationResult::NotWindows => Ok(()),
+        embed_resource::CompilationResult::NotAttempted(reason) => {
+            eprintln!("warning: the Windows executable icon was not embedded: {reason}");
+            eprintln!(
+                "note: the program works without it; install the Windows SDK (rc.exe) or a \
+                 GNU toolchain (windres) to get one."
+            );
+            Ok(())
+        }
+        embed_resource::CompilationResult::Failed(reason) => {
+            Err(format!("the resource compiler rejected the icon: {reason}"))
+        }
     }
 }
 

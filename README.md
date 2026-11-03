@@ -10,6 +10,12 @@ their chapter outline.
 
 ## Features
 
+### The executable
+
+- **Icon in the file explorer.** On Windows, `wikicc.exe` carries the project
+  logo as a PE resource, in every size the file explorer asks for. The other
+  platforms are unaffected.
+
 ### Reader
 
 - **Search** over titles, headings and body text, including CJK.
@@ -132,6 +138,25 @@ one.
 
 - [`docs/design.md`](docs/design.md) — how `wikicc` is built.
 - [`tests/README.md`](tests/README.md) — how the test suite is organised.
+
+### The Windows icon
+
+`docs/logo.svg` is the design source of the executable icon;
+`docs/logo.ico` is a derived asset, rendered from it and committed, so that
+the build needs no image toolchain. **After changing the design source, the
+icon has to be rendered again:**
+
+1. Render `docs/logo.svg` to square PNGs named `logo-<size>.png`, with
+   `<size>` in 16, 24, 32, 48, 64, 128 and 256. Any renderer will do; the
+   sizes have to match exactly.
+2. Pack them into the icon:
+
+   ```sh
+   node tools/make-icon.mjs <png-dir> docs/logo.ico
+   ```
+
+3. Rebuild. `tools/make-icon.mjs` refuses a PNG whose size does not match its
+   name, so an incomplete set is caught before the icon is written.
 
 ## License
 

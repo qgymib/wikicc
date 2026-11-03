@@ -37,6 +37,16 @@ assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
 
+# Windows executables carry their icon in the PE resource section, which the
+# build script compiles in. The dependency is plain rather than
+# target-specific on purpose: a target-specific build dependency is resolved
+# for the *target*, while the code that uses it lives in a build script that is
+# compiled for the *host*, so the two can disagree and the build script would
+# fail to compile. The library itself is a no-op on non-Windows targets, and
+# `build.rs` only calls it for a Windows target.
+[build-dependencies]
+embed-resource = "3"
+
 # Highlighting is regex-bound: compiling the engine with optimisations keeps the
 # 5000-line performance guard of `markdown::highlight` meaningful in the default
 # (unoptimised) dev and test profiles, where it would otherwise take seconds.
