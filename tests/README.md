@@ -26,12 +26,19 @@ node --test "tests/js/*.test.js"          # the front-end suite on its own
 front-end modules import `minisearch`, `d3-*` and `mermaid` by bare specifier,
 and `build.rs` bundles them with esbuild.
 
-Two failure modes are worth knowing about, because they look alike and are not:
+`npm ci` also decides which esbuild `build.rs` runs, and it does so differently
+per platform: a Windows install leaves the JavaScript launcher at
+`node_modules/esbuild/bin/esbuild`, while a POSIX install links the native
+`@esbuild/<os>-<cpu>` executable over that same path. `build.rs` resolves the
+executable itself and only starts it with `node` when it is really a script.
+
+Three failure modes are worth knowing about, because they look alike and are not:
 
 | Symptom | Meaning |
 | --- | --- |
 | `skipping the front-end suite: node was not found on PATH` | Node is missing. The bridge prints a notice and passes, so the Rust suite stays runnable on a machine without Node. |
 | `the front-end dependencies are missing: run npm ci in … first` | Node is present but `node_modules` is not populated. This is an assertion failure, not a skip, because the front-end suite cannot produce a meaningful result. |
+| `cannot bundle the front-end sources: no esbuild executable was found` | `node_modules` exists but the bundler does not: the `@esbuild/*` package and the launcher are both absent, usually because `npm ci` ran with `--omit=optional`. |
 
 `node --test` does not expand a directory argument on every platform, so the
 front-end suite is always given files rather than a folder: the glob above for

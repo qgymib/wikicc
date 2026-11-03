@@ -166,14 +166,16 @@ pub fn normalize(path: &Path) -> PathBuf {
     };
 
     let mut prefix: Option<OsString> = None;
-    let mut rooted = false;
+    let mut root: Option<OsString> = None;
     let mut parts: Vec<OsString> = Vec::new();
 
     for component in absolute.components() {
         match component {
             Component::Prefix(value) => prefix = Some(value.as_os_str().to_os_string()),
-            Component::RootDir => rooted = true,
+            Component::RootDir => root = Some(component.as_os_str().to_os_string()),
             Component::CurDir => {}
+            // A parent segment above the root has nowhere to go, so the root is
+            // the floor: `..` only cancels a normal segment that is still there.
             Component::ParentDir => {
                 parts.pop();
             }
@@ -185,8 +187,8 @@ pub fn normalize(path: &Path) -> PathBuf {
     if let Some(prefix) = prefix {
         normalized.push(prefix);
     }
-    if rooted {
-        normalized.push(Path::new(std::path::MAIN_SEPARATOR_STR));
+    if let Some(root) = root {
+        normalized.push(root);
     }
     for part in parts {
         normalized.push(part);
@@ -436,17 +438,84 @@ mod tests {
         assert_eq!(normalize(&cwd), cwd);
     }
 
-    #[test]
-    fn normalize_ignores_parent_segments_above_the_root() {
-        let cwd = normalize(Path::new("."));
-        let root = cwd
+    /// Filesystem root of the current working directory, computed independently
+    /// of [`normalize`] by walking the path's own ancestors.
+    fn filesystem_root() -> PathBuf {
+        std::env::current_dir()
+            .expect("cwd")
             .ancestors()
             .last()
             .expect("filesystem root")
-            .to_path_buf();
+            .to_path_buf()
+    }
 
-        assert_eq!(normalize(Path::new("../..")), root);
-        assert_eq!(normalize(Path::new("../../../../../../..")), root);
+    /// A relative path that walks from the working directory up past the root.
+    ///
+    /// The depth is derived from the working directory, never hard-coded: how
+    /// many segments stand between the working directory and the root depends
+    /// on where the tests run (`/home/runner/work/<repo>/<repo>` on Linux,
+    /// `D:\a\<repo>\<repo>` on Windows), so a fixed `../..` reaches the root on
+    /// one platform and a directory above it on another.
+    fn parent_segments_to_root(extra: usize) -> PathBuf {
+        let depth = std::env::current_dir()
+            .expect("cwd")
+            .ancestors()
+            .filter(|ancestor| ancestor.file_name().is_some())
+            .count();
+
+        std::iter::repeat_n("..", depth + extra).collect()
+    }
+
+    #[test]
+    fn normalize_ignores_parent_segments_above_the_root() {
+        let root = filesystem_root();
+
+        assert_eq!(
+            normalize(&parent_segments_to_root(0)),
+            root,
+            "walking to the root lands on the root"
+        );
+        assert_eq!(
+            normalize(&parent_segments_to_root(4)),
+            root,
+            "walking past the root stays on the root"
+        );
+        assert_eq!(
+            normalize(&parent_segments_to_root(32)),
+            root,
+            "walking far past the root stays on the root"
+        );
+    }
+
+    #[test]
+    fn normalize_clamps_parent_segments_that_leave_the_root() {
+        let root = filesystem_root();
+        let absolute = normalize(Path::new("."));
+
+        assert_eq!(
+            normalize(&absolute.join(parent_segments_to_root(1))),
+            root,
+            "an absolute path cannot be walked above its root"
+        );
+        assert_eq!(
+            normalize(&root.join("..").join("..").join("tmp")),
+            root.join("tmp"),
+            "the root survives and later segments still apply"
+        );
+        assert_eq!(
+            normalize(&absolute.join("a").join("..")),
+            absolute,
+            "a parent segment inside the path still cancels"
+        );
+    }
+
+    #[test]
+    fn normalize_keeps_the_filesystem_root_stable() {
+        let root = filesystem_root();
+
+        assert_eq!(normalize(&root), root);
+        assert_eq!(normalize(&root.join(".")), root);
+        assert_eq!(normalize(&normalize(&root)), root);
     }
 
     #[test]

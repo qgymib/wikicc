@@ -1,0 +1,182 @@
+# Continuous integration for the Linux leg. The Windows leg lives in
+# `windows.yml`; the two files are deliberately separate so each one
+# describes a single runner without `matrix.os` conditionals.
+#
+# Both profiles build for `x86_64-unknown-linux-musl`, which links a fully
+# static binary: it runs on any distribution without a matching glibc and
+# needs no runtime packages installed. The choice lives here and not in
+# `.cargo/config.toml`, so local builds keep their default dynamic linking.
+name: Rust (ubuntu-latest)
+
+# `branches` must stay listed next to `tags`: on `push` events a `tags`
+# filter without `branches` would drop every branch build. With both filters
+# present either match triggers, so branch pushes build as before and a `v*`
+# tag push additionally runs the release-attachment steps at the end of the
+# job.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    # Kept verbatim from the pre-split matrix workflow so required checks and
+    # branch-protection rules that reference `ubuntu-latest / debug` and
+    # `ubuntu-latest / release` keep matching.
+    name: ubuntu-latest / ${{ matrix.profile }}
+
+    # The release steps at the bottom attach archives through `gh`, which
+    # needs `contents: write`; everything else runs on the default read-only
+    # token. Scoped to the job so the debug profile never gains write access,
+    # even when a tag is pushed.
+    permissions:
+      contents: write
+
+    strategy:
+      # Every combination runs to completion, so one red job still shows whether
+      # the other one is green.
+      fail-fast: false
+      matrix:
+        profile: [debug, release]
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    # Edition 2024 needs Rust 1.85 or newer, and the quality gates below need
+    # `rustfmt` and `clippy`, which a bare runner does not always carry. The
+    # musl std is installed alongside, so the static-linking target below is
+    # buildable without a second toolchain call.
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+        targets: x86_64-unknown-linux-musl
+
+    # `rustc` drives linking for the musl target through the `cc` frontend of
+    # a C compiler; `musl-tools` provides a matching one. Every dependency in
+    # `Cargo.lock` is pure Rust, so nothing compiles C today — the package is
+    # cheap insurance for the day a build script does.
+    - name: Install musl tools
+      run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+    # `build.rs` shells out to `node` to run the npm-installed esbuild, so the
+    # front-end dependencies have to be present before any cargo command runs.
+    # The version floor matches `engines.node` in `package.json` (the diagram
+    # engine rejects anything older).
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 'lts/*'
+        cache: 'npm'
+
+    - name: Install front-end dependencies
+      run: npm ci
+
+    # The three quality gates documented in `tests/README.md`. They do not
+    # depend on the build profile, so both profile jobs measure the same thing;
+    # a red one fails the whole matrix either way.
+    - name: Check formatting
+      run: cargo fmt --check
+
+    - name: Lint
+      run: cargo clippy --all-targets -- -D warnings
+
+    # The release flag is interpolated by Actions itself, before any shell sees
+    # the line, so it reaches bash and PowerShell alike. Do NOT hoist it back
+    # into an `env:` variable expanded as `$PROFILE_FLAG`: the default shell on
+    # Windows is PowerShell, where `$PROFILE_FLAG` is an undefined PowerShell
+    # variable (an environment variable would be `$env:PROFILE_FLAG`), so it
+    # silently expanded to nothing and the windows release job built a debug
+    # binary into `target/debug`, leaving nothing for the upload step.
+    - name: Build
+      run: cargo build --target x86_64-unknown-linux-musl ${{ matrix.profile == 'release' && '--release' || '' }}
+
+    # `tests/js_suite.rs` prints a skip notice and passes when `node` is missing,
+    # so the front-end suite is run here as well: a runner that lost Node fails
+    # this step instead of quietly reporting a green `cargo test`.
+    - name: Run front-end tests
+      run: node --test "tests/js/*.test.js"
+
+    - name: Run tests
+      run: cargo test --target x86_64-unknown-linux-musl ${{ matrix.profile == 'release' && '--release' || '' }}
+
+    # Regression guard for the static-linking promise: `file` describes the
+    # linkage of the ELF binary, and a musl build must come out fully static.
+    # rustc defaults the musl target to static-PIE, which `file` spells
+    # "static-pie linked"; a plain static executable reads "statically
+    # linked". Either wording proves there is no interpreter and no shared
+    # libc, while a dynamic build ("dynamically linked") matches neither and
+    # fails the release job before anything can be uploaded.
+    - name: Assert static linking
+      if: matrix.profile == 'release'
+      run: |
+        file target/x86_64-unknown-linux-musl/release/wikicc
+        file target/x86_64-unknown-linux-musl/release/wikicc | grep -Eq "statically linked|static-pie linked"
+
+    # The archive name carries the build version (v<semver>-<short sha>) so
+    # several builds of one version stay distinguishable. `get_version.py`
+    # locates the repo root relative to itself and writes `version=` into
+    # `$GITHUB_OUTPUT` on its own: capturing stdout in a shell would need one
+    # syntax for bash and another for PowerShell (see the Build step above for
+    # what happens when the two are confused). The Windows leg repeats this
+    # step with `python`, the only interpreter name its runner provides.
+    - name: Get version
+      if: matrix.profile == 'release'
+      id: version
+      run: python3 .github/scripts/get_version.py
+
+    # Only the release binary is archived. Uploading the whole `target`
+    # directory would be gigabytes of intermediate artifacts. The binary
+    # inside the zip keeps its plain name; only the archive name is versioned.
+    - name: Upload release binary
+      if: matrix.profile == 'release'
+      uses: actions/upload-artifact@v7
+      with:
+        name: wikicc-linux-release-${{ steps.version.outputs.version }}
+        path: target/x86_64-unknown-linux-musl/release/wikicc
+        if-no-files-found: error
+
+    # Release attachments, extending the release-only chain above. The extra
+    # ref guard restricts these steps to `v*` tag pushes: a branch literally
+    # named `v2` still reads `refs/heads/v2` here, so only a real tag passes.
+    # Branch builds, pull requests and manual dispatches never touch the
+    # Release API.
+    #
+    # The Release is expected to exist already — pushing the tag alone is not
+    # enough, since `gh release upload` attaches files to a Release object.
+    # Failing loudly instead of creating one keeps publishing deliberate:
+    # create the Release (GitHub offers to when cutting it from the tag),
+    # then re-run the red job to attach the archive.
+    - name: Verify release exists
+      if: matrix.profile == 'release' && startsWith(github.ref, 'refs/tags/v')
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release view ${{ github.ref_name }}
+
+    # Platform-conventional archive: tar.gz on Linux, zip on the Windows leg.
+    # The name carries the build version (v<semver>-<short sha>), matching the
+    # artifact above, while the binary inside keeps its plain name. The
+    # version is interpolated by Actions before any shell sees the line — see
+    # the Build step for the shell-variable trap this avoids.
+    - name: Package release archive
+      if: matrix.profile == 'release' && startsWith(github.ref, 'refs/tags/v')
+      run: tar -czf wikicc-linux-release-${{ steps.version.outputs.version }}.tar.gz -C target/x86_64-unknown-linux-musl/release wikicc
+
+    # `--clobber` replaces an existing asset, so re-running the job after a
+    # partial or botched upload overwrites the archive instead of failing on
+    # the duplicate name. The two platform legs upload distinct file names, so
+    # their parallel runs cannot collide; `gh` resolves the repository from
+    # `GITHUB_REPOSITORY`.
+    - name: Upload release assets
+      if: matrix.profile == 'release' && startsWith(github.ref, 'refs/tags/v')
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release upload ${{ github.ref_name }} wikicc-linux-release-${{ steps.version.outputs.version }}.tar.gz --clobber

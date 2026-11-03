@@ -1,0 +1,164 @@
+# Continuous integration for the Windows leg. The Linux leg lives in
+# `ubuntu.yml`; the two files are deliberately separate so each one
+# describes a single runner without `matrix.os` conditionals.
+#
+# The released binary must run without the VC++ redistributable installed,
+# so the CRT is linked statically (see `RUSTFLAGS` below). MSVC already
+# defaults to that; pinning the flag here keeps the CI guarantee explicit,
+# and keeping it here rather than in `.cargo/config.toml` leaves local
+# builds on their toolchain defaults.
+name: Rust (windows-latest)
+
+# `branches` must stay listed next to `tags`: on `push` events a `tags`
+# filter without `branches` would drop every branch build. With both filters
+# present either match triggers, so branch pushes build as before and a `v*`
+# tag push additionally runs the release-attachment steps at the end of the
+# job.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Statically link the CRT (`/MT` semantics instead of `/MD`): the released
+  # `wikicc.exe` must run on machines without the VC++ redistributable.
+  # `x86_64-pc-windows-msvc` defaults to this already; the flag pins it
+  # against future target-default changes.
+  RUSTFLAGS: -C target-feature=+crt-static
+
+jobs:
+  build:
+
+    # Kept verbatim from the pre-split matrix workflow so required checks and
+    # branch-protection rules that reference `windows-latest / debug` and
+    # `windows-latest / release` keep matching.
+    name: windows-latest / ${{ matrix.profile }}
+
+    # The release steps at the bottom attach archives through `gh`, which
+    # needs `contents: write`; everything else runs on the default read-only
+    # token. Scoped to the job so the debug profile never gains write access,
+    # even when a tag is pushed.
+    permissions:
+      contents: write
+
+    strategy:
+      # Every combination runs to completion, so one red job still shows whether
+      # the other one is green.
+      fail-fast: false
+      matrix:
+        profile: [debug, release]
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    # Edition 2024 needs Rust 1.85 or newer, and the quality gates below need
+    # `rustfmt` and `clippy`, which a bare runner does not always carry.
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    # `build.rs` shells out to `node` to run the npm-installed esbuild, so the
+    # front-end dependencies have to be present before any cargo command runs.
+    # The version floor matches `engines.node` in `package.json` (the diagram
+    # engine rejects anything older).
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 'lts/*'
+        cache: 'npm'
+
+    - name: Install front-end dependencies
+      run: npm ci
+
+    # The three quality gates documented in `tests/README.md`. They do not
+    # depend on the build profile, so both profile jobs measure the same thing;
+    # a red one fails the whole matrix either way.
+    - name: Check formatting
+      run: cargo fmt --check
+
+    - name: Lint
+      run: cargo clippy --all-targets -- -D warnings
+
+    # The release flag is interpolated by Actions itself, before any shell sees
+    # the line, so it reaches PowerShell and bash alike. Do NOT hoist it back
+    # into an `env:` variable expanded as `$PROFILE_FLAG`: this runner's
+    # default shell is PowerShell, where `$PROFILE_FLAG` is an undefined
+    # PowerShell variable (an environment variable would be
+    # `$env:PROFILE_FLAG`), so it silently expanded to nothing, this release
+    # job built a debug binary into `target/debug`, and the upload step found
+    # nothing under `target/release`.
+    - name: Build
+      run: cargo build ${{ matrix.profile == 'release' && '--release' || '' }}
+
+    # `tests/js_suite.rs` prints a skip notice and passes when `node` is missing,
+    # so the front-end suite is run here as well: a runner that lost Node fails
+    # this step instead of quietly reporting a green `cargo test`.
+    - name: Run front-end tests
+      run: node --test "tests/js/*.test.js"
+
+    - name: Run tests
+      run: cargo test ${{ matrix.profile == 'release' && '--release' || '' }}
+
+    # Same versioning scheme as the Linux leg; see the comment on its
+    # `Get version` step in `ubuntu.yml`. The interpreter is spelled `python`
+    # here because hosted Windows runners provide no reliable `python3`
+    # command (the App Execution Alias is a Microsoft Store stub).
+    - name: Get version
+      if: matrix.profile == 'release'
+      id: version
+      run: python .github/scripts/get_version.py
+
+    # Only the release binary is archived. Uploading the whole `target`
+    # directory would be gigabytes of intermediate artifacts. The binary
+    # inside the zip keeps its plain name; only the archive name is versioned.
+    - name: Upload release binary
+      if: matrix.profile == 'release'
+      uses: actions/upload-artifact@v7
+      with:
+        name: wikicc-windows-release-${{ steps.version.outputs.version }}
+        path: target/release/wikicc.exe
+        if-no-files-found: error
+
+    # Release attachments, extending the release-only chain above. The extra
+    # ref guard restricts these steps to `v*` tag pushes: a branch literally
+    # named `v2` still reads `refs/heads/v2` here, so only a real tag passes.
+    # Branch builds, pull requests and manual dispatches never touch the
+    # Release API.
+    #
+    # The Release is expected to exist already — pushing the tag alone is not
+    # enough, since `gh release upload` attaches files to a Release object.
+    # Failing loudly instead of creating one keeps publishing deliberate:
+    # create the Release (GitHub offers to when cutting it from the tag),
+    # then re-run the red job to attach the archive.
+    - name: Verify release exists
+      if: matrix.profile == 'release' && startsWith(github.ref, 'refs/tags/v')
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release view ${{ github.ref_name }}
+
+    # Platform-conventional archive: zip on Windows, tar.gz on the Linux leg.
+    # `Compress-Archive` is built into PowerShell, so no packaging tool needs
+    # installing. The name carries the build version (v<semver>-<short sha>),
+    # matching the artifact above, while the executable inside keeps its plain
+    # name. The version is interpolated by Actions before any shell sees the
+    # line — see the Build step for the shell-variable trap this avoids.
+    - name: Package release archive
+      if: matrix.profile == 'release' && startsWith(github.ref, 'refs/tags/v')
+      run: Compress-Archive -Path target/release/wikicc.exe -DestinationPath wikicc-windows-release-${{ steps.version.outputs.version }}.zip
+
+    # `--clobber` replaces an existing asset, so re-running the job after a
+    # partial or botched upload overwrites the archive instead of failing on
+    # the duplicate name. The two platform legs upload distinct file names, so
+    # their parallel runs cannot collide; `gh` resolves the repository from
+    # `GITHUB_REPOSITORY`.
+    - name: Upload release assets
+      if: matrix.profile == 'release' && startsWith(github.ref, 'refs/tags/v')
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release upload ${{ github.ref_name }} wikicc-windows-release-${{ steps.version.outputs.version }}.zip --clobber

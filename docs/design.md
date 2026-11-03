@@ -173,6 +173,14 @@ one is stated as a contract rather than left to the implementation.
   `main.js` and stages one minified IIFE in `OUT_DIR`, which `render.rs` inlines
   with `include_str!`. The page therefore has exactly one classic `<script>`,
   needs no module loader and resolves nothing at runtime.
+- **Which esbuild.** `node_modules/esbuild/bin/esbuild` is not one kind of file:
+  a Windows install keeps the JavaScript launcher there, while a POSIX install
+  links the native executable of the `@esbuild/<os>-<cpu>` package over the same
+  path. `build.rs` therefore resolves the executable the way esbuild's own
+  install script does (an explicit `ESBUILD_BINARY_PATH`, then the platform
+  package, then the installer's download, then the launcher) and executes a
+  native binary directly, falling back to `node` only for a real script, so the
+  ELF file a POSIX install leaves at the launcher path is never fed to `node`.
 - **Dependencies.** Third-party JavaScript is ordinary npm, with exact versions
   in `package.json` and bytes pinned by `package-lock.json`. `npm ci` is a build
   prerequisite; a missing dependency fails the build with an actionable message
@@ -204,7 +212,7 @@ one is stated as a contract rather than left to the implementation.
 | Layer | Location | Tooling | Covers |
 | --- | --- | --- | --- |
 | Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline |
-| Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, markdown, writers, end to end |
+| Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, markdown, writers, end to end, the esbuild launcher `build.rs` picks |
 | Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search, table model, graph layout, outline, preview, banner |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the JS suite inside `cargo test` |
 
@@ -221,6 +229,7 @@ Quality gates for any change: `cargo fmt --check`,
 | --- | --- | --- |
 | Embedded diagram engine dominates the bundle | every format carries it | minification plus a size guard; the engine is only initialised when the current document has a diagram |
 | Front-end dependencies are installed outside Cargo | `cargo build` needs `npm ci` first | `build.rs` fails with an actionable message; versions and bytes are pinned |
+| The npm esbuild launcher is a script on Windows and a native binary elsewhere | running the launcher path through `node` fails on POSIX | `build.rs` resolves the executable and starts a script with `node` only; a native binary runs directly |
 | `file://` restrictions (CORS, module scripts) | a naive SPA would break | payload inlined, no `fetch`, one classic script |
 | Large media in memory | peak RAM during base64 encoding | single-pass placeholder expansion into one reused buffer, so peak memory is the page plus one asset |
 | Raw HTML passthrough | XSS if untrusted Markdown is compiled | documented as trusted-input behaviour; no sanitizer |

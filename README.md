@@ -63,7 +63,9 @@ bytes are stored once no matter how many documents reference them.
 
 - **Rust 1.85 or newer** (the crate uses edition 2024).
 - **Node.js 22.12 or newer** and npm — the reader is bundled at build time, and
-  22.12 is the floor of the diagram engine.
+  22.12 is the floor of the diagram engine. Node is only needed to install the
+  bundler: `build.rs` runs the native esbuild executable of the
+  `@esbuild/<os>-<cpu>` package directly.
 
 ```sh
 npm ci                     # once, and again whenever package-lock.json changes
