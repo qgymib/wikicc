@@ -16,8 +16,7 @@
 //!
 //! The rendered HTML never carries the final address: it carries the opaque
 //! placeholder [`ASSET_PLACEHOLDER_PREFIX`]`<hash>`, which the writers replace
-//! with a `data:` URI, an `assets/<hash>.<ext>` path or a `cid:<hash>`
-//! reference.
+//! with a `data:` URI or an `assets/<hash>.<ext>` path.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

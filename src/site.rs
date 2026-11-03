@@ -18,9 +18,8 @@
 //!
 //! The bundle never carries asset bytes: the HTML references each resource by
 //! the opaque placeholder [`crate::ASSET_PLACEHOLDER_PREFIX`]`<hash>`, and the
-//! writers turn that into a `data:` URI, an `assets/…` path or a `cid:`
-//! reference. [`SiteBuild`] therefore returns the [`AssetTable`] alongside the
-//! payload.
+//! writers turn that into a `data:` URI or an `assets/…` path. [`SiteBuild`]
+//! therefore returns the [`AssetTable`] alongside the payload.
 
 use std::collections::BTreeSet;
 use std::path::Path;

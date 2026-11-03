@@ -2,7 +2,7 @@
 //!
 //! This is the `render` stage described in `docs/design.md`. It turns a
 //! [`SiteBundle`] into the single HTML document every writer starts from, so the
-//! three output formats differ only in how asset placeholders are addressed and
+//! two output formats differ only in how asset placeholders are addressed and
 //! never in the page itself.
 //!
 //! Everything the page needs is inlined, because the product has to work from
@@ -63,8 +63,8 @@ pub struct RenderedSite {
     ///
     /// Asset references still carry the opaque
     /// [`crate::ASSET_PLACEHOLDER_PREFIX`]`<hash>` placeholder: turning those
-    /// into `data:` URIs, `assets/…` paths or `cid:` references is the job of
-    /// the writers, which is the only thing the three formats differ in.
+    /// into `data:` URIs or `assets/…` paths is the job of the writers, which
+    /// is the only thing the two formats differ in.
     pub html: String,
 }
 
