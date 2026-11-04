@@ -18,7 +18,12 @@ import {
   CLEAR_LABEL,
   DOCUMENT_CLASS,
   EMPTY_CLASS,
+  GLOBAL_MODE,
   HIT_CLASS,
+  LOCAL_MODE,
+  MODE_CLASS,
+  MODE_GLOBAL_LABEL,
+  MODE_LOCAL_LABEL,
   OPEN_ATTRIBUTE,
   PANEL_LABEL,
   PREVIEW_IDLE_LABEL,
@@ -488,14 +493,18 @@ function snippet(hit) {
   return { before: "or ", hit: hit, after: " and more", trimmedStart: true, trimmedEnd: true };
 }
 
-/** One entry as `search.js` returns it. */
-function entry(id, title, hit) {
-  return {
+/** One entry as `search.js` returns it, naming its occurrence when given. */
+function entry(id, title, hit, ordinal) {
+  var row = {
     id: id,
     title: title,
     path: id,
     snippet: hit ? snippet(hit) : null,
   };
+  if (typeof ordinal === "number") {
+    row.hit = ordinal;
+  }
+  return row;
 }
 
 /** The preview area, which is the panel's last child. */
@@ -505,7 +514,7 @@ function previewOf(page) {
 
 /** The panel built over `container`, with `onQuery`/`onSelect` recorded. */
 function build(options) {
-  var calls = { queries: [], selections: [], asked: [] };
+  var calls = { queries: [], modes: [], selections: [], asked: [] };
   var view = createSearchView({
     container: options.container,
     toggle: options.toggle,
@@ -520,8 +529,9 @@ function build(options) {
       }
       return options.documents[id] || null;
     },
-    onQuery(query) {
+    onQuery(query, mode) {
       calls.queries.push(query);
+      calls.modes.push(mode);
       if (options.answer) {
         view.setResults(options.answer(query), 0);
       }
@@ -820,6 +830,192 @@ test("the preview is scrolled to the first hit", () => {
     assert.equal(scrolled.length, 1, "one hit is revealed, not every hit");
     assert.equal(scrolled[0].text, "alpha");
     assert.equal(scrolled[0].options.block, "nearest");
+  });
+});
+
+test("an occurrence past the marked hits lands on the last mark there is", () => {
+  var scrolled = [];
+
+  withPage(function (page) {
+    page.decorate(function (element) {
+      element.scrollIntoView = function () {
+        scrolled.push(element);
+      };
+    });
+
+    var built = build({
+      container: page.container,
+      documents: {
+        // A hit inside the code block is counted by the list but never marked,
+        // so a row can name an occurrence the preview holds no mark for.
+        "a.md": documentModel(
+          "a.md",
+          "Alpha",
+          "<p>alpha here</p>\n<pre><code>alpha</code></pre>\n",
+        ),
+      },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha", 1)];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 1, "the code block's hit is not marked");
+    assert.deepEqual(scrolled, [marks[0]], "the eye is brought to the nearest mark there is");
+  });
+});
+
+test("picking another occurrence of one document scrolls, and does not redraw", () => {
+  var scrolled = [];
+
+  withPage(function (page) {
+    page.decorate(function (element) {
+      element.scrollIntoView = function () {
+        scrolled.push(element);
+      };
+    });
+
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel("a.md", "Alpha", "<p>alpha first</p>\n<p>alpha second</p>\n"),
+      },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha", 0), entry("a.md", "Alpha", "alpha", 1)];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 2);
+    var drawn = built.calls.asked.length;
+    scrolled.length = 0;
+
+    // The second row names the second occurrence of the document already on
+    // screen: the marks stand where they stood, and only the eye moves.
+    page.container.findAll(RESULT_CLASS)[1].fire("click", { preventDefault() {} });
+
+    assert.equal(built.calls.asked.length, drawn, "the same document is not drawn twice");
+    assert.deepEqual(scrolled, [marks[1]], "the scroll lands on the occurrence the row names");
+    assert.equal(built.view.isOpen(), true);
+  });
+});
+
+test("the scope button starts local, and every query names the scope it was asked in", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var mode = page.container.findAll(MODE_CLASS)[0];
+    assert.ok(mode, "the field carries a scope button");
+    assert.equal(mode.textContent, MODE_LOCAL_LABEL, "the default reads the document in view");
+    assert.equal(mode.getAttribute("aria-pressed"), "false");
+    assert.deepEqual(built.calls.modes, [LOCAL_MODE]);
+    assert.equal(built.view.mode(), LOCAL_MODE);
+  });
+});
+
+test("pressing the scope button re-asks at once, in the scope just chosen", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    // A keystroke is still pending when the reader presses the button: the
+    // switch must not leave that older query to be answered in the old scope.
+    var input = built.view.input();
+    input.value = "alph";
+    input.fire("input", { target: input });
+    assert.equal(page.pending(), 1, "a debounce is scheduled");
+
+    page.container.findAll(MODE_CLASS)[0].fire("click", { preventDefault() {} });
+
+    assert.deepEqual(
+      built.calls.modes,
+      [LOCAL_MODE, GLOBAL_MODE],
+      "the press re-asks in the new scope",
+    );
+    assert.deepEqual(built.calls.queries, ["alpha", "alph"], "the field's own words are asked");
+    assert.equal(page.pending(), 0, "the old scope's debounce is cancelled, not kept");
+    assert.equal(built.view.mode(), GLOBAL_MODE);
+
+    var mode = page.container.findAll(MODE_CLASS)[0];
+    assert.equal(mode.textContent, MODE_GLOBAL_LABEL);
+    assert.equal(mode.getAttribute("aria-pressed"), "true");
+  });
+});
+
+test("pressing the scope button again returns to the local scope", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var mode = page.container.findAll(MODE_CLASS)[0];
+    mode.fire("click", { preventDefault() {} });
+    mode.fire("click", { preventDefault() {} });
+
+    // The first entry is the typed query's own, asked in the scope it started in.
+    assert.deepEqual(built.calls.modes, [LOCAL_MODE, GLOBAL_MODE, LOCAL_MODE]);
+    assert.equal(mode.textContent, MODE_LOCAL_LABEL);
+    assert.equal(mode.getAttribute("aria-pressed"), "false");
+    assert.equal(built.view.mode(), LOCAL_MODE);
+  });
+});
+
+test("an empty field makes the switch a change of mind, not a question", () => {
+  withPage(function (page) {
+    var built = build({ container: page.container });
+    built.view.open();
+
+    page.container.findAll(MODE_CLASS)[0].fire("click", { preventDefault() {} });
+
+    assert.deepEqual(built.calls.queries, [], "nothing is asked of an empty field");
+    assert.equal(built.view.mode(), GLOBAL_MODE);
+  });
+});
+
+test("a query typed after the switch is asked in the scope in force", () => {
+  withPage(function (page) {
+    var built = build({ container: page.container });
+    built.view.open();
+
+    page.container.findAll(MODE_CLASS)[0].fire("click", { preventDefault() {} });
+    type(built.view, page, "alpha");
+
+    assert.deepEqual(built.calls.modes, [GLOBAL_MODE]);
+  });
+});
+
+test("the scope survives closing and reopening the panel", () => {
+  withPage(function (page) {
+    var built = build({ container: page.container });
+    built.view.open();
+    page.container.findAll(MODE_CLASS)[0].fire("click", { preventDefault() {} });
+    built.view.close();
+    built.view.open();
+
+    assert.equal(built.view.mode(), GLOBAL_MODE, "the reader was probably not done looking");
+    assert.equal(page.container.findAll(MODE_CLASS)[0].textContent, MODE_GLOBAL_LABEL);
   });
 });
 

@@ -690,7 +690,7 @@ test("Escape closes the search panel and returns the focus to its button", async
   });
 });
 
-test("the search panel finds documents by their text", async () => {
+test("the search panel starts local, reading the document in view", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
 
@@ -699,16 +699,53 @@ test("the search panel finds documents by their text", async () => {
 
     const input = searchInput(session.shell);
     assert.ok(input, "the panel built a field to type in");
-    input.value = "getting";
+    input.value = "root";
     input.fire("input", { target: input });
 
     // The debounce fires through the fake timers the session installed.
     session.runTimers();
 
-    const titles = searchParts(session.shell, "search-result-title").map(function (node) {
-      return node.textContent;
-    });
-    assert.deepEqual(titles, ["Intro"], "the document whose heading matches is listed");
+    const mode = searchParts(session.shell, "search-mode")[0];
+    assert.ok(mode, "the field carries a scope switch");
+    assert.equal(mode.textContent, "Local", "the scope starts at the document in view");
+    assert.deepEqual(
+      searchParts(session.shell, "search-result-title").map(function (node) {
+        return node.textContent;
+      }),
+      ["Index"],
+      "the current document's hits are the list",
+    );
+  });
+});
+
+test("the scope switch widens the search to every document", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    session.shell.get("search-toggle").fire("click");
+
+    const input = searchInput(session.shell);
+    input.value = "getting";
+    input.fire("input", { target: input });
+    session.runTimers();
+
+    assert.deepEqual(
+      searchParts(session.shell, "search-result-title").map(function (node) {
+        return node.textContent;
+      }),
+      [],
+      "local reads the document in view, which holds no such heading",
+    );
+
+    searchParts(session.shell, "search-mode")[0].fire("click");
+
+    assert.deepEqual(
+      searchParts(session.shell, "search-result-title").map(function (node) {
+        return node.textContent;
+      }),
+      ["Intro"],
+      "global asks the engine about every document again",
+    );
   });
 });
 

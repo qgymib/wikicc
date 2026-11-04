@@ -13,8 +13,8 @@
  * - `combineWith: "AND"`, so every word of a multi-word query has to match.
  *
  * Alongside the index it owns the *context* of a hit: `matchSnippet` cuts the
- * text around the first place a term really appears, and `contexts` pairs one
- * such cut with each ranked document. The search panel shows those two, and
+ * text around the first place a term really appears, and `occurrences` pairs
+ * one such cut with every place the query occurs in every ranked document.
  * both have to read like the reader's own text, so they are found by scanning
  * the source string rather than taken from the engine's internal match data,
  * which knows offsets only within its own token stream.
@@ -136,9 +136,6 @@ export var SNIPPET_RADIUS = 40;
 
 /** Stands in for text a snippet had to drop. */
 export var ELLIPSIS = "\u2026";
-
-/** How many documents a caller may ask for context in, unless it says otherwise. */
-export var CONTEXT_LIMIT = 20;
 
 /**
  * A character a word does not run through: one that belongs to no word.
@@ -444,86 +441,109 @@ export function matchSnippet(text, query, options) {
     return null;
   }
 
+  return cutAround(value, found.start, found.length, options);
+}
+
+/**
+ * The text around the range that begins at `start` and runs `length` far.
+ *
+ * `matchSnippet` finds its range and cuts around it; `occurrences` is handed
+ * the ranges already — one per place the query occurs — and cuts around each,
+ * so the cut lives here for both. It is the same cut whatever the caller: a
+ * window of `radius` characters on each side, moved to a word boundary where
+ * one is close enough to reach, with the two flags saying whether text was
+ * dropped at that end.
+ */
+function cutAround(text, start, length, options) {
   var radius =
     options && typeof options.radius === "number" ? Math.max(0, options.radius) : SNIPPET_RADIUS;
 
-  var start = found.start;
-  var end = start + found.length;
+  var end = start + length;
   var from = Math.max(0, start - radius);
-  var to = Math.min(value.length, end + radius);
+  var to = Math.min(text.length, end + radius);
 
   // A window that begins or ends inside a word would read as a typo, so the
   // cut moves to the word boundary when one is close enough to reach — and
   // only then: a window with no space in it is already a whole number of
   // words, however it was measured, so it is kept as it is.
   if (from > 0) {
-    var space = value.slice(from, start).search(/\s/);
+    var space = text.slice(from, start).search(/\s/);
     if (space !== -1) {
       from += space + 1;
     }
   }
-  if (to < value.length) {
-    var endSpace = value.slice(end, to).search(/\s\S*$/);
+  if (to < text.length) {
+    var endSpace = text.slice(end, to).search(/\s\S*$/);
     if (endSpace !== -1) {
       to = end + endSpace;
     }
   }
 
   return {
-    before: value.slice(from, start),
-    hit: value.slice(start, end),
-    after: value.slice(end, to),
+    before: text.slice(from, start),
+    hit: text.slice(start, end),
+    after: text.slice(end, to),
     trimmedStart: from > 0,
-    trimmedEnd: to < value.length,
+    trimmedEnd: to < text.length,
   };
 }
 
 /**
- * One entry per document: its title, its path and the context of its best hit.
+ * One entry per place the query occurs: the document, the passage around that
+ * place, and which occurrence of the document it is.
  *
  * `docs` is the payload's document list and `ids` the ids the engine ranked, in
  * that order — the result list shows the engine's ranking, never a re-sort of
- * its own. A document with no hit in its body but one in its title or outline
- * is still listed; its `snippet` is `null` and the caller shows the title.
+ * its own, and the hits of one document stay together: a document ranked first
+ * lists all its hits before the next document's first. Within a document the
+ * entries follow the body's own order, `hit` counting the occurrences from
+ * zero, which is what lets the preview scroll to the place a row describes.
  *
- * `options.limit` caps how many documents are examined, because finding a
- * context means scanning the whole body and the tail of a long result list is
- * never read.
+ * The list is never truncated: the reader asked for every place the words
+ * appear, and enumerating them is one linear scan of each ranked document's
+ * text. A document with no hit in its body but one in its title or outline is
+ * still listed once, as `hit: -1` — no body occurrence to scroll to — with a
+ * context cut from the outline, or a `null` snippet when only the title
+ * matched and the caller shows the path instead.
  */
-export function contexts(docs, ids, query, options) {
+export function occurrences(docs, ids, query, options) {
   var byId = new Map();
   (docs || []).forEach(function (doc) {
     byId.set(doc.id, doc);
   });
 
-  var limit =
-    options && typeof options.limit === "number" ? Math.max(0, options.limit) : CONTEXT_LIMIT;
   var entries = [];
 
   (ids || []).forEach(function (id) {
-    if (entries.length >= limit) {
-      return;
-    }
-
     var doc = byId.get(id);
     if (!doc) {
       return;
     }
 
     var body = String(doc.text || "");
-    var snippet = matchSnippet(body, query, options);
-    if (!snippet) {
+    var ranges = matchRanges(body, query);
+    if (!ranges.length) {
       // The outline is part of what the engine indexes, so a hit there is a
       // hit worth showing; it is searched only after the body, which reads
       // better as a context than a list of headings.
-      snippet = matchSnippet(headingsText(doc.toc), query, options);
+      entries.push({
+        id: doc.id,
+        title: doc.title || doc.id,
+        path: doc.id,
+        snippet: matchSnippet(headingsText(doc.toc), query, options),
+        hit: -1,
+      });
+      return;
     }
 
-    entries.push({
-      id: doc.id,
-      title: doc.title || doc.id,
-      path: doc.id,
-      snippet: snippet,
+    ranges.forEach(function (range, index) {
+      entries.push({
+        id: doc.id,
+        title: doc.title || doc.id,
+        path: doc.id,
+        snippet: cutAround(body, range.start, range.length, options),
+        hit: index,
+      });
     });
   });
 

@@ -219,8 +219,8 @@ export function start() {
       return byId.get(id) || null;
     },
     theme: currentTheme,
-    onQuery: function (query) {
-      searchView.setResults(searchResults(query), 0);
+    onQuery: function (query, mode) {
+      searchView.setResults(searchResults(query, mode), 0);
     },
     onSelect: function (id, anchor) {
       navigate(id, anchor);
@@ -524,20 +524,31 @@ export function start() {
   /* ---------- search ---------- */
 
   /**
-   * The documents matching `query`, each with the passage it matched in.
+   * The matches `query` finds in the scope `mode` names, one per place.
    *
-   * The ranking is the engine's: `search` decides the order, and `contexts`
-   * only annotates the ids it was given, so the list a reader sees is the one
-   * the index scored. Drawing is left to the view, which is asked again on
-   * every pause in the typing.
+   * The ranking is the engine's: `search` decides which documents and in what
+   * order, and `occurrences` only enumerates the places inside them, so the
+   * list a reader sees is the one the index scored — the hits of one document
+   * together, each with the passage it was found in. The local scope is the
+   * same query narrowed to the document being read, which leaves an empty
+   * list when no document is open or it holds no hit.
    */
-  function searchResults(query) {
+  function searchResults(query, mode) {
     var ids = Search.search(index, query);
     if (!ids) {
       return [];
     }
 
-    return Search.contexts(docs, ids, query);
+    if (mode === SearchView.GLOBAL_MODE) {
+      return Search.occurrences(docs, ids, query);
+    }
+
+    var here = currentId
+      ? ids.filter(function (id) {
+          return id === currentId;
+        })
+      : [];
+    return Search.occurrences(docs, here, query);
   }
 
   /* ---------- layout controls ---------- */

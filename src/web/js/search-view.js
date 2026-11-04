@@ -1,11 +1,11 @@
 /**
- * The search panel: a query field, the documents it matches, and the passage
- * the highlighted match was found in.
+ * The search panel: a query field, the places a query matches, and the passage
+ * each match was found in.
  *
  * The panel is one column in three parts, top to bottom, and each part is a
- * different answer to the same question: what the reader typed, which documents
- * hold it, and where. `search.js` supplies every piece of that content; this
- * module only decides when to ask, and draws what comes back.
+ * different answer to the same question: what the reader typed, where it is
+ * matched, and how it reads there. `search.js` supplies every piece of that
+ * content; this module only decides when to ask, and draws what comes back.
  *
  * **The panel is opened, not present.** The reader asks for it — a toolbar
  * button or `Ctrl`/`Cmd`+`F` — and it goes away on `Escape` or on a click
@@ -18,13 +18,23 @@
  * one per keystroke. `onQuery` answers with the entries to show, which keeps
  * this module free of the index — it takes what to draw, never how to find it.
  *
- * **A result is two lines and one action.** The title says which document, the
- * context says why it is there, and both are chosen by the engine's ranking,
- * which the list never re-sorts. The one selected result is what the preview
- * shows, and the selection moves only when the reader asks it to — a click on
- * a row, an arrow key, never a pointer merely crossing the list — so the list
- * and the preview always describe the same row. Opening the document is a
- * firmer gesture still: a double click on the row, or `Enter` on the field.
+ * **A result is one place, and one action.** Every place the query occurs is
+ * its own row — ten hits in a document are ten rows — so the list reads as a
+ * set of passages rather than a set of files, and the row the reader picks is
+ * the place the preview opens at. The title says which document, the context
+ * says why the row is there, and the order is the engine's ranking, which the
+ * list never re-sorts. The one selected result is what the preview shows, and
+ * the selection moves only when the reader asks it to — a click on a row, an
+ * arrow key, never a pointer merely crossing the list — so the list and the
+ * preview always describe the same row. Opening the document is a firmer
+ * gesture still: a double click on the row, or `Enter` on the field.
+ *
+ * **The scope is a button, not a setting.** A search reads the document being
+ * read — the default — or every document the site holds, and the button at
+ * the field's right edge names the scope in force. Pressing it hands the same
+ * query back to the engine at once, without waiting for a pause the reader
+ * did not take, and the choice lasts as long as the panel does: a reader who
+ * went global was probably looking for something they had not found yet.
  *
  * **The preview shows the document, not a quotation from it.** A reader who
  * picked a result is asking to read it, and a paragraph cut out of the middle
@@ -120,6 +130,30 @@ export var PANEL_LABEL = "Search documents";
 /** Accessible name of the clear button. */
 export var CLEAR_LABEL = "Clear the search";
 
+/** Class of the button that switches the search's scope. */
+export var MODE_CLASS = "search-mode";
+
+/** The scope that reads the document being read. */
+export var LOCAL_MODE = "local";
+
+/** The scope that reads every document the site holds. */
+export var GLOBAL_MODE = "global";
+
+/** The scope the panel starts in: the reader is usually after what is in view. */
+export var DEFAULT_MODE = LOCAL_MODE;
+
+/** Text the scope button carries while the search reads the current document. */
+export var MODE_LOCAL_LABEL = "Local";
+
+/** Text the scope button carries while the search reads the whole site. */
+export var MODE_GLOBAL_LABEL = "Global";
+
+/** Accessible name of the scope button while the search reads the current document. */
+export var MODE_LOCAL_TITLE = "Search every document";
+
+/** Accessible name of the scope button while the search reads the whole site. */
+export var MODE_GLOBAL_TITLE = "Search only this document";
+
 /**
  * Shown in the middle of the list while it has no rows to show.
  *
@@ -196,7 +230,11 @@ export function createSearchView(options) {
   var results = null;
   var preview = null;
   var clearButton = null;
+  var modeButton = null;
   var timer = 0;
+
+  /** The scope in force: the document being read, or the whole site. */
+  var mode = DEFAULT_MODE;
 
   /** The entries on screen, in the engine's order. */
   var entries = [];
@@ -223,6 +261,15 @@ export function createSearchView(options) {
    * anything to draw.
    */
   var drawn = null;
+
+  /**
+   * The occurrence the drawn document is scrolled to.
+   *
+   * Rows of one document differ only in the place they name, and rebuilding a
+   * whole document to move within it would make the reader's own pointer
+   * stutter; this is what tells a scroll from a redraw.
+   */
+  var drawnHit = null;
 
   /** The text node wrapped for each hit, so a redraw can put them back. */
   var hits = [];
@@ -291,14 +338,24 @@ export function createSearchView(options) {
     clearButton.hidden = true;
     clearButton.addEventListener("click", onClearClick);
 
+    // The scope button sits at the field's right edge, past the clear button:
+    // the two are both field furniture, and the reader reaching for either is
+    // still reaching for the field.
+    modeButton = document.createElement("button");
+    modeButton.className = MODE_CLASS;
+    modeButton.setAttribute("type", "button");
+    modeButton.addEventListener("click", onModeClick);
+    syncModeButton();
+
     field.appendChild(icon);
     field.appendChild(input);
     field.appendChild(clearButton);
+    field.appendChild(modeButton);
 
     results = document.createElement("div");
     results.className = RESULTS_CLASS;
     results.setAttribute("role", "listbox");
-    results.setAttribute("aria-label", "Matching documents");
+    results.setAttribute("aria-label", "Matching passages");
 
     preview = document.createElement("div");
     preview.className = PREVIEW_CLASS;
@@ -404,7 +461,7 @@ export function createSearchView(options) {
       return;
     }
 
-    onQuery(query);
+    onQuery(query, mode);
   }
 
   function onClearClick(event) {
@@ -420,6 +477,44 @@ export function createSearchView(options) {
     }
     clearTimer();
     setResults([], 0);
+  }
+
+  /**
+   * Describe the scope on its button: what is searched now, and what a click
+   * asks instead.
+   *
+   * The label names the scope in force, as the graph's mode button does; the
+   * accessible name and the tooltip describe the state a press leads to, and
+   * `aria-pressed` carries the state itself, which a screen reader announces
+   * before the label.
+   */
+  function syncModeButton() {
+    if (!modeButton) {
+      return;
+    }
+
+    var global = mode === GLOBAL_MODE;
+    var label = global ? MODE_GLOBAL_TITLE : MODE_LOCAL_TITLE;
+    modeButton.textContent = global ? MODE_GLOBAL_LABEL : MODE_LOCAL_LABEL;
+    modeButton.setAttribute("aria-pressed", global ? "true" : "false");
+    modeButton.setAttribute("aria-label", label);
+    modeButton.setAttribute("title", label);
+  }
+
+  /** Switch the scope and ask again at once, without waiting for a pause. */
+  function onModeClick(event) {
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+
+    mode = mode === GLOBAL_MODE ? LOCAL_MODE : GLOBAL_MODE;
+    syncModeButton();
+
+    // The list on screen describes the scope just left, so the answer is
+    // asked for now — a pending debounce from before is cancelled rather
+    // than kept, because the query it would settle is the old scope's.
+    clearTimer();
+    ask();
   }
 
   /**
@@ -686,6 +781,7 @@ export function createSearchView(options) {
       // on build, on every empty answer and again after a close, and a
       // signature for "nothing" would only ever skip one of those.
       drawn = null;
+      drawnHit = null;
       hits = [];
       preview.textContent = "";
       preview.scrollTop = 0;
@@ -695,9 +791,17 @@ export function createSearchView(options) {
 
     var signature = entry.id + "\u0000" + query();
     if (signature === drawn) {
+      // The document on screen is the one the reader picked again; only the
+      // place they picked may have moved, and moving within it is a scroll,
+      // never a rebuild — the marks are already where they belong.
+      if (entry.hit !== drawnHit) {
+        drawnHit = entry.hit;
+        scrollToHit(entry.hit);
+      }
       return;
     }
     drawn = signature;
+    drawnHit = entry.hit;
     hits = [];
 
     preview.textContent = "";
@@ -794,7 +898,7 @@ export function createSearchView(options) {
     // asynchronously, so the text is readable while the pictures arrive.
     DocBody.drawDiagrams(body, theme());
 
-    scrollToFirstHit(body);
+    scrollToHit(entry.hit);
   }
 
   /**
@@ -920,25 +1024,33 @@ export function createSearchView(options) {
   }
 
   /**
-   * Bring the first hit into view inside the preview.
+   * Bring the hit the reader picked into view inside the preview.
    *
    * The preview is its own scroll container, so the page never moves — and
    * that is the point: the article behind the dialog keeps the place the
    * reader left it. `scrollIntoView` is asked for the nearest block: centring
    * a hit three lines into a short document would leave a gap above it, which
    * reads as missing text.
+   *
+   * The list counts a document's occurrences in its own text, and the marks
+   * were wrapped in the walk's order, which is that order — except where a
+   * hit sits in code or a diagram source, which the search finds but the
+   * highlight leaves as authored. There the marks fall short of the count,
+   * and the nearest one — the last, when the ordinal runs past it — is where
+   * the eye is brought: the same document, the same query, within a step of
+   * the row the reader chose. A `-1`, the mark of a title-only match, names
+   * the first mark, which such a document does not have and so does nothing.
    */
-  function scrollToFirstHit(root) {
+  function scrollToHit(ordinal) {
     if (!hits.length) {
       return;
     }
 
-    var first = hits[0];
-    if (!first || typeof first.scrollIntoView !== "function") {
-      return;
+    var index = ordinal >= 0 ? Math.min(ordinal, hits.length - 1) : 0;
+    var target = hits[index];
+    if (target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "nearest" });
     }
-
-    first.scrollIntoView({ block: "nearest" });
   }
 
   /** Put the panel on screen with the field focused and its text selected. */
@@ -986,6 +1098,7 @@ export function createSearchView(options) {
     // emptied: the next opening must draw the document again rather than
     // trust a signature that describes a query nobody can see any more.
     drawn = null;
+    drawnHit = null;
     setResults([], 0);
   }
 
@@ -1023,11 +1136,14 @@ export function createSearchView(options) {
     results = null;
     preview = null;
     clearButton = null;
+    modeButton = null;
     rows = [];
     entries = [];
     selected = null;
     hits = [];
     drawn = null;
+    drawnHit = null;
+    mode = DEFAULT_MODE;
     open = false;
   }
 
@@ -1040,6 +1156,10 @@ export function createSearchView(options) {
     isOpen: isOpen,
     query: query,
     setResults: setResults,
+    /** The scope in force, for a caller that describes it elsewhere. */
+    mode: function () {
+      return mode;
+    },
     /** The element the reader types in, for a caller that has to focus it. */
     input: function () {
       return input;

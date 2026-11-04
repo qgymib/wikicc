@@ -276,8 +276,8 @@ test("ranges never overlap and stay inside the text", () => {
   });
 });
 
-test("contexts keeps the ranked order and pairs each document with its hit", () => {
-  const entries = search.contexts(docs, search.search(index, "introduction"), "introduction");
+test("occurrences pairs every ranked document with its first place", () => {
+  const entries = search.occurrences(docs, search.search(index, "introduction"), "introduction");
 
   assert.deepEqual(
     entries.map((entry) => entry.id),
@@ -285,39 +285,98 @@ test("contexts keeps the ranked order and pairs each document with its hit", () 
   );
   assert.equal(entries[0].title, "Introduction");
   assert.equal(entries[0].path, "a.md");
-  // `a.md` is matched on its title alone, so it is listed with no context at
-  // all rather than with an empty or invented one.
+  // `a.md` is matched on its title alone, so it is listed once with no body
+  // occurrence to scroll to and no context at all rather than an invented one.
+  assert.equal(entries[0].hit, -1);
   assert.equal(entries[0].snippet, null);
+  assert.equal(entries[1].hit, 0);
   assert.equal(entries[1].snippet.before, "install the ");
   assert.equal(entries[1].snippet.hit, "introduction");
 });
 
-test("contexts falls back to the outline when the body holds no hit", () => {
-  const local = [doc("heading.md", "Other", "unrelated words", [{ text: "Deployment", children: [] }])];
-  const entries = search.contexts(local, ["heading.md"], "deployment");
+test("every occurrence of a document becomes its own entry", () => {
+  const local = [doc("one.md", "Ones", "one two one three one")];
+  const entries = search.occurrences(local, ["one.md"], "one");
+
+  assert.equal(entries.length, 3, "three places, three entries — none merged or dropped");
+  assert.deepEqual(
+    entries.map((entry) => entry.hit),
+    [0, 1, 2],
+  );
+  assert.equal(entries[0].snippet.hit, "one");
+  assert.equal(entries[1].snippet.before, "one two ");
+  assert.equal(entries[2].snippet.after, "");
+});
+
+test("a document's occurrences stay together in the order the ids arrive", () => {
+  const multi = [
+    doc("first.md", "First", "intro once"),
+    doc("second.md", "Second", "intro twice, intro again"),
+  ];
+  const entries = search.occurrences(multi, ["second.md", "first.md"], "intro");
+
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    ["second.md", "second.md", "first.md"],
+  );
+  assert.deepEqual(
+    entries.map((entry) => entry.hit),
+    [0, 1, 0],
+  );
+});
+
+test("a prefix query widens each occurrence to the word it begins", () => {
+  const local = [doc("intro.md", "Intro", "introduction and intro")];
+  const entries = search.occurrences(local, ["intro.md"], "introd");
+
+  assert.equal(entries.length, 1, "the tail of a longer word is not a hit of its own");
+  assert.equal(entries[0].snippet.hit, "introduction");
+});
+
+test("a word hidden inside a longer one is not an occurrence", () => {
+  const local = [doc("cat.md", "Cat", "concatenate the cat")];
+  const entries = search.occurrences(local, ["cat.md"], "cat");
 
   assert.equal(entries.length, 1);
+  assert.equal(entries[0].snippet.hit, "cat");
+});
+
+test("CJK occurrences are found by word", () => {
+  const local = [doc("cjk.md", "Notes", "中文，说明，文档，说明")];
+  const entries = search.occurrences(local, ["cjk.md"], "说明");
+
+  assert.equal(entries.length, 2);
+  assert.deepEqual(
+    entries.map((entry) => entry.hit),
+    [0, 1],
+  );
+  assert.equal(entries[0].snippet.hit, "说明");
+  assert.equal(entries[1].snippet.hit, "说明");
+});
+
+test("occurrences falls back to the outline when the body holds no hit", () => {
+  const local = [
+    doc("heading.md", "Other", "unrelated words", [{ text: "Deployment", children: [] }]),
+  ];
+  const entries = search.occurrences(local, ["heading.md"], "deployment");
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].hit, -1);
   assert.equal(entries[0].snippet.hit, "Deployment");
 });
 
 test("a document matched only on its title is listed without a snippet", () => {
   const titled = [doc("titled.md", "Setup", "nothing of interest")];
-  const entries = search.contexts(titled, ["titled.md"], "setup");
+  const entries = search.occurrences(titled, ["titled.md"], "setup");
 
   assert.equal(entries.length, 1);
   assert.equal(entries[0].title, "Setup");
+  assert.equal(entries[0].hit, -1);
   assert.equal(entries[0].snippet, null);
 });
 
-test("contexts honours its limit and skips unknown ids", () => {
-  const ids = ["a.md", "missing.md", "b.md", "c.md"];
-
-  assert.equal(search.contexts(docs, ids, "the").length, 3);
-  assert.equal(search.contexts(docs, ids, "the", { limit: 1 }).length, 1);
-  assert.deepEqual(
-    search.contexts(docs, ["missing.md"], "the"),
-    [],
-    "an id the payload does not hold is dropped rather than rendered as a blank row",
-  );
+test("an id the payload does not hold is dropped rather than rendered as a blank row", () => {
+  assert.deepEqual(search.occurrences(docs, ["missing.md"], "the"), []);
+  assert.equal(search.occurrences(docs, ["a.md", "missing.md", "b.md"], "the").length, 2);
 });
 

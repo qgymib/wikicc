@@ -581,6 +581,40 @@ fn the_search_panel_gives_the_document_twice_the_room_of_the_list() {
 }
 
 #[test]
+fn the_search_scope_button_sits_at_the_field_s_right_edge() {
+    // The scope is a switch beside the words it scopes: the button sits at the
+    // field's right edge — past the clear button, which steps aside — and
+    // reads like the graph's own mode switch, because it answers the same kind
+    // of question about how much the reader is looking at.
+    let css = SHELL_CSS;
+    let mode = rule_of(css, ".search-mode {");
+
+    assert_eq!(declaration(mode, "position"), Some("absolute"));
+    assert_eq!(declaration(mode, "right"), Some("8px"));
+
+    let clear = rule_of(css, ".search-clear {");
+    assert_eq!(
+        declaration(clear, "right"),
+        Some("72px"),
+        "the clear button steps aside for the scope switch"
+    );
+
+    let input = rule_of(css, ".search-input {");
+    assert_eq!(
+        declaration(input, "padding"),
+        Some("13px 104px 13px 40px"),
+        "the typed words stop short of both buttons at the right edge"
+    );
+
+    let pressed = rule_of(css, ".search-mode[aria-pressed=\"true\"] {");
+    assert_eq!(
+        declaration(pressed, "border-color"),
+        Some("var(--accent)"),
+        "the scope in force is readable at a glance"
+    );
+}
+
+#[test]
 fn the_search_preview_scrolls_the_document_it_shows() {
     // The document is longer than the dialog, so the preview is what scrolls:
     // its own column, on its own, with a gutter held open so switching
