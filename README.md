@@ -154,6 +154,8 @@ one.
 ## Documentation
 
 - [`CHANGELOG.md`](CHANGELOG.md) — what changed in each release.
+- [`docs/search.md`](docs/search.md) — how the reader's search works, and the
+  query syntax it understands.
 - [`docs/design.md`](docs/design.md) — how `wikicc` is built.
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — the development rules: the
   quality gates every commit has to pass, and the steps that regenerate the

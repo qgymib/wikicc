@@ -17,12 +17,16 @@ const docs = [
 
 const index = search.createSearch(docs);
 
-test("tokenizes CJK text into words instead of one blob", () => {
+test("tokenizes CJK text into characters and pairs instead of one blob", () => {
   const cjk = search.tokenize("中文，说明，文档");
 
-  assert.deepEqual(cjk.slice(0, 2), ["中文", "说明"]);
-  assert.ok(cjk.length >= 3, `tokens: ${cjk.join("/")}`);
-  assert.ok(search.tokenize("中文说明文档正文").length > 1);
+  assert.ok(cjk.includes("中文"), `tokens: ${cjk.join("/")}`);
+  assert.ok(cjk.includes("说明"), `tokens: ${cjk.join("/")}`);
+  assert.ok(
+    cjk.every((token) => Array.from(token).length <= 2),
+    `tokens: ${cjk.join("/")}`,
+  );
+  assert.ok(search.tokenize("中文说明文档正文").includes("中文"));
   assert.deepEqual(search.tokenize("Install the CLI"), [
     "Install",
     "the",
@@ -426,4 +430,68 @@ test("an id the payload does not hold is dropped rather than rendered as a blank
     search.occurrences(docs, ["a.md", "missing.md", "b.md"], "the").length,
     2,
   );
+});
+
+/* ---------- CJK phrase accuracy ----------
+ *
+ * A multi-character CJK query has to match consecutive text only. The query
+ * "镜轮" (a combination no dictionary segments as one word) must not match a
+ * text that merely holds "镜" or "轮" somewhere apart — the regression behind
+ * results like a lone "头" highlighted inside an unrelated word.
+ */
+
+const cjkDocs = [
+  doc("phrase.md", "Alignment", "镜轮对准基准"),
+  doc("apart.md", "Scatter", "镜面映轮"),
+  doc("wheel.md", "Axle", "轮轴锈蚀"),
+  doc("mirror.md", "Surface", "镜面抛光"),
+];
+
+test("indexes adjacent CJK characters as a bigram", () => {
+  const tokens = search.tokenize("镜轮");
+
+  assert.ok(tokens.includes("镜轮"), `tokens: ${tokens.join("/")}`);
+});
+
+test("a two-character CJK query matches only consecutive occurrences", () => {
+  const local = search.createSearch(cjkDocs);
+
+  assert.deepEqual(search.search(local, "镜轮"), ["phrase.md"]);
+});
+
+test("a single CJK character still matches any text holding it", () => {
+  const local = search.createSearch(cjkDocs);
+
+  assert.deepEqual(
+    new Set(search.search(local, "镜")),
+    new Set(["phrase.md", "apart.md", "mirror.md"]),
+  );
+  assert.deepEqual(
+    new Set(search.search(local, "轮")),
+    new Set(["phrase.md", "apart.md", "wheel.md"]),
+  );
+});
+
+test("CJK highlighting only covers the consecutive phrase", () => {
+  assert.deepEqual(search.matchRanges("轮轴磨损，镜轮松动", "镜轮"), [
+    { start: 5, length: 2 },
+  ]);
+});
+
+test("a document holding only single characters does not become an occurrence", () => {
+  const local = search.createSearch(cjkDocs);
+  const ids = search.search(local, "镜轮");
+  const entries = search.occurrences(cjkDocs, ids, "镜轮");
+
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    ["phrase.md"],
+  );
+  assert.equal(entries[0].snippet.hit, "镜轮");
+});
+
+test("a snippet shows the consecutive phrase, not a lone character", () => {
+  const snippet = search.matchSnippet("镜面与镜轮", "镜轮");
+
+  assert.equal(snippet.hit, "镜轮");
 });

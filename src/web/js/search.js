@@ -5,9 +5,11 @@
  * `package.json` and bundled into the page by `build.rs`, so this file is a thin
  * adapter rather than a hand-written scorer. What the adapter adds:
  *
- * - a tokenizer that segments CJK text with `Intl.Segmenter`, because the
- *   engine's default tokenizer only splits on spaces and punctuation and would
- *   index a whole Chinese paragraph as one token;
+ * - a tokenizer that indexes CJK text as single characters plus adjacent
+ *   character pairs, because the engine's default tokenizer only splits on
+ *   spaces and punctuation and would index a whole Chinese paragraph as one
+ *   token, while a word-level split cannot keep a queried phrase intact: the
+ *   pairs make `combineWith: "AND"` mean "these characters sit together";
  * - the field set (`title`, `headings`, `text`) and their weights, so a title
  *   hit outranks a heading hit, which outranks a body hit;
  * - `combineWith: "AND"`, so every word of a multi-word query has to match.
@@ -35,25 +37,87 @@ var SEGMENTER =
     ? new Intl.Segmenter(undefined, { granularity: "word" })
     : null;
 
-/** Split text into search terms, dropping punctuation and whitespace. */
+/** A character of the Han script — the writing a CJK phrase query targets. */
+var HAN = /\p{Script=Han}/u;
+
+/**
+ * The characters of `run` plus each adjacent pair of Han characters.
+ *
+ * The pairs are what make a phrase query exact: the engine ANDs the query's
+ * tokens, and a pair is only in the index where the two characters really sit
+ * next to each other. Code points are iterated, not UTF-16 units, so a
+ * character outside the BMP is never split in half.
+ */
+function hanGrams(run) {
+  var units = Array.from(run);
+  var grams = [];
+  for (var i = 0; i < units.length; i += 1) {
+    grams.push(units[i]);
+    if (i + 1 < units.length && HAN.test(units[i]) && HAN.test(units[i + 1])) {
+      grams.push(units[i] + units[i + 1]);
+    }
+  }
+  return grams;
+}
+
+/**
+ * Split text into search terms, dropping punctuation and whitespace.
+ *
+ * A run of Han characters — however the segmenter words it — is expanded into
+ * its characters and adjacent pairs: a run of Chinese is never one token,
+ * which is what the engine's own tokenizer would make of it, and never only
+ * dictionary words, which is what a word-level split would make of a phrase
+ * like "探头" that no dictionary holds. The run is collected across segment
+ * boundaries, because the pairs must reach the characters a dictionary
+ * separated. Every other word is kept whole.
+ *
+ * `Intl.Segmenter` is available in every browser the reader targets and in
+ * Node; the fallback keeps older engines working with the upstream default
+ * (split on Unicode spaces and punctuation), expanding runs of Han the same
+ * way.
+ */
 export function tokenize(text) {
   var value = String(text === null || text === undefined ? "" : text);
   if (!value) {
     return [];
   }
 
+  function flush(run, tokens) {
+    if (run) {
+      var grams = hanGrams(run);
+      for (var gram of grams) {
+        tokens.push(gram);
+      }
+    }
+    return "";
+  }
+
   if (SEGMENTER) {
     var tokens = [];
+    var run = "";
     var segments = SEGMENTER.segment(value);
     for (var segment of segments) {
-      if (segment.isWordLike) {
+      if (!segment.isWordLike) {
+        run = flush(run, tokens);
+        continue;
+      }
+      if (HAN.test(segment.segment)) {
+        run += segment.segment;
+      } else {
+        run = flush(run, tokens);
         tokens.push(segment.segment);
       }
     }
+    flush(run, tokens);
     return tokens;
   }
 
-  return value.split(/[\s\p{P}]+/u).filter(Boolean);
+  return value
+    .split(/[\s\p{P}]+/u)
+    .filter(Boolean)
+    .flatMap(function (word) {
+      return HAN.test(word) ? hanGrams(word) : [word];
+    });
 }
 
 /** Flatten the outline into one searchable string. */
@@ -149,18 +213,53 @@ export var ELLIPSIS = "\u2026";
 var VALUE_END = /^[\s\p{P}\p{S}\p{Ideographic}]$/u;
 
 /**
- * The query split into the terms a snippet is searched for.
+ * The query split into the phrases a context is searched for.
  *
- * The engine matches a document when *every* word of the query appears in it
- * (`combineWith: "AND"`), so any one term is a place a context can start. The
- * terms go through `tokenize`, which is also what the index was built with, so
- * a Chinese query is searched for its words and never for a whole paragraph.
+ * This is deliberately not the engine's `tokenize`: the reader's query is
+ * matched against the document as written, so a run of Han characters is one
+ * phrase that has to appear in the text exactly as typed — "探头" is found
+ * where those two characters sit together, never as a "探" here and a "头"
+ * there. Spaces and punctuation in the query separate phrases, and every
+ * other word the segmenter finds is a phrase of its own.
  *
  * The comparison itself ignores case without lowercasing anything: see
  * `matchesAt`.
  */
 export function terms(query) {
-  return tokenize(query);
+  var value = String(query === null || query === undefined ? "" : query);
+  if (!value) {
+    return [];
+  }
+
+  var phrases = [];
+
+  function flush(run) {
+    if (run) {
+      phrases.push(run);
+    }
+    return "";
+  }
+
+  if (SEGMENTER) {
+    var run = "";
+    var segments = SEGMENTER.segment(value);
+    for (var segment of segments) {
+      if (!segment.isWordLike) {
+        run = flush(run);
+        continue;
+      }
+      if (HAN.test(segment.segment)) {
+        run += segment.segment;
+      } else {
+        run = flush(run);
+        phrases.push(segment.segment);
+      }
+    }
+    flush(run);
+    return phrases;
+  }
+
+  return value.split(/[\s\p{P}]+/u).filter(Boolean);
 }
 
 /**
