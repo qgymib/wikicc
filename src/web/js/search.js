@@ -236,15 +236,18 @@ function codePointAt(text, index) {
  * Prefix matching mirrors the engine's `prefix: true`: a query "introd" is a
  * hit on "introduction" in the index, so it has to be a hit here too, or a
  * result would be listed with no context to show for it. `whole` restricts
- * the search to complete words, which is the first pass.
+ * the search to complete words, which is the first pass. `from` is where the
+ * scan may start, so a caller walking the text for every hit does not pay for
+ * the part it has already passed; the word boundary is still judged against
+ * the whole text, which is what a cut string would get wrong.
  */
-function indexOfTerm(text, term, whole) {
+function indexOfTerm(text, term, whole, from) {
   if (!term) {
     return -1;
   }
 
   var fallback = -1;
-  for (var start = 0; start + term.length <= text.length; start += 1) {
+  for (var start = Math.max(0, from || 0); start + term.length <= text.length; start += 1) {
     if (!matchesAt(text, start, term) || !startsWord(text, start)) {
       continue;
     }
@@ -310,6 +313,110 @@ function locate(text, query) {
   while (code && !VALUE_END.test(code)) {
     end += code.length;
     code = codePointAt(haystack, end);
+  }
+
+  return { start: best.start, length: end - best.start };
+}
+
+/**
+ * Every hit of `query` in `text`, as `{ start, length }`, sorted and disjoint.
+ *
+ * The search panel reads a whole document now, so the reader sees every place
+ * the words appear rather than one cut-out paragraph; this is that list. The
+ * rules are `locate`'s, applied over and over: a hit starts at a word
+ * boundary, matches case-insensitively, and a prefix hit is widened to the
+ * word it begins — so what is highlighted here reads exactly like the context
+ * the same query produced in the result list.
+ *
+ * Overlaps are merged rather than nested: a word can begin inside a longer
+ * word already highlighted ("cat" inside "catalogue" that "cata" began), and
+ * two highlights on one character would mean either nested `<mark>` elements
+ * or one highlight shortened. Merging keeps the list usable as a set of
+ * character ranges, which is what the caller walks.
+ *
+ * The scan advances past each hit rather than one character at a time, so a
+ * word repeated a thousand times costs a thousand steps, not a thousand times
+ * the length of the text.
+ */
+export function matchRanges(text, query) {
+  var value = String(text === null || text === undefined ? "" : text);
+  var words = terms(query);
+  if (!value || !words.length) {
+    return [];
+  }
+
+  var found = [];
+  var from = 0;
+
+  while (from < value.length) {
+    var hit = locateFrom(value, words, from);
+    if (!hit) {
+      break;
+    }
+
+    var previous = found.length ? found[found.length - 1] : null;
+    if (previous && hit.start < previous.start + previous.length) {
+      // The new hit begins inside the one before it: the earlier range grows
+      // to cover both, so no character is highlighted twice.
+      previous.length = Math.max(previous.length, hit.start + hit.length - previous.start);
+    } else {
+      found.push(hit);
+    }
+
+    from = hit.start + hit.length;
+  }
+
+  return found;
+}
+
+/**
+ * The earliest hit of any of `words` in `value` at or after `from`.
+ *
+ * Only positions the scan has not passed are considered, which is what lets
+ * `matchRanges` consume the text once instead of re-scanning it per hit. The
+ * scan runs over the whole text and simply ignores the part before `from`:
+ * cutting the text at `from` first would make its first character look like
+ * the start of a word, and a word hidden at a cut — "intro" in "intro", when
+ * the scan has already passed the "o" — would then be found inside a longer
+ * word and highlighted as though the author had written it.
+ *
+ * The widening to the whole word runs only on the first pass: a larger
+ * `whole` flag means "hit must be a complete word", so the end is not touched.
+ */
+function locateFrom(value, words, from) {
+  var best = null;
+
+  function consider(whole) {
+    words.forEach(function (term) {
+      var start = indexOfTerm(value, term, whole, from);
+      if (start === -1) {
+        return;
+      }
+      if (
+        best === null ||
+        start < best.start ||
+        (start === best.start && term.length > best.length)
+      ) {
+        best = { start: start, length: term.length };
+      }
+    });
+  }
+
+  consider(true);
+  if (best) {
+    return best;
+  }
+
+  consider(false);
+  if (!best) {
+    return null;
+  }
+
+  var end = best.start + best.length;
+  var code = codePointAt(value, end);
+  while (code && !VALUE_END.test(code)) {
+    end += code.length;
+    code = codePointAt(value, end);
   }
 
   return { start: best.start, length: end - best.start };

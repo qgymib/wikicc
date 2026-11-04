@@ -20,16 +20,31 @@
  *
  * **A result is two lines and one action.** The title says which document, the
  * context says why it is there, and both are chosen by the engine's ranking,
- * which the list never re-sorts. The one selected result — the first until the
- * reader moves it — is what the preview shows and what Enter opens, so the list
- * and the preview always describe the same row.
+ * which the list never re-sorts. The one selected result is what the preview
+ * shows, and the selection moves only when the reader asks it to — a click on
+ * a row, an arrow key, never a pointer merely crossing the list — so the list
+ * and the preview always describe the same row. Opening the document is a
+ * firmer gesture still: a double click on the row, or `Enter` on the field.
+ *
+ * **The preview shows the document, not a quotation from it.** A reader who
+ * picked a result is asking to read it, and a paragraph cut out of the middle
+ * answers the wrong question: it says "this is the one" where the reader wants
+ * to know what it says. So the payload's body is inserted whole — by the same
+ * shared document-body render the article uses — scrolls in the preview's own
+ * column, and carries a `<mark>` on every place the query occurs — the same
+ * words `search.js` found, so the list and the page agree. Diagrams are drawn
+ * there because their source would otherwise sit on screen as code; tables
+ * are deliberately *not* enhanced, because the sort and filter buttons belong
+ * to the article and not to a dialog.
  *
  * Document text reaches the page as text, never as markup: titles and contexts
- * are written with `textContent`, and the preview puts the matched words in a
- * `<mark>` by splitting the snippet into pieces and appending three nodes. The
- * search engine's `match` data would have been a more direct source for the
- * offsets, but it addresses its own token stream — the words a snippet cut from
- * the document are found in `search.js` instead, in the text the reader sees.
+ * are written with `textContent`, and a passage that falls back to the excerpt
+ * is assembled from three nodes. Highlighting works on text nodes for the same
+ * reason — the query may as well name a tag as a word, and replacing inside
+ * the markup string would tear the document apart at the place the reader is
+ * looking. The search engine's `match` data would have been a more direct
+ * source for the offsets, but it addresses its own token stream — the words
+ * are found in `search.js` instead, in the text the reader sees.
  *
  * Keyboard support is the list's, not the field's: `ArrowUp`/`ArrowDown`,
  * `Home`/`End` move the selection and are taken before the caret can use them,
@@ -37,7 +52,9 @@
  * multi-line field, and `Escape` closes the panel — the one key the reader
  * expects to undo whatever is open.
  */
-import { ELLIPSIS, matchSnippet } from "./search.js";
+import { ELLIPSIS, matchRanges, matchSnippet } from "./search.js";
+import * as Links from "./links.js";
+import * as DocBody from "./doc-body.js";
 
 /** Class of the panel root. */
 export var PANEL_CLASS = "search-panel";
@@ -68,6 +85,28 @@ export var PREVIEW_CLASS = "search-preview";
 
 /** Class of the placeholder shown where a list or a preview has nothing. */
 export var EMPTY_CLASS = "search-empty";
+
+/** Class of the whole-document body inside the preview. */
+export var DOCUMENT_CLASS = "search-document";
+
+/** Class of one highlighted hit inside the preview. */
+export var HIT_CLASS = "search-hit";
+
+/** Class of the banner naming the document the preview shows. */
+export var DOC_TITLE_CLASS = "search-doc-title";
+
+/** Class of the document's path under the banner. */
+export var DOC_PATH_CLASS = "search-doc-path";
+
+/**
+ * Elements whose text is never highlighted.
+ *
+ * A hit inside a code block or a diagram source is real, but marking it would
+ * restart the diagram engine's placeholder text and turn a rendered picture
+ * back into source, so those subtrees are left as authored. `mark` is skipped
+ * too, which is what keeps a second pass from wrapping a hit it already knows.
+ */
+var UNHIGHLIGHTED_TAGS = ["PRE", "CODE", "SCRIPT", "STYLE", "MARK"];
 
 /** Attribute marking the panel as open, which is what the stylesheet animates. */
 export var OPEN_ATTRIBUTE = "data-open";
@@ -136,6 +175,17 @@ export function createSearchView(options) {
   var container = options && options.container;
   var onQuery = (options && options.onQuery) || function () {};
   var onSelect = (options && options.onSelect) || function () {};
+  // The whole document behind a result, so the preview can show it. Absent in
+  // a shell without a payload and in the aim of an older artifact; the preview
+  // then keeps the excerpt it always drew, which is degraded but never broken.
+  var documentOf = (options && options.documentOf) || null;
+  // Diagram colours are baked into the SVG, so the preview has to be drawn for
+  // the theme in effect — the same callback the article is rendered with.
+  var theme =
+    (options && options.theme) ||
+    function () {
+      return null;
+    };
   var delay =
     options && typeof options.delay === "number" ? Math.max(0, options.delay) : QUERY_DELAY_MS;
 
@@ -162,6 +212,20 @@ export function createSearchView(options) {
 
   /** Whether a keystroke has been typed that no query has answered yet. */
   var stale = false;
+
+  /**
+   * What the preview currently shows, as `id + "\u0000" + query`.
+   *
+   * The list marks a row on every pointer move and every arrow key, and almost
+   * all of those land on the row already selected. Rebuilding a whole document
+   * — with its highlights and its diagrams — on each of them would make the
+   * reader's own pointer stutter, so the signature decides whether there is
+   * anything to draw.
+   */
+  var drawn = null;
+
+  /** The text node wrapped for each hit, so a redraw can put them back. */
+  var hits = [];
 
   function view() {
     return globalThis;
@@ -239,6 +303,7 @@ export function createSearchView(options) {
     preview = document.createElement("div");
     preview.className = PREVIEW_CLASS;
     preview.setAttribute("aria-live", "polite");
+    preview.addEventListener("click", onPreviewClick);
 
     container.appendChild(field);
     container.appendChild(results);
@@ -355,6 +420,43 @@ export function createSearchView(options) {
     }
     clearTimer();
     setResults([], 0);
+  }
+
+  /**
+   * Follow a link inside the previewed document.
+   *
+   * The preview shows the article the reader picked, and the article's links
+   * are the same routes the page itself uses — so a click here means "take me
+   * there", exactly as a click on a result row does. It goes through
+   * `onSelect` rather than being left to the browser: the browser would change
+   * the address behind a dialog still covering the page, and the reader would
+   * be looking at the old document with no way to tell what happened.
+   *
+   * Anything that is not an internal document route — an external site, a
+   * download, a `target` the author set — is left to the browser.
+   */
+  function onPreviewClick(event) {
+    var link = event && event.target && typeof event.target.closest === "function"
+      ? event.target.closest("a[href]")
+      : null;
+    if (!link) {
+      return;
+    }
+
+    var route = Links.parseDocLink(link.getAttribute("href"));
+    if (!route) {
+      return;
+    }
+
+    // A modified click is the reader asking the browser for a new tab or
+    // window, which is not the panel's to intercept.
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.button) {
+      return;
+    }
+
+    stopEvent(event);
+    closePanel();
+    onSelect(route.id, route.anchor);
   }
 
   function onKeyDown(event) {
@@ -525,14 +627,23 @@ export function createSearchView(options) {
     }
     row.appendChild(context);
 
-    row.addEventListener("pointermove", function () {
-      mark(index);
-    });
+    // The selection follows the reader's decision, not the pointer's path:
+    // crossing a row on the way somewhere else must not rewrite the preview
+    // the reader is reading. A click is the deliberate "show me this one".
     row.addEventListener("click", function (event) {
       if (event && typeof event.preventDefault === "function") {
         event.preventDefault();
       }
       mark(index);
+    });
+
+    // Opening the document is a firmer gesture: a double click, whose two
+    // clicks have already selected this row, so only the `dblclick` itself
+    // needs to navigate.
+    row.addEventListener("dblclick", function (event) {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
       choose(entries[index]);
     });
 
@@ -548,30 +659,91 @@ export function createSearchView(options) {
   }
 
   /**
-   * Show the passage `entry` was found in.
+   * Show the document `entry` was found in — the whole of it.
    *
-   * The entry already carries the cut `search.js` made, so nothing is searched
-   * again here; a document with no passage shows the heading of the preview
-   * instead of an empty box, which tells the reader *why* there is nothing.
+   * A reader who picked a result is asking to read, not to peek: a paragraph
+   * cut out of the middle answers "is this the one" but never "what does it
+   * say", and the dialog is large enough to hold the article itself. The body
+   * is therefore inserted as authored, scrolled on its own, and every hit of
+   * the query is marked in place so the eye lands where the list said.
+   *
+   * Two things the article's own render does and this one must not: enhancing
+   * the tables, which injects sort and filter buttons into a panel that is not
+   * the reader's page, and nothing else. Diagrams *are* drawn, because their
+   * source would otherwise sit on screen as code.
+   *
+   * A shell with no payload to ask — or a query whose answer landed on a
+   * document the payload does not hold — falls back to the excerpt the entry
+   * carries, so the half is never blank where it could say something.
    */
   function renderPreview(entry) {
     if (!preview) {
       return;
     }
 
-    preview.textContent = "";
-    // Whether nothing has been asked yet, the query found nothing, or the
-    // selected document matched on its title alone, the preview has no passage
-    // to show — and it says so the same quiet way every time: by naming itself.
-    if (!entry || !entry.snippet) {
-      var idle = document.createElement("p");
-      idle.className = EMPTY_CLASS;
-      idle.textContent = PREVIEW_IDLE_LABEL;
-      preview.appendChild(idle);
+    if (!entry) {
+      // Nothing selected is not a state worth remembering: the panel draws it
+      // on build, on every empty answer and again after a close, and a
+      // signature for "nothing" would only ever skip one of those.
+      drawn = null;
+      hits = [];
+      preview.textContent = "";
+      preview.scrollTop = 0;
+      renderIdle();
       return;
     }
 
-    var cut = entry.snippet;
+    var signature = entry.id + "\u0000" + query();
+    if (signature === drawn) {
+      return;
+    }
+    drawn = signature;
+    hits = [];
+
+    preview.textContent = "";
+    preview.scrollTop = 0;
+
+    var doc = documentFor(entry.id);
+    if (doc && typeof doc.html === "string" && doc.html) {
+      renderDocument(doc, entry);
+      return;
+    }
+
+    renderExcerpt(entry);
+  }
+
+  /** The payload's document for `id`, or `null` when the shell cannot say. */
+  function documentFor(id) {
+    if (!documentOf) {
+      return null;
+    }
+
+    try {
+      return documentOf(id) || null;
+    } catch (error) {
+      // The preview is built from whatever the page hands over; a payload
+      // that throws is the page's problem to log, not a reason the panel
+      // stops answering.
+      return null;
+    }
+  }
+
+  /** Name the half, in its middle, and say nothing else. */
+  function renderIdle() {
+    var idle = document.createElement("p");
+    idle.className = EMPTY_CLASS;
+    idle.textContent = PREVIEW_IDLE_LABEL;
+    preview.appendChild(idle);
+  }
+
+  /** The fallback: the passage `search.js` cut for the list. */
+  function renderExcerpt(entry) {
+    var cut = entry && entry.snippet;
+    if (!cut) {
+      renderIdle();
+      return;
+    }
+
     var passage = document.createElement("p");
     passage.className = "search-passage";
     passage.appendChild(
@@ -580,6 +752,193 @@ export function createSearchView(options) {
     passage.appendChild(markNode(cut.hit));
     passage.appendChild(document.createTextNode(cut.after + (cut.trimmedEnd ? ELLIPSIS : "")));
     preview.appendChild(passage);
+  }
+
+  /**
+   * Insert the whole document, mark every hit, and scroll to the first one.
+   *
+   * The path above the body is the one thing the article has and this must
+   * not: a reader already knows which document they picked, so the banner
+   * repeats it quietly rather than as a title.
+   */
+  function renderDocument(doc, entry) {
+    var banner = document.createElement("div");
+    banner.className = "search-doc-head";
+
+    var title = document.createElement("p");
+    title.className = DOC_TITLE_CLASS;
+    title.textContent = String(doc.title || entry.title || entry.id || "");
+
+    var path = document.createElement("p");
+    path.className = DOC_PATH_CLASS;
+    path.textContent = String(doc.id || entry.path || entry.id || "");
+
+    banner.appendChild(title);
+    banner.appendChild(path);
+
+    // The body is the article's own render — the shared document-body module —
+    // with the dialog's one declared difference: its tables stay untouched,
+    // because the sort and filter buttons belong to the article and the filter
+    // panel they open is parented outside this one.
+    var body = DocBody.createDocBody(doc.html, {
+      extraClass: DOCUMENT_CLASS,
+      enhanceTables: false,
+    });
+
+    preview.appendChild(banner);
+    preview.appendChild(body);
+
+    highlight(body, query());
+    // Diagrams are drawn after insertion — the body module's one deferred
+    // step, because the engine measures its labels with the layout — and
+    // asynchronously, so the text is readable while the pictures arrive.
+    DocBody.drawDiagrams(body, theme());
+
+    scrollToFirstHit(body);
+  }
+
+  /**
+   * Wrap every hit of `query` in `root`'s text, and remember what was wrapped.
+   *
+   * The work is done on text nodes, never on markup: the document's own HTML
+   * carries tags whose names and attributes could match the query, and a
+   * string replacement would tear the page apart at exactly the place the
+   * reader is looking. Each node is split at its hits and the middle pieces
+   * are replaced by `<mark>` elements around the same text.
+   *
+   * Splitting while walking is the one ordering hazard here: `splitText`
+   * leaves the fresh half *after* the node, where a tree walker would visit
+   * it again — and its hits begin where the previous node's ended, so they
+   * would be found twice. The walk therefore restarts from the last piece,
+   * which is past every hit already handled.
+   */
+  function highlight(root, value) {
+    if (!document.createTreeWalker || !root) {
+      return;
+    }
+
+    var walker = document.createTreeWalker(root, textNodes(), null);
+    var node = walker.nextNode();
+
+    while (node) {
+      if (!skippable(node)) {
+        var ranges = matchRanges(textOfNode(node), value);
+        if (ranges.length) {
+          node = wrapHits(node, ranges);
+        }
+      }
+      node = walker.nextNode();
+    }
+  }
+
+  /** The text a node carries, read the way both a browser and a DOM stand-in allow. */
+  function textOfNode(node) {
+    if (!node) {
+      return "";
+    }
+
+    return String(node.nodeValue === undefined ? node.textContent : node.nodeValue);
+  }
+
+  /** `NodeFilter.SHOW_TEXT`, without depending on the constant being exposed. */
+  function textNodes() {
+    return typeof NodeFilter === "undefined" || !NodeFilter.SHOW_TEXT ? 4 : NodeFilter.SHOW_TEXT;
+  }
+
+  /** Whether a text node sits in a subtree whose text is left alone. */
+  function skippable(node) {
+    if (!textOfNode(node).trim()) {
+      return true;
+    }
+
+    var parent = node.parentNode;
+    while (parent && parent !== preview) {
+      if (parent.tagName && UNHIGHLIGHTED_TAGS.indexOf(String(parent.tagName).toUpperCase()) !== -1) {
+        return true;
+      }
+      parent = parent.parentNode;
+    }
+
+    return false;
+  }
+
+  /**
+   * Split `node` at `ranges` and wrap each piece in a `<mark>`.
+   *
+   * The pieces are taken from the right so every split happens on the part
+   * that has not been cut yet: `splitText` leaves the new node in place, after
+   * the piece before it, so the original node ends up holding only the text up
+   * to the first hit and the rest of the chain is built backwards from there.
+   * Each `<mark>` then replaces the piece that is exactly its own text.
+   *
+   * Returns the first hit, which is where the walk resumes — a tree walker
+   * enters a `<mark>` and would otherwise offer the highlighted text again.
+   */
+  function wrapHits(node, ranges) {
+    var text = textOfNode(node);
+    var rest = node;
+
+    for (var index = ranges.length - 1; index >= 0; index -= 1) {
+      var start = ranges[index].start;
+      var end = start + ranges[index].length;
+      var tail = splitTail(rest, start);
+      var piece = splitTail(tail, end - start);
+
+      if (!piece || !tail.parentNode) {
+        continue;
+      }
+
+      var hit = document.createElement("mark");
+      hit.className = HIT_CLASS;
+      hit.textContent = text.slice(start, end);
+      tail.parentNode.replaceChild(hit, tail);
+
+      hits.push(hit);
+      rest = piece;
+    }
+
+    return hits.length ? hits[hits.length - 1] : node;
+  }
+
+  /**
+   * The node holding everything `node` has from `index` onwards.
+   *
+   * A browser answers with `splitText`; a DOM without it — the fake page the
+   * tests drive — cannot cut a node at all, so the node comes back whole and
+   * the caller's `<mark>` simply takes its place.
+   */
+  function splitTail(node, index) {
+    if (!node) {
+      return null;
+    }
+
+    if (typeof node.splitText === "function") {
+      return node.splitText(index);
+    }
+
+    return node;
+  }
+
+  /**
+   * Bring the first hit into view inside the preview.
+   *
+   * The preview is its own scroll container, so the page never moves — and
+   * that is the point: the article behind the dialog keeps the place the
+   * reader left it. `scrollIntoView` is asked for the nearest block: centring
+   * a hit three lines into a short document would leave a gap above it, which
+   * reads as missing text.
+   */
+  function scrollToFirstHit(root) {
+    if (!hits.length) {
+      return;
+    }
+
+    var first = hits[0];
+    if (!first || typeof first.scrollIntoView !== "function") {
+      return;
+    }
+
+    first.scrollIntoView({ block: "nearest" });
   }
 
   /** Put the panel on screen with the field focused and its text selected. */
@@ -623,6 +982,10 @@ export function createSearchView(options) {
       container.hidden = true;
     }
 
+    // The query is part of what the preview shows, and it has just been
+    // emptied: the next opening must draw the document again rather than
+    // trust a signature that describes a query nobody can see any more.
+    drawn = null;
     setResults([], 0);
   }
 
@@ -663,6 +1026,8 @@ export function createSearchView(options) {
     rows = [];
     entries = [];
     selected = null;
+    hits = [];
+    drawn = null;
     open = false;
   }
 

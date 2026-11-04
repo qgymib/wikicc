@@ -121,6 +121,31 @@ fn the_search_button_lives_in_the_top_toolbar() {
 }
 
 #[test]
+fn the_search_panel_stays_outside_the_article_column() {
+    let page = render(&build(&fixture_root(), "Fixture"));
+
+    // The hover preview listens to the article column alone. The search panel
+    // shows whole documents with their links, and a reader hovering one of
+    // those links is reading the dialog, not asking for a chapter popover — so
+    // the panel stays a sibling of the column, never a descendant of it, or
+    // the column's listeners would open a popover inside the dialog.
+    let column = page
+        .html
+        .find(r#"<main class="content" id="doc-content""#)
+        .expect("article column");
+    let column_end = column + page.html[column..].find("</main>").expect("column ends");
+    let panel = page
+        .html
+        .find(r#"id="search-panel""#)
+        .expect("search panel");
+
+    assert!(
+        panel > column_end,
+        "the panel is written after the column closes, never inside it"
+    );
+}
+
+#[test]
 fn the_theme_switch_sits_beside_search_in_the_top_bar() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
@@ -128,9 +153,18 @@ fn the_theme_switch_sits_beside_search_in_the_top_bar() {
     // end of the top bar, after the button it sits beside. The sidebar header
     // is left holding nothing but the site title.
     let bar = page.html.find(r#"class="topbar""#).expect("top bar");
-    let search = page.html.find(r#"id="search-toggle""#).expect("search button");
-    let theme = page.html.find(r#"id="theme-toggle""#).expect("theme button");
-    let header = page.html.find(r#"class="sidebar-header""#).expect("sidebar header");
+    let search = page
+        .html
+        .find(r#"id="search-toggle""#)
+        .expect("search button");
+    let theme = page
+        .html
+        .find(r#"id="theme-toggle""#)
+        .expect("theme button");
+    let header = page
+        .html
+        .find(r#"class="sidebar-header""#)
+        .expect("sidebar header");
     let header_end = page.html[header..]
         .find("</header>")
         .expect("sidebar header end")
@@ -269,7 +303,9 @@ fn the_link_graph_is_rendered_by_the_page_instead_of_a_placeholder() {
 /// CSS parser: the sheet is hand-written in one declaration per line, so the
 /// block is the text between its opening brace and the next closing one.
 fn rule_of<'a>(css: &'a str, selector: &str) -> &'a str {
-    let start = css.find(selector).unwrap_or_else(|| panic!("no {selector}"));
+    let start = css
+        .find(selector)
+        .unwrap_or_else(|| panic!("no {selector}"));
     let open = css[start..].find('{').expect("rule body") + start;
     let close = css[open..].find('}').expect("rule end") + open;
 
@@ -312,7 +348,7 @@ fn the_toolbar_is_painted_as_the_head_of_the_panel_column() {
 
     let bar = rule_of(css, ".topbar {");
     assert_eq!(
-        declaration(bar, "border-left").as_deref(),
+        declaration(bar, "border-left"),
         Some("1px solid var(--shell-line)"),
         "the column's left rule starts at the top of the bar, not under it"
     );
@@ -326,7 +362,7 @@ fn the_toolbar_is_painted_as_the_head_of_the_panel_column() {
         "the bar carries the column's own surface: {bar}"
     );
     assert_eq!(
-        declaration(bar, "padding").as_deref(),
+        declaration(bar, "padding"),
         Some("0 calc(16px + var(--panel-gutter, 8px)) 0 16px"),
         "the bar's right edge meets the panels' stable-gutter edge, scrollbar or not"
     );
@@ -342,7 +378,7 @@ fn the_narrow_toolbar_goes_back_to_being_a_strip() {
     let bar = rule_of(narrow, ".topbar {");
 
     assert_eq!(
-        declaration(bar, "border-left").as_deref(),
+        declaration(bar, "border-left"),
         Some("0"),
         "nothing is that edge any more"
     );
@@ -351,12 +387,12 @@ fn the_narrow_toolbar_goes_back_to_being_a_strip() {
         "a strip over moving content needs a rule under it: {bar}"
     );
     assert_eq!(
-        declaration(bar, "background").as_deref(),
+        declaration(bar, "background"),
         Some("var(--bg-panel)"),
         "the strip keeps its own translucent surface"
     );
     assert_eq!(
-        declaration(bar, "backdrop-filter").as_deref(),
+        declaration(bar, "backdrop-filter"),
         Some("blur(16px)"),
         "and the blur that lets the page show through it"
     );
@@ -373,13 +409,13 @@ fn the_bar_and_the_panels_share_one_right_axis() {
 
     let inspector = main_inspector_rule(css);
     assert_eq!(
-        declaration(inspector, "scrollbar-gutter").as_deref(),
+        declaration(inspector, "scrollbar-gutter"),
         Some("stable"),
         "the panels' right edge holds still whether or not the scrollbar shows"
     );
     let bar = rule_of(css, ".topbar {");
     assert_eq!(
-        declaration(bar, "padding").as_deref(),
+        declaration(bar, "padding"),
         Some("0 calc(16px + var(--panel-gutter, 8px)) 0 16px"),
         "the bar's right padding is the panels' padding plus one gutter"
     );
@@ -389,13 +425,13 @@ fn the_bar_and_the_panels_share_one_right_axis() {
     let narrow = media_block(css, "max-width: 900px");
     let bar = rule_of(narrow, ".topbar {");
     assert_eq!(
-        declaration(bar, "padding-right").as_deref(),
+        declaration(bar, "padding-right"),
         Some("16px"),
         "the full-width strip returns to the plain 16px axis"
     );
     let inspector = rule_of(narrow, ".inspector {");
     assert_eq!(
-        declaration(inspector, "scrollbar-gutter").as_deref(),
+        declaration(inspector, "scrollbar-gutter"),
         Some("auto"),
         "the collapsed panel reserves no empty strip"
     );
@@ -404,7 +440,7 @@ fn the_bar_and_the_panels_share_one_right_axis() {
     let smallest = media_block(css, "max-width: 640px");
     let bar = rule_of(smallest, ".topbar {");
     assert_eq!(
-        declaration(bar, "padding-right").as_deref(),
+        declaration(bar, "padding-right"),
         Some("14px"),
         "the bar keeps meeting the panels at 14px here"
     );
@@ -420,9 +456,9 @@ fn the_search_panel_opens_as_a_centered_dialog() {
     let css = SHELL_CSS;
     let panel = rule_of(css, ".search-panel {");
 
-    assert_eq!(declaration(panel, "position").as_deref(), Some("fixed"));
-    assert_eq!(declaration(panel, "inset").as_deref(), Some("0"));
-    assert_eq!(declaration(panel, "margin").as_deref(), Some("auto"));
+    assert_eq!(declaration(panel, "position"), Some("fixed"));
+    assert_eq!(declaration(panel, "inset"), Some("0"));
+    assert_eq!(declaration(panel, "margin"), Some("auto"));
 
     let width = declaration(panel, "width").expect("panel width");
     assert!(
@@ -441,7 +477,7 @@ fn the_search_panel_opens_as_a_centered_dialog() {
     let dim = ".app:has(.search-panel:not([hidden]))::after";
     let backdrop = rule_of(css, &format!("{dim} {{"));
     assert_eq!(
-        declaration(backdrop, "position").as_deref(),
+        declaration(backdrop, "position"),
         Some("fixed"),
         "the dim covers the viewport, not the app's box"
     );
@@ -471,43 +507,61 @@ fn the_search_panel_opens_as_a_centered_dialog() {
     let narrow = media_block(css, "max-width: 900px");
     let panel = rule_of(narrow, ".search-panel {");
     assert_eq!(
-        declaration(panel, "width").as_deref(),
+        declaration(panel, "width"),
         Some("calc(100vw - 16px)"),
         "the dialog fills the narrow screen but for one margin"
     );
-    assert_eq!(declaration(panel, "height").as_deref(), Some("calc(100vh - 16px)"));
+    assert_eq!(declaration(panel, "height"), Some("calc(100vh - 16px)"));
 
     let smallest = media_block(css, "max-width: 640px");
     let panel = rule_of(smallest, ".search-panel {");
     assert_eq!(
-        declaration(panel, "width").as_deref(),
+        declaration(panel, "width"),
         Some("calc(100vw - 12px)"),
         "the smallest screens shrink the margin, not the dialog"
     );
-    assert_eq!(declaration(panel, "height").as_deref(), Some("calc(100dvh - 12px)"));
-    assert_eq!(declaration(panel, "border-radius").as_deref(), Some("12px"));
+    assert_eq!(declaration(panel, "height"), Some("calc(100dvh - 12px)"));
+    assert_eq!(declaration(panel, "border-radius"), Some("12px"));
 }
 
 #[test]
-fn the_search_panel_splits_itself_between_what_it_found() {
-    // The list and the preview are one answer read twice — which documents,
-    // and where in one of them — so the dialog gives them the same half of
-    // itself instead of letting the list take almost all of it. Both grow from
-    // a zero basis, and neither may state a cap of its own.
+fn the_search_panel_gives_the_document_twice_the_room_of_the_list() {
+    // The list is how the reader navigates; the preview is what they came to
+    // read, and it now holds the whole document rather than a paragraph cut
+    // out of one. So the dialog is two columns — the list a third of the
+    // width, the document the rest — with the field spanning both above them.
     let css = SHELL_CSS;
-    let results = rule_of(css, ".search-results {");
-    let preview = rule_of(css, ".search-preview {");
+    let panel = rule_of(css, ".search-panel {");
+    let field = rule_of(css, ".search-field {");
 
+    assert_eq!(declaration(panel, "display"), Some("grid"));
     assert_eq!(
-        declaration(results, "flex").as_deref(),
-        Some("1 1 0"),
-        "the list takes an even share of the dialog"
+        declaration(panel, "grid-template-columns"),
+        Some("minmax(240px, 1fr) minmax(0, 2fr)"),
+        "one column for the list, twice that for the document"
     );
     assert_eq!(
-        declaration(preview, "flex").as_deref(),
-        Some("1 1 0"),
-        "the preview takes the same share as the list"
+        declaration(panel, "grid-template-rows"),
+        Some("auto minmax(0, 1fr)"),
+        "the field takes its own height and the columns share the rest"
     );
+    assert_eq!(
+        declaration(field, "grid-column"),
+        Some("1 / -1"),
+        "the query spans the dialog above both columns"
+    );
+
+    // Narrow screens cannot afford two columns: the halves stack, and the
+    // document keeps twice the height of the list it sits under.
+    let narrow = media_block(css, "max-width: 900px");
+    let panel = rule_of(narrow, ".search-panel {");
+    assert_eq!(
+        declaration(panel, "grid-template-rows"),
+        Some("auto minmax(0, 1fr) minmax(0, 2fr)"),
+        "stacked, the split is one of height instead of width"
+    );
+
+    let preview = rule_of(css, ".search-preview {");
     assert_eq!(
         declaration(preview, "max-height"),
         None,
@@ -517,12 +571,94 @@ fn the_search_panel_splits_itself_between_what_it_found() {
     // An empty half names itself in its own middle, and that label leaves as
     // soon as the half holds something.
     let empty = rule_of(css, ".search-empty {");
-    assert_eq!(declaration(empty, "display").as_deref(), Some("flex"));
-    assert_eq!(declaration(empty, "align-items").as_deref(), Some("center"));
+    assert_eq!(declaration(empty, "display"), Some("flex"));
+    assert_eq!(declaration(empty, "align-items"), Some("center"));
     assert_eq!(
-        declaration(empty, "justify-content").as_deref(),
+        declaration(empty, "justify-content"),
         Some("center"),
         "the label is centred across the half it describes"
+    );
+}
+
+#[test]
+fn the_search_preview_scrolls_the_document_it_shows() {
+    // The document is longer than the dialog, so the preview is what scrolls:
+    // its own column, on its own, with a gutter held open so switching
+    // documents does not shift the text sideways under the reader's eye.
+    let css = SHELL_CSS;
+    let preview = rule_of(css, ".search-preview {");
+
+    assert_eq!(
+        declaration(preview, "overflow-y"),
+        Some("auto"),
+        "the document scrolls inside the preview"
+    );
+    assert_eq!(
+        declaration(preview, "min-height"),
+        Some("0"),
+        "the column may shrink, or the scroll would never engage"
+    );
+    assert_eq!(
+        declaration(preview, "overscroll-behavior"),
+        Some("contain"),
+        "reaching the end of a document does not scroll the page behind it"
+    );
+    assert_eq!(
+        declaration(preview, "scrollbar-gutter"),
+        Some("stable"),
+        "the reading column keeps its width when the bar comes and goes"
+    );
+}
+
+#[test]
+fn the_article_typography_reaches_the_preview_one_size_down() {
+    // The preview inserts the document with the article's own classes, so the
+    // typography is the article's; only the measure changes. A column this
+    // narrow steps every size down and tightens the spacing to match, and
+    // tables scroll sideways rather than pushing the dialog's edge out.
+    let css = SHELL_CSS;
+    let body = rule_of(css, ".search-preview .doc-body {");
+
+    assert_eq!(
+        declaration(body, "font-size"),
+        Some("13.5px"),
+        "the reading size of a narrow column"
+    );
+    assert_eq!(declaration(body, "line-height"), Some("1.7"));
+
+    let heading = rule_of(css, ".search-preview .doc-body h2 {");
+    assert_eq!(declaration(heading, "font-size"), Some("17px"));
+
+    let table = rule_of(css, ".search-preview .doc-body table {");
+    assert_eq!(
+        declaration(table, "overflow-x"),
+        Some("auto"),
+        "a wide table scrolls inside the column"
+    );
+    assert_eq!(declaration(table, "max-width"), Some("100%"));
+}
+
+#[test]
+fn a_hit_is_marked_in_the_document_without_shouting() {
+    // A document holds dozens of hits, and the reader is reading rather than
+    // scanning markers: the wash is quiet, and only the first one — the place
+    // the preview scrolled to — is allowed to stand out.
+    let css = SHELL_CSS;
+    let hit = rule_of(css, ".search-preview mark.search-hit {");
+    let first = rule_of(css, ".search-preview mark.search-hit:first-of-type {");
+
+    assert!(
+        declaration(hit, "background").is_some(),
+        "a hit is marked by a background, not by a badge"
+    );
+    assert_eq!(
+        declaration(hit, "font-weight"),
+        Some("inherit"),
+        "marking a word does not make it bold as well"
+    );
+    assert!(
+        declaration(first, "background").is_some(),
+        "the one the reader landed on is the liveliest mark on the page"
     );
 }
 
@@ -550,24 +686,24 @@ fn the_toolbar_icons_stay_compact() {
 
     let button = rule_of(css, ".icon-button {");
     assert_eq!(
-        declaration(button, "width").as_deref(),
+        declaration(button, "width"),
         Some("28px"),
         "the round buttons are 28px boxes"
     );
     assert_eq!(
-        declaration(button, "height").as_deref(),
+        declaration(button, "height"),
         Some("28px"),
         "the round buttons are 28px boxes"
     );
 
     let glyph = rule_of(css, ".icon-button svg {");
     assert_eq!(
-        declaration(glyph, "width").as_deref(),
+        declaration(glyph, "width"),
         Some("14px"),
         "the glyph sits one step inside the box"
     );
     assert_eq!(
-        declaration(glyph, "height").as_deref(),
+        declaration(glyph, "height"),
         Some("14px"),
         "the glyph sits one step inside the box"
     );
@@ -582,12 +718,12 @@ fn the_column_opens_with_the_panels_own_gap() {
     let inspector = main_inspector_rule(css);
 
     assert_eq!(
-        declaration(inspector, "gap").as_deref(),
+        declaration(inspector, "gap"),
         Some("14px"),
         "the panels are held apart by the column's rhythm"
     );
     assert_eq!(
-        declaration(inspector, "padding").as_deref(),
+        declaration(inspector, "padding"),
         Some("2px 16px 18px"),
         "the column carries only the gap's remainder below the bar's buttons"
     );

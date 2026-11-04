@@ -167,6 +167,115 @@ test("a snippet of text without the query is null", () => {
   assert.equal(search.matchSnippet(null, "anything"), null);
 });
 
+test("every hit of a word is found, in order", () => {
+  const ranges = search.matchRanges("one two one three one", "one");
+
+  assert.deepEqual(ranges, [
+    { start: 0, length: 3 },
+    { start: 8, length: 3 },
+    { start: 18, length: 3 },
+  ]);
+});
+
+test("a hit is only recognised at the start of a word", () => {
+  assert.deepEqual(search.matchRanges("concatenate the cat", "cat"), [{ start: 16, length: 3 }]);
+});
+
+test("a prefix hit covers the whole word it begins", () => {
+  // "introd" prefixes "introduction" but not "intro", which is the other way
+  // round — so only the longer word is highlighted here.
+  assert.deepEqual(search.matchRanges("introduction and intro", "introd"), [
+    { start: 0, length: 12 },
+  ]);
+  // "intro" is a prefix of "introduction" rather than the other way round, so
+  // only the word that really is "intro" is highlighted — until the widening
+  // pass runs, which a complete word always satisfies first.
+  assert.deepEqual(search.matchRanges("introduction and intro", "intro"), [
+    { start: 17, length: 5 },
+  ]);
+  assert.deepEqual(search.matchRanges("intro and introduction", "intro"), [
+    { start: 0, length: 5 },
+    { start: 10, length: 12 },
+  ]);
+});
+
+test("a word hidden behind an earlier hit is never highlighted", () => {
+  // "intro" sits inside "introduction" at offset 0, but not at a word start:
+  // walking on from the end of "introduction" would cut the text right at the
+  // "o" and make the rest of the word look like a word of its own.
+  assert.deepEqual(search.matchRanges("intro intro", "intro"), [
+    { start: 0, length: 5 },
+    { start: 6, length: 5 },
+  ]);
+  assert.deepEqual(
+    search.matchRanges("catalogue and cat", "cat"),
+    [{ start: 14, length: 3 }],
+    "the tail of a longer word is not a hit",
+  );
+});
+
+test("hits ignore case", () => {
+  assert.deepEqual(search.matchRanges("Install the CLI and cli", "cli"), [
+    { start: 12, length: 3 },
+    { start: 20, length: 3 },
+  ]);
+});
+
+test("every word of a multi-word query is highlighted", () => {
+  assert.deepEqual(search.matchRanges("install the tool, then install", "install tool"), [
+    { start: 0, length: 7 },
+    { start: 12, length: 4 },
+    { start: 23, length: 7 },
+  ]);
+});
+
+test("overlapping hits merge instead of nesting", () => {
+  // "cata" and "catalogue" both begin the same word: one range covers it,
+  // whatever order the words arrive in.
+  const ranges = search.matchRanges("catalogue cata", "cata catalogue");
+
+  assert.deepEqual(ranges, [
+    { start: 0, length: 9 },
+    { start: 10, length: 4 },
+  ]);
+  assert.ok(
+    ranges.every((range) => range.length > 0),
+    "a merged range never collapses to nothing",
+  );
+});
+
+test("CJK text is highlighted by word", () => {
+  assert.deepEqual(search.matchRanges("中文，说明，文档，说明", "说明"), [
+    { start: 3, length: 2 },
+    { start: 9, length: 2 },
+  ]);
+});
+
+test("a text without the query has no ranges", () => {
+  assert.deepEqual(search.matchRanges("nothing here", "zzz"), []);
+  assert.deepEqual(search.matchRanges("", "anything"), []);
+  assert.deepEqual(search.matchRanges(null, "anything"), []);
+  assert.deepEqual(search.matchRanges("some text", ""), []);
+  assert.deepEqual(search.matchRanges("some text", "   "), []);
+});
+
+test("ranges never overlap and stay inside the text", () => {
+  const text = "cat catalogue concat cat";
+  const ranges = search.matchRanges(text, "cat cata");
+
+  ranges.forEach((range, index) => {
+    assert.ok(range.start >= 0 && range.length > 0);
+    assert.ok(range.start + range.length <= text.length, "a range stays inside the text");
+    if (index > 0) {
+      const previous = ranges[index - 1];
+      assert.ok(
+        previous.start + previous.length <= range.start,
+        `range ${index} overlaps the one before it`,
+      );
+    }
+  });
+});
+
 test("contexts keeps the ranked order and pairs each document with its hit", () => {
   const entries = search.contexts(docs, search.search(index, "introduction"), "introduction");
 

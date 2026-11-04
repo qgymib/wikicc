@@ -71,7 +71,7 @@
  */
 import * as Links from "./links.js";
 import * as Preview from "./preview.js";
-import * as TableView from "./table-view.js";
+import * as DocBody from "./doc-body.js";
 import * as DiagramView from "./diagram-view.js";
 
 /** How long the pointer must rest on a link before the preview opens. */
@@ -714,11 +714,12 @@ export function createPreviewView(options) {
     title.textContent = preview.title;
     path.textContent = preview.path;
 
-    body.innerHTML = preview.html;
-    // Tables and diagrams are enhanced after the markup exists: the sortable
-    // headers are plain DOM, the diagram engine needs measured layout.
-    TableView.enhanceTables(body);
-    DiagramView.renderDiagrams(body, theme());
+    // The chapter reaches the page the way the article does — the shared
+    // document-body render fills the panel's standing body and enhances the
+    // tables right after the markup exists — and the diagrams are drawn for
+    // the theme in effect, the step that measures against the layout.
+    DocBody.fillDocBody(body, preview.html, { enhanceTables: true });
+    DocBody.drawDiagrams(body, theme());
 
     show(link);
   }

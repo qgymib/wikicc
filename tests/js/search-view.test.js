@@ -16,7 +16,9 @@ import assert from "node:assert/strict";
 
 import {
   CLEAR_LABEL,
+  DOCUMENT_CLASS,
   EMPTY_CLASS,
+  HIT_CLASS,
   OPEN_ATTRIBUTE,
   PANEL_LABEL,
   PREVIEW_IDLE_LABEL,
@@ -54,6 +56,30 @@ function fakeElement(tagName) {
       }
       child.parentNode = null;
       return child;
+    },
+    replaceChild(next, child) {
+      var index = this.children.indexOf(child);
+      if (index < 0) {
+        return child;
+      }
+      this.children[index] = next;
+      next.parentNode = this;
+      child.parentNode = null;
+      return child;
+    },
+    insertBefore(next, child) {
+      var index = this.children.indexOf(child);
+      if (index < 0) {
+        this.children.push(next);
+      } else {
+        this.children.splice(index, 0, next);
+      }
+      next.parentNode = this;
+      return next;
+    },
+    /** Descendants in document order, the way a tree walker visits them. */
+    querySelectorAll() {
+      return [];
     },
     setAttribute(name, value) {
       this.attributes[name] = String(value);
@@ -98,6 +124,27 @@ function fakeElement(tagName) {
         return typeof child.contains === "function" && child.contains(node);
       });
     },
+    /**
+     * The nearest ancestor — this node included — matching a tag selector.
+     *
+     * Only the two forms the view asks for are understood: `a` and `a[href]`,
+     * the latter requiring the attribute the view relies on.
+     */
+    closest(selector) {
+      var wanted = String(selector).toUpperCase();
+      var needsHref = wanted.indexOf("[HREF]") !== -1;
+      var tag = wanted.split("[")[0];
+      var node = this;
+
+      while (node) {
+        if (node.tagName === tag && (!needsHref || node.getAttribute("href") !== null)) {
+          return node;
+        }
+        node = node.parentNode;
+      }
+
+      return null;
+    },
     /** Every descendant whose class list holds `name`, the panel included. */
     findAll(name) {
       var found = [];
@@ -132,7 +179,9 @@ function fakeElement(tagName) {
   var text = "";
   Object.defineProperty(element, "textContent", {
     get() {
-      return text;
+      // A node with children reads theirs, as a browser does; a node written
+      // with `textContent` holds its own text and has none.
+      return element.children.length ? element.children.map(textOf).join("") : text;
     },
     set(value) {
       text = String(value);
@@ -140,7 +189,95 @@ function fakeElement(tagName) {
     },
   });
 
+  /**
+   * The markup written into the element, parsed into children.
+   *
+   * A real parser is not needed here: the payload's HTML is the build's own
+   * output, so a test that reads it back only has to know tags and text. The
+   * reading side returns the same markup it was given, which is what lets a
+   * test prove a document was inserted *as* markup rather than as text.
+   */
+  var markup = "";
+  Object.defineProperty(element, "innerHTML", {
+    get() {
+      return markup || element.children.map(outerOf).join("");
+    },
+    set(value) {
+      markup = String(value);
+      text = "";
+      element.children = [];
+      parseInto(element, markup);
+    },
+  });
+
   return element;
+}
+
+/** Markup of one node, rebuilt from what it holds. */
+function outerOf(node) {
+  if (node.nodeType === 3) {
+    return node.textContent;
+  }
+
+  var attributes = Object.keys(node.attributes || {})
+    .map(function (name) {
+      return ' ' + name + '="' + node.attributes[name] + '"';
+    })
+    .join("");
+
+  return "<" + node.tagName.toLowerCase() + attributes + ">" + node.children.map(outerOf).join("") + "</" + node.tagName.toLowerCase() + ">";
+}
+
+/**
+ * Parse the tags of `html` into children of `root`.
+ *
+ * Deliberately minimal: every tag opens or closes, nothing is void, no
+ * attributes matter beyond the class name. That is exactly what the build
+ * emits for a document body, and anything more would be a parser the tests
+ * then have to trust.
+ */
+function parseInto(root, html) {
+  var open = [root];
+  var pattern = /<(\/?)([a-zA-Z0-9]+)([^>]*)>|([^<]+)/g;
+  var match = pattern.exec(html);
+
+  while (match) {
+    if (match[4] !== undefined) {
+      if (match[4]) {
+        open[open.length - 1].appendChild(textNode(decodeText(match[4])));
+      }
+    } else if (match[1]) {
+      if (open.length > 1) {
+        open.pop();
+      }
+    } else {
+      var node = fakeElement(match[2]);
+      var attribute = /([a-zA-Z-]+)="([^"]*)"/g;
+      var found = attribute.exec(match[3] || "");
+
+      while (found) {
+        node.setAttribute(found[1], found[2]);
+        if (found[1] === "class") {
+          node.className = found[2];
+        }
+        found = attribute.exec(match[3] || "");
+      }
+
+      open[open.length - 1].appendChild(node);
+      open.push(node);
+    }
+    match = pattern.exec(html);
+  }
+}
+
+/** The few entities the build writes into a body. */
+function decodeText(value) {
+  return String(value)
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
 }
 
 /**
@@ -151,7 +288,48 @@ function fakeElement(tagName) {
  * written with `textContent` instead of `innerHTML`.
  */
 function textNode(value) {
-  return { nodeType: 3, tagName: "#text", textContent: String(value), children: [] };
+  var node = { nodeType: 3, tagName: "#text", children: [], parentNode: null };
+  var text = String(value);
+
+  Object.defineProperty(node, "textContent", {
+    get() {
+      return text;
+    },
+    set(next) {
+      text = String(next);
+    },
+  });
+
+  Object.defineProperty(node, "nodeValue", {
+    get() {
+      return text;
+    },
+    set(next) {
+      text = String(next);
+    },
+  });
+
+  /**
+   * Split this node at `offset`, as the browser does: the half after the cut
+   * becomes a new node inserted right behind this one and is returned.
+   */
+  node.splitText = function (offset) {
+    if (!node.parentNode) {
+      return node;
+    }
+
+    const tail = textNode(text.slice(offset));
+    node.textContent = text.slice(0, offset);
+
+    const parent = node.parentNode;
+    const index = parent.children.indexOf(node);
+    parent.children.splice(index + 1, 0, tail);
+    tail.parentNode = parent;
+
+    return tail;
+  };
+
+  return node;
 }
 
 /** The text of a subtree, as `textContent` reads it in a browser. */
@@ -166,10 +344,40 @@ function textOf(node) {
   return node.children.map(textOf).join("");
 }
 
+/**
+ * A walker over the text nodes below `root`, in document order.
+ *
+ * The snapshot is taken when the walker is created, which is what the real
+ * API does not promise but what the caller here needs: nodes split while the
+ * walk runs appear behind the cursor, and `nextNode` must continue past them
+ * rather than visit the new halves again.
+ */
+function treeWalker(root) {
+  var queue = [];
+  (function collect(node) {
+    (node.children || []).forEach(function (child) {
+      if (child.nodeType === 3) {
+        queue.push(child);
+      }
+      collect(child);
+    });
+  })(root);
+
+  var index = -1;
+
+  return {
+    nextNode() {
+      index += 1;
+      return index < queue.length ? queue[index] : null;
+    },
+  };
+}
+
 /** Install a fake page, run `work`, then restore it. */
 function withPage(work) {
   var previous = {
     document: globalThis.document,
+    NodeFilter: globalThis.NodeFilter,
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
   };
@@ -179,6 +387,23 @@ function withPage(work) {
   container.id = "search-panel";
   body.appendChild(container);
 
+  /**
+   * A hook run on every element the fake page creates.
+   *
+   * The view builds its own nodes, so a test that has to observe one — the
+   * `<mark>` it scrolls to — can only do it from here.
+   */
+  var decorators = [];
+
+  function make(tagName) {
+    var element = fakeElement(tagName);
+    decorators.forEach(function (decorate) {
+      decorate(element);
+    });
+
+    return element;
+  }
+
   var documentListeners = {};
   var doc = {
     body: body,
@@ -187,13 +412,16 @@ function withPage(work) {
       return null;
     },
     createElement(tagName) {
-      return fakeElement(tagName);
+      return make(tagName);
     },
     createElementNS(namespace, tagName) {
-      return fakeElement(tagName);
+      return make(tagName);
     },
     createTextNode(value) {
       return textNode(value);
+    },
+    createTreeWalker(root) {
+      return treeWalker(root);
     },
     addEventListener(type, handler) {
       (documentListeners[type] = documentListeners[type] || []).push(handler);
@@ -208,6 +436,7 @@ function withPage(work) {
   };
 
   globalThis.document = doc;
+  globalThis.NodeFilter = { SHOW_TEXT: 4 };
   globalThis.setTimeout = function (callback) {
     timers.push(callback);
     return timers.length;
@@ -240,9 +469,14 @@ function withPage(work) {
       documentListenerCount() {
         return (documentListeners.pointerdown || []).length;
       },
+      /** Observe every element created from now on. */
+      decorate(fn) {
+        decorators.push(fn);
+      },
     });
   } finally {
     globalThis.document = previous.document;
+    globalThis.NodeFilter = previous.NodeFilter;
     globalThis.setTimeout = previous.setTimeout;
     globalThis.clearTimeout = previous.clearTimeout;
     timers.length = 0;
@@ -271,11 +505,21 @@ function previewOf(page) {
 
 /** The panel built over `container`, with `onQuery`/`onSelect` recorded. */
 function build(options) {
-  var calls = { queries: [], selections: [] };
+  var calls = { queries: [], selections: [], asked: [] };
   var view = createSearchView({
     container: options.container,
     toggle: options.toggle,
     delay: 0,
+    theme: function () {
+      return "dark";
+    },
+    documentOf: function (id) {
+      calls.asked.push(id);
+      if (!options.documents) {
+        return null;
+      }
+      return options.documents[id] || null;
+    },
     onQuery(query) {
       calls.queries.push(query);
       if (options.answer) {
@@ -432,7 +676,7 @@ test("the context of a match never arrives as markup", () => {
     assert.ok(marks.length > 0, "the hit is marked in the list and in the preview: " + marks.length);
     assert.ok(
       marks.every(function (node) {
-        return node.innerHTML === undefined;
+        return node.children.length === 0;
       }),
       "the text is set as text, not parsed",
     );
@@ -463,6 +707,247 @@ test("the preview shows the passage of the selected match, with the hit marked",
       }),
       ["\u2026or ", "[alpha]", " and more\u2026"],
     );
+  });
+});
+
+/** A payload document, as `app.js` would hand it over. */
+function documentModel(id, title, html) {
+  return { id: id, title: title, html: html };
+}
+
+/** The body of the whole document the preview drew, or `null`. */
+function documentOf(page) {
+  var found = previewOf(page).findAll(DOCUMENT_CLASS);
+  return found.length ? found[0] : null;
+}
+
+test("the preview shows the whole document, not just the passage", () => {
+  withPage(function (page) {
+    var html =
+      "<h1 id=\"alpha\">Alpha</h1>\n<p>alpha one</p>\n<p>alpha two</p>\n<p>alpha three</p>\n";
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", html) },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var body = documentOf(page);
+    assert.ok(body, "the document body is on screen");
+    assert.equal(body.className, DOCUMENT_CLASS + " doc-body");
+    assert.equal(
+      textOf(body).replace(/\n/g, ""),
+      "Alphaalpha onealpha twoalpha three",
+      "every paragraph arrived, not a cut-out one",
+    );
+    assert.equal(
+      page.container.findAll("search-passage").length,
+      0,
+      "the excerpt is only the fallback",
+    );
+  });
+});
+
+test("every hit in the whole document is marked, not only the first", () => {
+  withPage(function (page) {
+    var html = "<h1>A</h1>\n<p>alpha here</p>\n<p>nothing</p>\n<p>alpha again</p>\n";
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", html) },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 2, "each paragraph's hit is marked");
+    assert.deepEqual(
+      marks.map(textOf),
+      ["alpha", "alpha"],
+      "a hit keeps the text the reader sees",
+    );
+  });
+});
+
+test("a hit inside a code block is not marked", () => {
+  withPage(function (page) {
+    var html = "<p>alpha text</p>\n<pre><code>alpha</code></pre>\n";
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", html) },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 1, "the code block is left as written");
+    assert.equal(marks[0].parentNode.tagName, "P");
+  });
+});
+
+test("the preview is scrolled to the first hit", () => {
+  var scrolled = [];
+
+  withPage(function (page) {
+    // Every element the page creates learns to report its own reveal, so the
+    // assertion can see which node the view asked the browser to bring in.
+    page.decorate(function (element) {
+      element.scrollIntoView = function (options) {
+        scrolled.push({ text: textOf(element), options: options });
+      };
+    });
+
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel("a.md", "Alpha", "<p>alpha first</p>\n<p>alpha second</p>\n"),
+      },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    assert.equal(scrolled.length, 1, "one hit is revealed, not every hit");
+    assert.equal(scrolled[0].text, "alpha");
+    assert.equal(scrolled[0].options.block, "nearest");
+  });
+});
+
+test("the preview is drawn again for a new query, and not for the same row", () => {
+  withPage(function (page) {
+    var asked = [];
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel("a.md", "Alpha", "<p>alpha one</p>"),
+        "b.md": documentModel("b.md", "Beta", "<p>beta</p>"),
+      },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha"), entry("b.md", "Beta", "beta")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "a");
+
+    var first = built.calls.asked.length;
+    var input = built.view.input();
+
+    // Moving inside the row already selected is not a new document.
+    input.fire("keydown", { key: "ArrowUp" });
+    assert.equal(built.calls.asked.length, first, "the same row is not asked for twice");
+
+    input.fire("keydown", { key: "ArrowDown" });
+    assert.equal(built.calls.asked[built.calls.asked.length - 1], "b.md");
+    assert.equal(textOf(documentOf(page)), "beta", "the second document is on screen");
+  });
+});
+
+test("a payload that cannot answer falls back to the excerpt", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    assert.equal(documentOf(page), null);
+    var passage = page.container.findAll("search-passage");
+    assert.equal(passage.length, 1, "the reader still sees where the query was found");
+    assert.equal(textOf(passage[0]), "\u2026or alpha and more\u2026");
+  });
+});
+
+test("the document's own text is never turned into markup", () => {
+  withPage(function (page) {
+    // The body is the build's own HTML; the query is a tag name, which must
+    // not be able to cut the markup it is looking for.
+    var html = "<p>about &lt;b&gt;bold&lt;/b&gt; text</p>";
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", html) },
+      answer() {
+        return [entry("a.md", "Alpha", "bold")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "bold");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 1);
+    assert.equal(textOf(marks[0]), "bold");
+    assert.equal(marks[0].children.length, 0, "a mark holds text, never elements");
+  });
+});
+
+test("a link in the previewed document navigates and closes the panel", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel(
+          "a.md",
+          "Alpha",
+          '<p>see <a href="#/doc/b.md#details">details</a></p>',
+        ),
+      },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var link = page.container.findAllByTag("a")[0];
+    assert.ok(link, "the document contributes its links");
+    assert.equal(link.getAttribute("href"), "#/doc/b.md#details");
+
+    var prevented = false;
+    previewOf(page).fire("click", {
+      target: link,
+      preventDefault() {
+        prevented = true;
+      },
+      stopPropagation() {},
+    });
+
+    assert.equal(prevented, true);
+    assert.deepEqual(built.calls.selections, [{ id: "b.md", anchor: "details" }]);
+    assert.equal(built.view.isOpen(), false);
+  });
+});
+
+test("an external link in the preview is left to the browser", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel("a.md", "Alpha", '<p><a href="https://example.com">out</a></p>'),
+      },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var link = page.container.findAllByTag("a")[0];
+    previewOf(page).fire("click", { target: link, preventDefault() {} });
+
+    assert.deepEqual(built.calls.selections, [], "the panel is not a router for the web");
+    assert.equal(built.view.isOpen(), true);
   });
 });
 
@@ -560,7 +1045,31 @@ test("Enter asks for what was typed even when the pause has not come yet", () =>
   });
 });
 
-test("clicking a result opens it", () => {
+test("the pointer crossing a result leaves the selection alone", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", "alpha"), entry("b.md", "Beta", "beta")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "a");
+
+    page.container.findAll(RESULT_CLASS)[1].fire("pointermove", {});
+
+    var rows = page.container.findAll(RESULT_CLASS);
+    assert.equal(rows[0].getAttribute("aria-selected"), "true");
+    assert.equal(rows[1].getAttribute("aria-selected"), "false");
+    assert.equal(
+      previewOf(page).children[0].children[1].textContent,
+      "alpha",
+      "the preview still describes the row the reader chose",
+    );
+  });
+});
+
+test("clicking a result selects it and keeps the panel open", () => {
   withPage(function (page) {
     var built = build({
       container: page.container,
@@ -572,6 +1081,37 @@ test("clicking a result opens it", () => {
     type(built.view, page, "a");
 
     page.container.findAll(RESULT_CLASS)[1].fire("click", { preventDefault() {} });
+
+    var rows = page.container.findAll(RESULT_CLASS);
+    assert.equal(rows[0].getAttribute("aria-selected"), "false");
+    assert.equal(rows[1].getAttribute("aria-selected"), "true");
+    assert.equal(previewOf(page).children[0].children[1].textContent, "beta");
+    assert.deepEqual(
+      built.calls.selections,
+      [],
+      "choosing which row to read is not yet choosing to leave",
+    );
+    assert.equal(built.view.isOpen(), true);
+  });
+});
+
+test("double-clicking a result opens it", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", "alpha"), entry("b.md", "Beta", "beta")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "a");
+
+    // The browser's own double click is two clicks and then a `dblclick`;
+    // the clicks only select, so the last event alone does the leaving.
+    var row = page.container.findAll(RESULT_CLASS)[1];
+    row.fire("click", { preventDefault() {} });
+    row.fire("click", { preventDefault() {} });
+    row.fire("dblclick", { preventDefault() {} });
 
     assert.deepEqual(built.calls.selections, [{ id: "b.md", anchor: null }]);
     assert.equal(built.view.isOpen(), false);

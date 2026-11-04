@@ -1617,8 +1617,12 @@ a {
   margin: auto;
   width: min(1600px, 96vw);
   height: min(1100px, 92vh);
-  display: flex;
-  flex-direction: column;
+  /* The field spans the dialog's first row; the list and the document share
+     the second, a third of the width and two thirds of it. Reading is a
+     column, not a caption under a list. */
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr);
+  grid-template-rows: auto minmax(0, 1fr);
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   background: var(--bg-elevated);
@@ -1676,7 +1680,7 @@ a {
 
 .search-field {
   position: relative;
-  flex: none;
+  grid-column: 1 / -1;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1753,10 +1757,11 @@ a {
 }
 
 .search-results {
-  /* The list and the preview divide the dialog's height evenly: both grow from
-     a zero basis, so neither can starve the other, and a short list leaves the
-     lower half as large as a long one would. */
-  flex: 1 1 0;
+  /* The list is the navigation, the preview is the page: the reader spends
+     their time reading, so the list gets a third of the dialog's width and
+     the preview the rest. Each scrolls on its own, so a long list never
+     shortens the document beside it. */
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1776,6 +1781,9 @@ a {
   padding: 10px 16px 10px 18px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+  /* The row is a button: a double click that opens the document must not
+     also select the words it landed on. */
+  user-select: none;
   transition: background-color 120ms ease;
 }
 
@@ -1822,23 +1830,132 @@ a {
 }
 
 .search-preview {
-  /* Half the dialog, whatever the list holds: the passage is what the reader
-     came to read, so it is given the same room as the rows it came from
-     rather than an eighth of it. */
-  flex: 1 1 0;
+  /* Two thirds of the dialog's width, whatever the list holds: this is the
+     document the reader came to read, so it is given twice the room of the
+     rows it was picked from. It scrolls on its own — the article behind the
+     dialog keeps the place the reader left it. */
+  min-width: 0;
   min-height: 0;
-  padding: 14px 18px;
-  border-top: 1px solid var(--border);
+  padding: 0;
+  border-left: 1px solid var(--border);
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-gutter: stable;
 }
 
+/* The document is inserted with the article's own classes, so the typography
+   is the article's; only the measure changes. A column this narrow would wrap
+   a book's heading over three lines, so every size steps down one and the
+   spacing tightens to match. */
+.search-preview .doc-body {
+  padding: 0 22px 26px;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.search-preview .doc-body h1 {
+  font-size: 22px;
+}
+
+.search-preview .doc-body h2 {
+  margin-top: 1.6em;
+  font-size: 17px;
+}
+
+.search-preview .doc-body h3 {
+  margin-top: 1.4em;
+  font-size: 15px;
+}
+
+.search-preview .doc-body h4,
+.search-preview .doc-body h5,
+.search-preview .doc-body h6 {
+  margin-top: 1.2em;
+  font-size: 13.5px;
+}
+
+.search-preview .doc-body p {
+  margin-bottom: 0.9em;
+}
+
+/* A table wider than the column scrolls sideways rather than pushing the
+   dialog's right edge out of the viewport. `display: block` is what allows
+   the overflow; the table keeps its own layout inside it. */
+.search-preview .doc-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* The banner naming the document: the reader already knows which one they
+   picked, so it is a caption, not a title. */
+.search-doc-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 12px 22px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.search-doc-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.search-doc-path {
+  margin: 2px 0 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+/* The excerpt, for a shell that cannot hand over the whole document. */
 .search-passage {
   margin: 0;
+  padding: 14px 18px;
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.6;
+}
+
+/* A hit in the whole document: a wash rather than a badge, because a page can
+   hold dozens of them and the reader is reading, not scanning markers. */
+.search-preview mark.search-hit {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: rgba(76, 141, 255, 0.28);
+  box-shadow: inset 0 -1px 0 rgba(76, 141, 255, 0.85);
+  color: var(--text);
+  font-weight: inherit;
+}
+
+/* The one the preview scrolled to: the eye arrives here, so it is the only
+   hit allowed to raise its voice. */
+.search-preview mark.search-hit:first-of-type {
+  background: rgba(76, 141, 255, 0.45);
+}
+
+::root[data-theme="light"] .search-preview mark.search-hit {
+  background: rgba(76, 141, 255, 0.2);
+}
+
+::root[data-theme="light"] .search-preview mark.search-hit:first-of-type {
+  background: rgba(76, 141, 255, 0.36);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .search-preview mark.search-hit {
+    background: rgba(76, 141, 255, 0.2);
+  }
+
+  :root:not([data-theme="dark"]) .search-preview mark.search-hit:first-of-type {
+    background: rgba(76, 141, 255, 0.36);
+  }
 }
 
 /* The matched words, in the context line and in the passage alike. */
@@ -2110,11 +2227,20 @@ a {
   }
 
   /* The dialog follows the screen down: a fixed margin rather than a share of
-    the viewport, so the smaller the window the closer the dialog is to
-    filling it. */
+   the viewport, so the smaller the window the closer the dialog is to
+   filling it. Two columns would leave the document a stripe here, so the
+   list and the preview stack — list on top, document below, each scrolling
+   on its own — and the split becomes one of height instead of width. */
   .search-panel {
     width: calc(100vw - 16px);
     height: calc(100vh - 16px);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 2fr);
+  }
+
+  .search-preview {
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
 }
 
@@ -2184,12 +2310,22 @@ a {
   }
 
   /* The dialog keeps one margin step on each side and sheds the corners the
-    desktop panel rounds. The two halves stay even here: a phone gets the same
-    symmetry, not a list with a footnote under it. */
+   desktop panel rounds. The two halves keep their 1:2 split here too: a phone
+   reads the same document, so the page still gets twice the room of the list. */
   .search-panel {
     width: calc(100vw - 12px);
     height: calc(100dvh - 12px);
     border-radius: 12px;
+  }
+
+  /* The narrowest screen gives the reading column back its margin, in both
+     the banner and the document below it. */
+  .search-doc-head {
+    padding: 10px 14px 8px;
+  }
+
+  .search-preview .doc-body {
+    padding: 0 14px 20px;
   }
 
 

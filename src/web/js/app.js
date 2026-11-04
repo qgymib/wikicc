@@ -16,7 +16,7 @@ import * as Search from "./search.js";
 import * as SearchView from "./search-view.js";
 import * as DocList from "./doc-list.js";
 import * as Toc from "./toc.js";
-import * as TableView from "./table-view.js";
+import * as DocBody from "./doc-body.js";
 import * as GraphView from "./graph-view.js";
 import * as Diagrams from "./diagrams.js";
 import * as DiagramView from "./diagram-view.js";
@@ -213,6 +213,12 @@ export function start() {
     // The button asks the panel to open and to close; the view leaves the
     // button's own presses alone so the click below decides which.
     toggle: searchButton,
+    // The preview shows the whole document behind the selected result, so the
+    // view asks for it by id instead of the list carrying every body along.
+    documentOf: function (id) {
+      return byId.get(id) || null;
+    },
+    theme: currentTheme,
     onQuery: function (query) {
       searchView.setResults(searchResults(query), 0);
     },
@@ -378,12 +384,10 @@ export function start() {
     path.className = "doc-path";
     path.textContent = doc.id;
 
-    var body = document.createElement("div");
-    body.className = "doc-body";
-    body.innerHTML = doc.html;
-    // Tables are enhanced after the markup exists and before it is inserted, so
-    // the first paint already carries the sortable headers and filter buttons.
-    TableView.enhanceTables(body);
+    // The shared document-body render: markup in, tables enhanced in the same
+    // breath and still before insertion, so the first paint already carries
+    // the sortable headers and filter buttons.
+    var body = DocBody.createDocBody(doc.html, { enhanceTables: true });
 
     // Only the article is replaced: the banner slot sits beside it in `content`
     // for the whole session, so a document change can neither remove it nor
@@ -395,11 +399,12 @@ export function start() {
     article.appendChild(path);
     article.appendChild(body);
 
-    // Diagrams are rendered after insertion: the engine measures label sizes
-    // with the DOM, which is impossible for a detached subtree. The call is
-    // asynchronous and swallows its own failures, so the document is already
-    // readable when the SVGs replace their source blocks.
-    DiagramView.renderDiagrams(body, currentTheme());
+    // Diagrams are drawn after insertion — the one step the body module defers
+    // to its caller, because the engine measures label sizes with the DOM,
+    // which is impossible for a detached subtree. The call is asynchronous and
+    // swallows its own failures, so the document is already readable when the
+    // SVGs replace their source blocks.
+    DocBody.drawDiagrams(body, currentTheme());
 
     // The links this document carries are the ones the hover preview watches.
     preview.tag(body);
