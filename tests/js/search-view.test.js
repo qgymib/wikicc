@@ -1203,6 +1203,43 @@ test("pressing the scope button again returns to the local scope", () => {
   });
 });
 
+// Regression: a press on the scope button left the focus on the button, so
+// the arrow keys — bound to the field — no longer moved the selection and the
+// browser scrolled the page behind the fixed dialog instead. The field hands
+// the reader back after the press, the way the clear button already does.
+test("pressing the scope button hands the focus back to the field, so the arrows still answer", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", "alpha"), entry("b.md", "Beta", "beta")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    // The browser hands the focus to the button on the press, taking it from
+    // the field; the fake page does not move the focus by itself, so the
+    // gesture is modelled here — exactly the state the panel is asked to mend.
+    var input = built.view.input();
+    input.focused = false;
+
+    page.container
+      .findAll(MODE_CLASS)[0]
+      .fire("click", { preventDefault() {} });
+
+    assert.ok(input.focused, "the field holds the focus again after the press");
+
+    input.fire("keydown", { key: "ArrowDown" });
+    var rows = page.container.findAll(RESULT_CLASS);
+    assert.equal(
+      rows[1].getAttribute("aria-selected"),
+      "true",
+      "the arrows still move the selection in the scope just chosen",
+    );
+  });
+});
+
 test("an empty field makes the switch a change of mind, not a question", () => {
   withPage(function (page) {
     var built = build({ container: page.container });

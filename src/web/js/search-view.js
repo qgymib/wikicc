@@ -528,6 +528,16 @@ export function createSearchView(options) {
     // than kept, because the query it would settle is the old scope's.
     clearTimer();
     ask();
+
+    // The press left the focus on the button, and the keys that answer the
+    // list are bound to the field: a reader who switched the scope is still
+    // searching, so the field takes the focus back — the same return the
+    // clear button makes — instead of leaving the arrows to scroll the page
+    // behind the dialog. The text stays unselected, so a stroke amends the
+    // query rather than sweeping it.
+    if (input) {
+      input.focus();
+    }
   }
 
   /**
