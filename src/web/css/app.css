@@ -1615,8 +1615,13 @@ a {
   z-index: 30;
   inset: 0;
   margin: auto;
-  width: min(1600px, 96vw);
-  height: min(1100px, 92vh);
+  /* Two limits, whichever is smaller: the pixel ceiling is what a large
+     screen gets (1920x1155, the old 1600x1100 grown by a fifth in width and
+     a twentieth in height), the viewport share is what a mid-size screen
+     gets. Only 1vw and 1.5vh of margin is left on each side, so the dialog
+     nearly touches the edge before the breakpoints take over. */
+  width: min(1920px, 98vw);
+  height: min(1155px, 97vh);
   /* The field spans the dialog's first row; the list and the document share
      the second, a third of the width and two thirds of it. Reading is a
      column, not a caption under a list. */
@@ -1976,18 +1981,24 @@ a {
   font-weight: inherit;
 }
 
-/* The one the preview scrolled to: the eye arrives here, so it is the only
-   hit allowed to raise its voice. */
-.search-preview mark.search-hit:first-of-type {
-  background: rgba(76, 141, 255, 0.45);
+/* The one the preview scrolled to, the row the reader picked: the eye arrives
+   here, so it is the only hit allowed to raise its voice — in yellow, the
+   colour every find bar teaches a reader to read as "this is the one". The
+   class is set in `scrollToHit` and moves with the selection; the earlier
+   `:first-of-type` shade matched the first mark of every paragraph instead
+   and has gone. */
+.search-preview mark.search-hit-active {
+  background: rgba(255, 196, 12, 0.42);
+  box-shadow: inset 0 -1px 0 rgba(255, 196, 12, 0.85);
 }
 
 ::root[data-theme="light"] .search-preview mark.search-hit {
   background: rgba(76, 141, 255, 0.2);
 }
 
-::root[data-theme="light"] .search-preview mark.search-hit:first-of-type {
-  background: rgba(76, 141, 255, 0.36);
+::root[data-theme="light"] .search-preview mark.search-hit-active {
+  background: rgba(255, 179, 0, 0.55);
+  box-shadow: inset 0 -1px 0 rgba(255, 179, 0, 0.9);
 }
 
 @media (prefers-color-scheme: light) {
@@ -1995,8 +2006,9 @@ a {
     background: rgba(76, 141, 255, 0.2);
   }
 
-  :root:not([data-theme="dark"]) .search-preview mark.search-hit:first-of-type {
-    background: rgba(76, 141, 255, 0.36);
+  :root:not([data-theme="dark"]) .search-preview mark.search-hit-active {
+    background: rgba(255, 179, 0, 0.55);
+    box-shadow: inset 0 -1px 0 rgba(255, 179, 0, 0.9);
   }
 }
 

@@ -19,6 +19,7 @@ import {
   DOCUMENT_CLASS,
   EMPTY_CLASS,
   GLOBAL_MODE,
+  HIT_ACTIVE_CLASS,
   HIT_CLASS,
   LOCAL_MODE,
   MODE_CLASS,
@@ -883,7 +884,105 @@ test("the preview is scrolled to the first hit", () => {
 
     assert.equal(scrolled.length, 1, "one hit is revealed, not every hit");
     assert.equal(scrolled[0].text, "alpha");
-    assert.equal(scrolled[0].options.block, "nearest");
+    assert.equal(
+      scrolled[0].options.block,
+      "center",
+      "the picked hit is asked for the middle of the preview",
+    );
+  });
+});
+
+test("the hit the preview scrolled to is the one that stands out", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel(
+          "a.md",
+          "Alpha",
+          "<p>alpha first</p>\n<p>filler</p>\n<p>alpha second</p>\n",
+        ),
+      },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha", 1)];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 2);
+    assert.deepEqual(
+      marks.map(function (mark) {
+        return mark.className;
+      }),
+      [HIT_CLASS, HIT_CLASS + " " + HIT_ACTIVE_CLASS],
+      "the second occurrence is the reader's pick and carries the active class alone",
+    );
+  });
+});
+
+test("the standout follows the selection to another occurrence", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel(
+          "a.md",
+          "Alpha",
+          "<p>alpha first</p>\n<p>alpha second</p>\n",
+        ),
+      },
+      answer() {
+        return [
+          entry("a.md", "Alpha", "alpha", 0),
+          entry("a.md", "Alpha", "alpha", 1),
+        ];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(
+      marks[0].className,
+      HIT_CLASS + " " + HIT_ACTIVE_CLASS,
+      "the first row's hit stands out first",
+    );
+
+    page.container
+      .findAll(RESULT_CLASS)[1]
+      .fire("click", { preventDefault() {} });
+
+    assert.deepEqual(
+      marks.map(function (mark) {
+        return mark.className;
+      }),
+      [HIT_CLASS, HIT_CLASS + " " + HIT_ACTIVE_CLASS],
+      "the second row's hit takes the standout from the first",
+    );
+  });
+});
+
+test("a document drawn without a mark leaves no standout behind", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel("a.md", "Alpha", "<p>alpha text</p>\n"),
+        "b.md": documentModel("b.md", "Beta", "<p>plain text</p>\n"),
+      },
+      answer() {
+        return [entry("b.md", "Beta", "beta")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "beta");
+
+    // `b.md` matched on its title alone, so the preview shows it with no hit
+    // of the query anywhere: no mark exists, and none may claim the standout.
+    assert.equal(page.container.findAll(HIT_CLASS).length, 0);
+    assert.equal(page.container.findAll(HIT_ACTIVE_CLASS).length, 0);
   });
 });
 

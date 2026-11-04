@@ -7,23 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Entries describe what a user of the binary can observe, not how the change was
 implemented; the rules behind them live in `docs/design.md`.
 
-## [Unreleased]
-
-### Changed
-
-- Release archives are now named after the build system and architecture as
-  well as the version (`wikicc-ubuntu-amd64-v<semver>-<sha>.tar.gz`,
-  `wikicc-windows-amd64-v<semver>-<sha>.zip`) instead of the vaguer
-  `wikicc-linux-release-…` / `wikicc-windows-release-…` names.
-- The link graph is laid out into a frame that follows the number of
-  documents, so a small neighbourhood stays centered and readable instead of
-  being stretched to the corners of the panel; nodes and labels are drawn
-  larger to match.
-- The search button lives in the top bar, which is now visible at every width
-  as the app's own toolbar, instead of in a row inside the graph panel; the
-  search panel drops down beneath the bar rather than covering the graph, and
-  pressing the button again closes it.
-
 ## [1.0.0] - 2026-11-03
 
 First stable release: the features the reader offers.

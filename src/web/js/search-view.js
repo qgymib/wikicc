@@ -102,6 +102,9 @@ export var DOCUMENT_CLASS = "search-document";
 /** Class of one highlighted hit inside the preview. */
 export var HIT_CLASS = "search-hit";
 
+/** Class of the one hit the preview is scrolled to, the reader's pick. */
+export var HIT_ACTIVE_CLASS = "search-hit-active";
+
 /** Class of the banner naming the document the preview shows. */
 export var DOC_TITLE_CLASS = "search-doc-title";
 
@@ -1049,13 +1052,20 @@ export function createSearchView(options) {
   }
 
   /**
-   * Bring the hit the reader picked into view inside the preview.
+   * Bring the hit the reader picked into view inside the preview, centred.
    *
-   * The preview is its own scroll container, so the page never moves — and
-   * that is the point: the article behind the dialog keeps the place the
-   * reader left it. `scrollIntoView` is asked for the nearest block: centring
-   * a hit three lines into a short document would leave a gap above it, which
-   * reads as missing text.
+   * The preview is its own scroll container, so the page never moves — the
+   * panel is fixed, which ends the scroll chain at the preview, and that is
+   * the point: the article behind the dialog keeps the place the reader left
+   * it. `block: "center"` asks for the middle, and the browser clamps what a
+   * middle would need against the scrollable range — a hit three lines into
+   * a short document keeps the document at its top rather than pulling a gap
+   * above it, so centring never invents space that is not there.
+   *
+   * The picked mark is the one that raises its voice (`HIT_ACTIVE_CLASS`,
+   * yellow where the rest keep the quiet wash), and it moves with the
+   * selection: the reader's eye lands here, so this and only this hit may
+   * stand out.
    *
    * The list counts a document's occurrences in its own text, and the marks
    * were wrapped in the walk's order, which is that order — except where a
@@ -1073,8 +1083,20 @@ export function createSearchView(options) {
 
     var index = ordinal >= 0 ? Math.min(ordinal, hits.length - 1) : 0;
     var target = hits[index];
-    if (target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "nearest" });
+    if (!target) {
+      return;
+    }
+
+    // String assignment rather than `classList`: the marks are created here
+    // and carry no other class, and a plain string is what every DOM stand-in
+    // the tests drive can read back.
+    hits.forEach(function (hit) {
+      hit.className =
+        hit === target ? HIT_CLASS + " " + HIT_ACTIVE_CLASS : HIT_CLASS;
+    });
+
+    if (typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ block: "center" });
     }
   }
 

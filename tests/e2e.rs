@@ -460,14 +460,17 @@ fn the_search_panel_opens_as_a_centered_dialog() {
     assert_eq!(declaration(panel, "inset"), Some("0"));
     assert_eq!(declaration(panel, "margin"), Some("auto"));
 
+    // Two limits, whichever is smaller: the pixel ceiling is what a large
+    // screen gets, the viewport share is what a mid-size screen gets. Both
+    // are pinned here so growing the dialog cannot silently shrink again.
     let width = declaration(panel, "width").expect("panel width");
     assert!(
-        width.starts_with("min(") && width.contains("96vw"),
+        width.starts_with("min(") && width.contains("1920px") && width.contains("98vw"),
         "the dialog spans nearly the whole viewport: {width}"
     );
     let height = declaration(panel, "height").expect("panel height");
     assert!(
-        height.starts_with("min(") && height.contains("92vh"),
+        height.starts_with("min(") && height.contains("1155px") && height.contains("97vh"),
         "the dialog fills nearly all of the viewport's height: {height}"
     );
 
@@ -675,11 +678,13 @@ fn the_article_typography_reaches_the_preview_one_size_down() {
 #[test]
 fn a_hit_is_marked_in_the_document_without_shouting() {
     // A document holds dozens of hits, and the reader is reading rather than
-    // scanning markers: the wash is quiet, and only the first one — the place
-    // the preview scrolled to — is allowed to stand out.
+    // scanning markers: the wash is quiet, and only the one the reader picked
+    // — the row the preview scrolled to — is allowed to stand out, in a
+    // colour of its own. The old `:first-of-type` shade stood for "the first
+    // mark of every paragraph" rather than the pick, so it has gone.
     let css = SHELL_CSS;
     let hit = rule_of(css, ".search-preview mark.search-hit {");
-    let first = rule_of(css, ".search-preview mark.search-hit:first-of-type {");
+    let active = rule_of(css, ".search-preview mark.search-hit-active {");
 
     assert!(
         declaration(hit, "background").is_some(),
@@ -690,9 +695,14 @@ fn a_hit_is_marked_in_the_document_without_shouting() {
         Some("inherit"),
         "marking a word does not make it bold as well"
     );
+    assert_ne!(
+        declaration(hit, "background"),
+        declaration(active, "background"),
+        "the picked hit is read by its own colour, not the wash"
+    );
     assert!(
-        declaration(first, "background").is_some(),
-        "the one the reader landed on is the liveliest mark on the page"
+        !css.contains(".search-preview mark.search-hit:first-of-type"),
+        "the standout belongs to the selection, not the first mark of each paragraph"
     );
 }
 
