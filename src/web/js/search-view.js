@@ -65,7 +65,10 @@
  * `Home`/`End` move the selection and are taken before the caret can use them,
  * `Enter` opens it where the caret would otherwise insert a newline in a
  * multi-line field, and `Escape` closes the panel — the one key the reader
- * expects to undo whatever is open.
+ * expects to undo whatever is open. Each move keeps its row in sight: the
+ * list asks the browser to bring the chosen row in over whichever edge it
+ * hangs from, so a long list scrolls with the arrows instead of leaving the
+ * selection out of view.
  */
 import { ELLIPSIS, matchRanges, matchSnippet } from "./search.js";
 import * as Links from "./links.js";
@@ -654,7 +657,25 @@ export function createSearchView(options) {
       row.setAttribute("aria-selected", position === index ? "true" : "false");
     });
 
+    reveal(rows[index]);
     renderPreview(entry);
+  }
+
+  /**
+   * Ask the browser to bring `row` into the list's viewport.
+   *
+   * `nearest` is the listbox semantics the arrows want: a row hanging below
+   * the window aligns its bottom edge with the viewport's, so a downward step
+   * lands on the last visible row, and a row above aligns its top edge — an
+   * upward step lands on the first. A row already showing stays where it is,
+   * and a list that never overflowed scrolls nothing at all. The view asks
+   * rather than computes because the browser owns the geometry; a page
+   * without one — the tests — simply never hears the question.
+   */
+  function reveal(row) {
+    if (row && typeof row.scrollIntoView === "function") {
+      row.scrollIntoView({ block: "nearest" });
+    }
   }
 
   /**

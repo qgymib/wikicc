@@ -915,10 +915,16 @@ test("the preview is scrolled to the first hit", () => {
     built.view.open();
     type(built.view, page, "alpha");
 
-    assert.equal(scrolled.length, 1, "one hit is revealed, not every hit");
-    assert.equal(scrolled[0].text, "alpha");
+    // The list reveals its rows with `nearest`; these assertions hear only
+    // the preview's own asks, which ask for the middle of the document.
+    var previews = scrolled.filter(function (call) {
+      return call.options && call.options.block === "center";
+    });
+
+    assert.equal(previews.length, 1, "one hit is revealed, not every hit");
+    assert.equal(previews[0].text, "alpha");
     assert.equal(
-      scrolled[0].options.block,
+      previews[0].options.block,
       "center",
       "the picked hit is asked for the middle of the preview",
     );
@@ -1024,8 +1030,8 @@ test("an occurrence past the marked hits lands on the last mark there is", () =>
 
   withPage(function (page) {
     page.decorate(function (element) {
-      element.scrollIntoView = function () {
-        scrolled.push(element);
+      element.scrollIntoView = function (options) {
+        scrolled.push({ element: element, options: options });
       };
     });
 
@@ -1049,8 +1055,19 @@ test("an occurrence past the marked hits lands on the last mark there is", () =>
 
     var marks = page.container.findAll(HIT_CLASS);
     assert.equal(marks.length, 1, "the code block's hit is not marked");
+
+    // Only the preview's asks are read here; the list's `nearest` reveal of
+    // its own row is the row navigation's business.
+    var revealed = scrolled
+      .filter(function (call) {
+        return call.options && call.options.block === "center";
+      })
+      .map(function (call) {
+        return call.element;
+      });
+
     assert.deepEqual(
-      scrolled,
+      revealed,
       [marks[0]],
       "the eye is brought to the nearest mark there is",
     );
@@ -1062,8 +1079,8 @@ test("picking another occurrence of one document scrolls, and does not redraw", 
 
   withPage(function (page) {
     page.decorate(function (element) {
-      element.scrollIntoView = function () {
-        scrolled.push(element);
+      element.scrollIntoView = function (options) {
+        scrolled.push({ element: element, options: options });
       };
     });
 
@@ -1102,8 +1119,19 @@ test("picking another occurrence of one document scrolls, and does not redraw", 
       drawn,
       "the same document is not drawn twice",
     );
+
+    // The click also reveals the row itself with `nearest`; the asks read
+    // here are the preview's, which move the eye inside the document.
+    var revealed = scrolled
+      .filter(function (call) {
+        return call.options && call.options.block === "center";
+      })
+      .map(function (call) {
+        return call.element;
+      });
+
     assert.deepEqual(
-      scrolled,
+      revealed,
       [marks[1]],
       "the scroll lands on the occurrence the row names",
     );
@@ -1499,6 +1527,172 @@ test("the arrow keys stay inside the list", () => {
     var rows = page.container.findAll(RESULT_CLASS);
     assert.equal(rows[1].getAttribute("aria-selected"), "true");
     assert.equal(rows[0].getAttribute("aria-selected"), "false");
+  });
+});
+
+test("arrow navigation brings each chosen row into sight", () => {
+  var revealed = [];
+
+  withPage(function (page) {
+    // Every element the page creates learns to report the reveal the view
+    // asks for, so the assertions can read which row was handed to the
+    // browser and with what alignment. The preview reveals its own marks
+    // with `center`, so the row asks are told apart by `nearest`.
+    page.decorate(function (element) {
+      element.scrollIntoView = function (options) {
+        revealed.push({ element: element, options: options });
+      };
+    });
+
+    var built = build({
+      container: page.container,
+      answer() {
+        return [
+          entry("a.md", "Alpha", "alpha"),
+          entry("b.md", "Beta", "beta"),
+          entry("c.md", "Gamma", "gamma"),
+          entry("d.md", "Delta", "delta"),
+        ];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "a");
+
+    revealed.length = 0;
+    var rows = page.container.findAll(RESULT_CLASS);
+    var input = built.view.input();
+
+    /** The reveals that asked for a row of the list, not a mark of a document. */
+    var rowReveals = function () {
+      return revealed.filter(function (call) {
+        return call.options && call.options.block === "nearest";
+      });
+    };
+
+    input.fire("keydown", { key: "ArrowDown" });
+    assert.equal(rowReveals().length, 1, "the row the arrow chose is revealed");
+    assert.equal(rowReveals()[0].element, rows[1]);
+    assert.deepEqual(rowReveals()[0].options, { block: "nearest" });
+
+    input.fire("keydown", { key: "ArrowDown" });
+    input.fire("keydown", { key: "ArrowDown" });
+    assert.equal(rowReveals().length, 3, "every step reveals its row");
+    assert.equal(rowReveals()[2].element, rows[3]);
+
+    input.fire("keydown", { key: "ArrowUp" });
+    assert.equal(rowReveals().length, 4, "the upward step reveals too");
+    assert.equal(rowReveals()[3].element, rows[2]);
+    assert.deepEqual(rowReveals()[3].options, { block: "nearest" });
+  });
+});
+
+test("Home and End bring the first and the last row into sight", () => {
+  var revealed = [];
+
+  withPage(function (page) {
+    page.decorate(function (element) {
+      element.scrollIntoView = function (options) {
+        revealed.push({ element: element, options: options });
+      };
+    });
+
+    var built = build({
+      container: page.container,
+      answer() {
+        return [
+          entry("a.md", "Alpha", "alpha"),
+          entry("b.md", "Beta", "beta"),
+          entry("c.md", "Gamma", "gamma"),
+          entry("d.md", "Delta", "delta"),
+        ];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "a");
+
+    revealed.length = 0;
+    var rows = page.container.findAll(RESULT_CLASS);
+    var input = built.view.input();
+
+    input.fire("keydown", { key: "End" });
+    assert.equal(revealed.length, 1);
+    assert.equal(revealed[0].element, rows[3]);
+    assert.deepEqual(revealed[0].options, { block: "nearest" });
+
+    input.fire("keydown", { key: "Home" });
+    assert.equal(revealed.length, 2);
+    assert.equal(revealed[1].element, rows[0]);
+  });
+});
+
+test("a fresh answer brings its own first row into sight", () => {
+  var revealed = [];
+
+  withPage(function (page) {
+    page.decorate(function (element) {
+      element.scrollIntoView = function (options) {
+        revealed.push({ element: element, options: options });
+      };
+    });
+
+    var built = build({
+      container: page.container,
+      answer(query) {
+        return query === "a"
+          ? [entry("a.md", "Alpha", "alpha")]
+          : [entry("b.md", "Beta", "beta"), entry("c.md", "Gamma", "gamma")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "a");
+
+    // The list of the first answer opens at its head, so a reader who typed
+    // with the list scrolled away still lands on the top of the new one.
+    var first = page.container.findAll(RESULT_CLASS)[0];
+    assert.equal(revealed.length, 1);
+    assert.equal(revealed[0].element, first);
+    assert.deepEqual(revealed[0].options, { block: "nearest" });
+
+    type(built.view, page, "b");
+    var second = page.container.findAll(RESULT_CLASS)[0];
+    assert.equal(revealed.length, 2, "the replaced list is revealed again");
+    assert.equal(
+      revealed[1].element,
+      second,
+      "the new list's head, not the old",
+    );
+  });
+});
+
+test("staying on the selected row asks for no reveal", () => {
+  var revealed = [];
+
+  withPage(function (page) {
+    page.decorate(function (element) {
+      element.scrollIntoView = function (options) {
+        revealed.push({ element: element, options: options });
+      };
+    });
+
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "a");
+
+    assert.equal(revealed.length, 1, "the only row was revealed once");
+
+    var input = built.view.input();
+    input.fire("keydown", { key: "ArrowUp" });
+    input.fire("keydown", { key: "ArrowDown" });
+    assert.equal(
+      revealed.length,
+      1,
+      "clamped steps change nothing, so they scroll nothing",
+    );
   });
 });
 
