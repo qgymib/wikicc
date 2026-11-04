@@ -12,19 +12,35 @@ test("parses a document route with a folder and an anchor", () => {
 
 test("decodes percent-encoded ids and anchors", () => {
   assert.deepEqual(
-    router.parseHash("#/doc/%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E.md#%E6%AD%A3%E6%96%87"),
+    router.parseHash(
+      "#/doc/%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E.md#%E6%AD%A3%E6%96%87",
+    ),
     { id: "中文/说明.md", anchor: "正文" },
   );
 });
 
 test("ignores hashes that are not document routes", () => {
-  for (const hash of ["", "#", "#section", "#/other/x", "#/doc/", "#/docs/a.md"]) {
-    assert.deepEqual(router.parseHash(hash), { id: null, anchor: null }, `hash: ${hash}`);
+  for (const hash of [
+    "",
+    "#",
+    "#section",
+    "#/other/x",
+    "#/doc/",
+    "#/docs/a.md",
+  ]) {
+    assert.deepEqual(
+      router.parseHash(hash),
+      { id: null, anchor: null },
+      `hash: ${hash}`,
+    );
   }
 });
 
 test("keeps malformed percent-encoding verbatim", () => {
-  assert.deepEqual(router.parseHash("#/doc/%E4.md"), { id: "%E4.md", anchor: null });
+  assert.deepEqual(router.parseHash("#/doc/%E4.md"), {
+    id: "%E4.md",
+    anchor: null,
+  });
 });
 
 test("formats a route without an anchor", () => {
@@ -40,14 +56,20 @@ test("encodes every id segment but keeps the folder separators", () => {
 });
 
 test("encodes anchors, including spaces", () => {
-  assert.equal(router.formatHash("a.md", "第 1 节"), "#/doc/a.md#%E7%AC%AC%201%20%E8%8A%82");
+  assert.equal(
+    router.formatHash("a.md", "第 1 节"),
+    "#/doc/a.md#%E7%AC%AC%201%20%E8%8A%82",
+  );
   assert.equal(router.formatHash("a.md", "#already"), "#/doc/a.md#already");
 });
 
 test("format and parse round-trip an id and an anchor", () => {
   const hash = router.formatHash("中文/说明.md", "第 1 节");
 
-  assert.deepEqual(router.parseHash(hash), { id: "中文/说明.md", anchor: "第 1 节" });
+  assert.deepEqual(router.parseHash(hash), {
+    id: "中文/说明.md",
+    anchor: "第 1 节",
+  });
 });
 
 test("resolves a known document and keeps its anchor", () => {
@@ -59,11 +81,14 @@ test("resolves a known document and keeps its anchor", () => {
 });
 
 test("falls back to the first document for unknown ids", () => {
-  assert.deepEqual(router.resolveRoute("#/doc/gone.md#part", ["a.md", "b.md"]), {
-    id: "a.md",
-    anchor: null,
-    known: false,
-  });
+  assert.deepEqual(
+    router.resolveRoute("#/doc/gone.md#part", ["a.md", "b.md"]),
+    {
+      id: "a.md",
+      anchor: null,
+      known: false,
+    },
+  );
 });
 
 test("falls back to the first document for an empty hash", () => {
@@ -75,5 +100,9 @@ test("falls back to the first document for an empty hash", () => {
 });
 
 test("resolves to nothing when the site has no documents", () => {
-  assert.deepEqual(router.resolveRoute("#/doc/a.md", []), { id: null, anchor: null, known: false });
+  assert.deepEqual(router.resolveRoute("#/doc/a.md", []), {
+    id: null,
+    anchor: null,
+    known: false,
+  });
 });

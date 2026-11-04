@@ -49,12 +49,15 @@ function fakeElement(tagName) {
       delete this.attributes[name];
     },
     getAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+      return Object.hasOwn(this.attributes, name)
         ? this.attributes[name]
         : null;
     },
     addEventListener(type, handler) {
-      (this.listeners[type] = this.listeners[type] || []).push(handler);
+      if (!this.listeners[type]) {
+        this.listeners[type] = [];
+      }
+      this.listeners[type].push(handler);
     },
     removeEventListener(type, handler) {
       const handlers = this.listeners[type] || [];
@@ -161,7 +164,7 @@ function descendants(root) {
 function messageOf(root) {
   return descendants(root)
     .filter((element) => element.className !== "doc-alert-icon")
-    .map((element) => {
+    .flatMap((element) => {
       const own = element.children
         .filter((child) => child.nodeType === 3)
         .map((child) => child.textContent);
@@ -173,7 +176,6 @@ function messageOf(root) {
           .map((child) => child.textContent || ""),
       );
     })
-    .flat()
     .join(" ");
 }
 
@@ -236,7 +238,11 @@ test("the banner closes itself after the timeout", () => {
   banner.show({ docId: "a.md", anchor: "x" });
 
   assert.equal(clock.pending(), 1, "a countdown is scheduled");
-  assert.equal(clock.delays().pop(), 1000, "the countdown uses the configured timeout");
+  assert.equal(
+    clock.delays().pop(),
+    1000,
+    "the countdown uses the configured timeout",
+  );
   clock.runAll();
 
   assert.equal(root.hidden, true);

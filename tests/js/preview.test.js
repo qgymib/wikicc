@@ -115,10 +115,7 @@ test("a chapter whose anchor names a block the payload does not have has no prev
 });
 
 test("the joined html follows document order and keeps every section", () => {
-  assert.equal(
-    buildPreviewHtml(doc(), "a1"),
-    "<p>a1</p><p>a1a</p><p>a1b</p>",
-  );
+  assert.equal(buildPreviewHtml(doc(), "a1"), "<p>a1</p><p>a1a</p><p>a1b</p>");
   assert.equal(
     buildPreviewHtml(doc(), "a"),
     "<p>a</p><p>a1</p><p>a1a</p><p>a1b</p><p>a2</p>",
@@ -137,7 +134,12 @@ test("a chapter is found through its own spelling of the heading", () => {
   const source = {
     id: "a.md",
     toc: [
-      { id: "getting-started", text: "Getting Started", level: 2, children: [] },
+      {
+        id: "getting-started",
+        text: "Getting Started",
+        level: 2,
+        children: [],
+      },
     ],
     blocks: [
       {
@@ -150,7 +152,10 @@ test("a chapter is found through its own spelling of the heading", () => {
     ],
   };
 
-  assert.equal(resolveAnchor(source.toc, "Getting Started").id, "getting-started");
+  assert.equal(
+    resolveAnchor(source.toc, "Getting Started").id,
+    "getting-started",
+  );
   assert.equal(buildPreviewHtml(source, "Getting Started"), "<p>body</p>");
 });
 
@@ -188,7 +193,10 @@ test("CJK anchors resolve exactly and through their slug", () => {
 test("a document without an outline or blocks degrades to nothing", () => {
   assert.equal(buildPreviewHtml({ id: "a.md" }, "a"), null);
   assert.equal(buildPreviewHtml({ id: "a.md", toc: [] }, "a"), null);
-  assert.equal(buildPreviewHtml({ id: "a.md", blocks: [] , toc: doc().toc }, "a"), null);
+  assert.equal(
+    buildPreviewHtml({ id: "a.md", blocks: [], toc: doc().toc }, "a"),
+    null,
+  );
   assert.equal(createPreview(null, "a"), null);
   assert.equal(createPreview(doc(), ""), null);
 });

@@ -72,10 +72,18 @@ test("compares every pair of cells antisymmetrically", () => {
 
   for (const left of samples) {
     for (const right of samples) {
-      const forward = sign(table.compareCells(table.parseCell(left), table.parseCell(right)));
-      const backward = sign(table.compareCells(table.parseCell(right), table.parseCell(left)));
+      const forward = sign(
+        table.compareCells(table.parseCell(left), table.parseCell(right)),
+      );
+      const backward = sign(
+        table.compareCells(table.parseCell(right), table.parseCell(left)),
+      );
 
-      assert.equal(forward, backward === 0 ? 0 : -backward, `${left} vs ${right}`);
+      assert.equal(
+        forward,
+        backward === 0 ? 0 : -backward,
+        `${left} vs ${right}`,
+      );
     }
   }
 });
@@ -149,8 +157,14 @@ test("combines values with OR inside a column and AND across columns", () => {
     ],
   ).rows;
 
-  assert.deepEqual(order(table.filterRows(rows, [["alpha", "Gamma"], ["abc"]])), [0, 2]);
-  assert.deepEqual(order(table.filterRows(rows, [["alpha", "beta"], ["abc"]])), [0]);
+  assert.deepEqual(
+    order(table.filterRows(rows, [["alpha", "Gamma"], ["abc"]])),
+    [0, 2],
+  );
+  assert.deepEqual(
+    order(table.filterRows(rows, [["alpha", "beta"], ["abc"]])),
+    [0],
+  );
   assert.deepEqual(order(table.filterRows(rows, [[], ["abc"]])), []);
   assert.deepEqual(order(table.filterRows(rows, [null, null])), [0, 1, 2]);
   assert.deepEqual(order(table.filterRows(rows, [])), [0, 1, 2]);
@@ -191,8 +205,16 @@ test("builds a typed model that preserves the header text", () => {
   assert.deepEqual(built.headers, [{ text: "Name" }, { text: "" }]);
   assert.equal(built.rows.length, 2);
   assert.equal(built.rows[1].index, 1);
-  assert.deepEqual(built.rows[0].cells[1], { text: "1", kind: "number", value: 1 });
-  assert.deepEqual(built.rows[1].cells[1], { text: "", kind: "empty", value: null });
+  assert.deepEqual(built.rows[0].cells[1], {
+    text: "1",
+    kind: "number",
+    value: 1,
+  });
+  assert.deepEqual(built.rows[1].cells[1], {
+    text: "",
+    kind: "empty",
+    value: null,
+  });
 });
 
 test("keys cells by trimmed text and blanks by the empty string", () => {
@@ -221,26 +243,44 @@ test("collects one candidate per distinct value with its occurrence count", () =
       ["", "empty", 2],
     ],
   );
-  assert.deepEqual(values[5], { text: "", key: "", kind: "empty", value: null, count: 2 });
+  assert.deepEqual(values[5], {
+    text: "",
+    key: "",
+    kind: "empty",
+    value: null,
+    count: 2,
+  });
 });
 
 test("keeps candidates that differ only in case apart", () => {
   const rows = model(["name"], [["Apple"], ["apple"]]).rows;
   const values = table.distinctValues(rows, 0);
 
-  assert.deepEqual(values.map((value) => value.key), ["Apple", "apple"]);
+  assert.deepEqual(
+    values.map((value) => value.key),
+    ["Apple", "apple"],
+  );
   assert.deepEqual(order(table.filterRows(rows, [["Apple"]])), [0]);
 });
 
 test("treats cells missing from a short row as blanks", () => {
   const rows = model(["a", "b"], [["1"], ["0", "x"]]).rows;
 
-  assert.deepEqual(table.distinctValues(rows, 1).map((value) => value.key), ["x", ""]);
-  assert.deepEqual(table.distinctValues(rows, 0).map((value) => value.key), ["0", "1"]);
+  assert.deepEqual(
+    table.distinctValues(rows, 1).map((value) => value.key),
+    ["x", ""],
+  );
+  assert.deepEqual(
+    table.distinctValues(rows, 0).map((value) => value.key),
+    ["0", "1"],
+  );
 });
 
 test("collapses a selection that covers every candidate to no filter", () => {
-  const values = table.distinctValues(model(["k"], [["a"], ["b"], ["a"]]).rows, 0);
+  const values = table.distinctValues(
+    model(["k"], [["a"], ["b"], ["a"]]).rows,
+    0,
+  );
 
   assert.equal(table.normalizeSelection(new Set(["a", "b"]), values), null);
   assert.deepEqual(table.normalizeSelection(new Set(["a"]), values), ["a"]);

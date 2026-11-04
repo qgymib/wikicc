@@ -39,17 +39,26 @@ test("hands the engine a fresh config object on every call", () => {
   const first = Diagrams.mermaidConfig("dark");
   const second = Diagrams.mermaidConfig("dark");
 
-  assert.notEqual(first, second, "the engine may mutate the object it receives");
+  assert.notEqual(
+    first,
+    second,
+    "the engine may mutate the object it receives",
+  );
   assert.deepEqual(first, second);
 });
 
 test("detects a document that carries diagram source", () => {
   assert.equal(
-    Diagrams.hasDiagramSource('<p>text</p><pre class="mermaid">graph TD; A--&gt;B;</pre>'),
+    Diagrams.hasDiagramSource(
+      '<p>text</p><pre class="mermaid">graph TD; A--&gt;B;</pre>',
+    ),
     true,
   );
   assert.equal(Diagrams.hasDiagramSource("<p>no diagrams here</p>"), false);
-  assert.equal(Diagrams.hasDiagramSource('<pre class="code">graph TD;</pre>'), false);
+  assert.equal(
+    Diagrams.hasDiagramSource('<pre class="code">graph TD;</pre>'),
+    false,
+  );
   assert.equal(Diagrams.hasDiagramSource(""), false);
   assert.equal(Diagrams.hasDiagramSource(null), false);
   assert.equal(Diagrams.hasDiagramSource(undefined), false);

@@ -55,7 +55,13 @@ export function groupDocs(docs) {
 
 /** Whether a click should be handled by the router instead of the browser. */
 function isPlainLeftClick(event) {
-  return !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0;
+  return (
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey &&
+    event.button === 0
+  );
 }
 
 /**

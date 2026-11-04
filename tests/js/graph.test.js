@@ -16,10 +16,13 @@ function distance(left, right) {
 
 /** Centroid of a node list. */
 function centroid(nodes) {
-  const sum = nodes.reduce((accumulator, node) => ({
-    x: accumulator.x + node.x,
-    y: accumulator.y + node.y,
-  }), { x: 0, y: 0 });
+  const sum = nodes.reduce(
+    (accumulator, node) => ({
+      x: accumulator.x + node.x,
+      y: accumulator.y + node.y,
+    }),
+    { x: 0, y: 0 },
+  );
   return { x: sum.x / nodes.length, y: sum.y / nodes.length };
 }
 
@@ -34,7 +37,13 @@ test("hashes ids into a stable 32-bit seed", () => {
   assert.notEqual(graph.hashSeed("README.md"), graph.hashSeed("readme.md"));
   assert.notEqual(graph.hashSeed("a.md"), graph.hashSeed("b.md"));
 
-  for (const text of ["", "a", "guide/intro.md", "中文/说明.md", "x".repeat(500)]) {
+  for (const text of [
+    "",
+    "a",
+    "guide/intro.md",
+    "中文/说明.md",
+    "x".repeat(500),
+  ]) {
     const seed = graph.hashSeed(text);
     assert.ok(Number.isInteger(seed), `integer seed for ${text}`);
     assert.ok(seed >= 0 && seed <= 0xffffffff, `uint32 seed for ${text}`);
@@ -49,11 +58,17 @@ test("mulberry32 replays the same sequence for the same seed", () => {
   const second = graph.mulberry32(12345);
   const values = Array.from({ length: 32 }, () => first());
 
-  assert.deepEqual(values, Array.from({ length: 32 }, () => second()));
+  assert.deepEqual(
+    values,
+    Array.from({ length: 32 }, () => second()),
+  );
   for (const value of values) {
     assert.ok(value >= 0 && value < 1, `out of range: ${value}`);
   }
-  assert.notDeepEqual(values, Array.from({ length: 32 }, graph.mulberry32(12346)));
+  assert.notDeepEqual(
+    values,
+    Array.from({ length: 32 }, graph.mulberry32(12346)),
+  );
 });
 
 test("deduplicates edges, drops self-loops and unknown documents", () => {
@@ -90,14 +105,21 @@ test("builds both adjacency directions and counts distinct neighbours", () => {
     { from: "d.md", to: "d.md" },
   ]);
 
-  assert.deepEqual(Array.from(adjacency.out.get("a.md")).sort(), ["b.md", "c.md"]);
+  assert.deepEqual(Array.from(adjacency.out.get("a.md")).sort(), [
+    "b.md",
+    "c.md",
+  ]);
   assert.deepEqual(Array.from(adjacency.incoming.get("a.md")).sort(), ["b.md"]);
   assert.deepEqual(graph.neighbors(adjacency, "a.md"), ["b.md", "c.md"]);
   assert.deepEqual(graph.neighbors(adjacency, "c.md"), ["a.md"]);
 
   assert.equal(adjacency.degree.get("a.md"), 2);
   assert.equal(adjacency.degree.get("b.md"), 1);
-  assert.equal(adjacency.degree.has("d.md"), false, "self-loops are not neighbours");
+  assert.equal(
+    adjacency.degree.has("d.md"),
+    false,
+    "self-loops are not neighbours",
+  );
   assert.deepEqual(graph.neighbors(adjacency, "ghost.md"), []);
   assert.deepEqual(graph.neighbors(null, "a.md"), []);
 });
@@ -112,10 +134,17 @@ test("simplifies large graphs only above the threshold", () => {
 test("grows node radius with degree and shrinks it in simplified mode", () => {
   assert.ok(graph.nodeRadius(0) < graph.nodeRadius(1));
   assert.ok(graph.nodeRadius(1) < graph.nodeRadius(9));
-  assert.equal(graph.nodeRadius(16), graph.nodeRadius(100), "radius is clamped");
+  assert.equal(
+    graph.nodeRadius(16),
+    graph.nodeRadius(100),
+    "radius is clamped",
+  );
   assert.ok(graph.nodeRadius(3, true) < graph.nodeRadius(3));
   assert.ok(graph.nodeRadius(0) > 0);
-  assert.ok(graph.nodeRadius(1) > 3, "a connected node stays readable on its own");
+  assert.ok(
+    graph.nodeRadius(1) > 3,
+    "a connected node stays readable on its own",
+  );
 });
 
 test("lays the same graph out identically twice", () => {
@@ -138,20 +167,36 @@ test("keeps every node inside the normalised box", () => {
   for (const node of result.nodes) {
     assert.ok(Number.isFinite(node.x), `finite x for ${node.id}`);
     assert.ok(Number.isFinite(node.y), `finite y for ${node.id}`);
-    assert.ok(node.x >= padding - 1e-9 && node.x <= result.width - padding + 1e-9, `x in box: ${node.x}`);
-    assert.ok(node.y >= padding - 1e-9 && node.y <= result.height - padding + 1e-9, `y in box: ${node.y}`);
+    assert.ok(
+      node.x >= padding - 1e-9 && node.x <= result.width - padding + 1e-9,
+      `x in box: ${node.x}`,
+    );
+    assert.ok(
+      node.y >= padding - 1e-9 && node.y <= result.height - padding + 1e-9,
+      `y in box: ${node.y}`,
+    );
     assert.ok(node.radius > 0, `radius for ${node.id}`);
   }
 });
 
 test("honours a custom viewport", () => {
-  const result = graph.layout(IDS, EDGES, { width: 600, height: 200, padding: 10 });
+  const result = graph.layout(IDS, EDGES, {
+    width: 600,
+    height: 200,
+    padding: 10,
+  });
 
   assert.equal(result.width, 600);
   assert.equal(result.height, 200);
   for (const node of result.nodes) {
-    assert.ok(node.x >= 10 - 1e-9 && node.x <= 590 + 1e-9, `x in box: ${node.x}`);
-    assert.ok(node.y >= 10 - 1e-9 && node.y <= 190 + 1e-9, `y in box: ${node.y}`);
+    assert.ok(
+      node.x >= 10 - 1e-9 && node.x <= 590 + 1e-9,
+      `x in box: ${node.x}`,
+    );
+    assert.ok(
+      node.y >= 10 - 1e-9 && node.y <= 190 + 1e-9,
+      `y in box: ${node.y}`,
+    );
   }
 });
 
@@ -159,14 +204,26 @@ test("shrinks the frame for a small neighbourhood", () => {
   const pair = graph.layout(["a.md", "b.md"], [{ from: "a.md", to: "b.md" }]);
 
   assert.equal(pair.nodes.length, 2);
-  assert.equal(pair.width, graph.frameFor(2).width, "the frame follows the node count");
-  assert.ok(pair.width < graph.LAYOUT_DEFAULTS.width, "two documents share a smaller frame");
-  assert.ok(pair.height < graph.LAYOUT_DEFAULTS.height, "two documents share a smaller frame");
+  assert.equal(
+    pair.width,
+    graph.frameFor(2).width,
+    "the frame follows the node count",
+  );
+  assert.ok(
+    pair.width < graph.LAYOUT_DEFAULTS.width,
+    "two documents share a smaller frame",
+  );
+  assert.ok(
+    pair.height < graph.LAYOUT_DEFAULTS.height,
+    "two documents share a smaller frame",
+  );
 });
 
 test("caps the frame for a large site", () => {
   const largeIds = Array.from({ length: 100 }, (_, index) => `d${index}.md`);
-  const largeEdges = largeIds.slice(1).map((id, index) => ({ from: largeIds[index], to: id }));
+  const largeEdges = largeIds
+    .slice(1)
+    .map((id, index) => ({ from: largeIds[index], to: id }));
   const result = graph.layout(largeIds, largeEdges);
 
   assert.equal(result.width, graph.frameFor(100).width);
@@ -174,7 +231,10 @@ test("caps the frame for a large site", () => {
     result.width <= graph.LAYOUT_DEFAULTS.width * graph.MAX_SPREAD + 1e-9,
     "the frame never outgrows its cap",
   );
-  assert.ok(result.width > graph.LAYOUT_DEFAULTS.width, "a large site still widens the frame");
+  assert.ok(
+    result.width > graph.LAYOUT_DEFAULTS.width,
+    "a large site still widens the frame",
+  );
 });
 
 test("does not stretch a small layout to fill its frame", () => {
@@ -184,13 +244,25 @@ test("does not stretch a small layout to fill its frame", () => {
   // A stretched layout pins a node to the padding edge on each axis; a
   // centered one keeps every node strictly inside it.
   for (const node of pair.nodes) {
-    assert.ok(node.x > pad + 1e-6 && node.x < pair.width - pad - 1e-6, `x not pinned: ${node.x}`);
-    assert.ok(node.y > pad + 1e-6 && node.y < pair.height - pad - 1e-6, `y not pinned: ${node.y}`);
+    assert.ok(
+      node.x > pad + 1e-6 && node.x < pair.width - pad - 1e-6,
+      `x not pinned: ${node.x}`,
+    );
+    assert.ok(
+      node.y > pad + 1e-6 && node.y < pair.height - pad - 1e-6,
+      `y not pinned: ${node.y}`,
+    );
   }
 
-  const distance = Math.hypot(pair.nodes[0].x - pair.nodes[1].x, pair.nodes[0].y - pair.nodes[1].y);
+  const distance = Math.hypot(
+    pair.nodes[0].x - pair.nodes[1].x,
+    pair.nodes[0].y - pair.nodes[1].y,
+  );
   const innerWidth = pair.width - 2 * pad;
-  assert.ok(distance < innerWidth * 0.8, `a pair keeps its natural spacing: ${distance}`);
+  assert.ok(
+    distance < innerWidth * 0.8,
+    `a pair keeps its natural spacing: ${distance}`,
+  );
 });
 
 test("centers a single document", () => {
@@ -220,7 +292,9 @@ test("keeps documents without links on a ring around the connected cluster", () 
   const result = graph.layout(ids, edges);
   const connected = result.nodes.filter((node) => node.id !== "orphan.md");
   const center = centroid(connected);
-  const farthestConnected = Math.max(...connected.map((node) => distance(node, center)));
+  const farthestConnected = Math.max(
+    ...connected.map((node) => distance(node, center)),
+  );
 
   assert.equal(nodeOf(result, "orphan.md").degree, 0);
   assert.ok(
@@ -239,15 +313,24 @@ test("spreads a site made only of isolated documents on a circle", () => {
     assert.equal(node.degree, 0);
   }
   for (const value of distances) {
-    assert.ok(Math.abs(value - distances[0]) < 1e-6, `ring radius: ${value} vs ${distances[0]}`);
+    assert.ok(
+      Math.abs(value - distances[0]) < 1e-6,
+      `ring radius: ${value} vs ${distances[0]}`,
+    );
   }
   assert.ok(distances[0] > 0, "the ring must not collapse to the center");
 });
 
 test("ignores ids and edges that do not belong to the site", () => {
-  const result = graph.layout(["a.md", "a.md", ""], [{ from: "a.md", to: "ghost.md" }]);
+  const result = graph.layout(
+    ["a.md", "a.md", ""],
+    [{ from: "a.md", to: "ghost.md" }],
+  );
 
-  assert.deepEqual(result.nodes.map((node) => node.id), ["a.md"]);
+  assert.deepEqual(
+    result.nodes.map((node) => node.id),
+    ["a.md"],
+  );
   assert.deepEqual(result.links, []);
 });
 
@@ -262,9 +345,18 @@ test("does not mutate the payload it is given", () => {
 });
 
 test("a local view keeps the seed and both directions of its links", () => {
-  const result = graph.subgraph(IDS, EDGES, "guide/intro.md", graph.LOCAL_DEPTH);
+  const result = graph.subgraph(
+    IDS,
+    EDGES,
+    "guide/intro.md",
+    graph.LOCAL_DEPTH,
+  );
 
-  assert.deepEqual(result.ids, ["README.md", "guide/intro.md", "guide/setup.md"]);
+  assert.deepEqual(result.ids, [
+    "README.md",
+    "guide/intro.md",
+    "guide/setup.md",
+  ]);
   assert.deepEqual(result.edges, [
     { from: "README.md", to: "guide/intro.md" },
     { from: "guide/intro.md", to: "guide/setup.md" },
@@ -304,14 +396,24 @@ test("a local view drops the links to documents it left out", () => {
 test("a deeper local view reaches further and still closes its edges", () => {
   const result = graph.subgraph(IDS, EDGES, "README.md", 2);
 
-  assert.deepEqual(result.ids, ["README.md", "guide/intro.md", "guide/setup.md"]);
+  assert.deepEqual(result.ids, [
+    "README.md",
+    "guide/intro.md",
+    "guide/setup.md",
+  ]);
   assert.equal(result.edges.length, 2);
 });
 
 test("a local view of a seed the site does not have is empty", () => {
-  assert.deepEqual(graph.subgraph(IDS, EDGES, "ghost.md", 1), { ids: [], edges: [] });
+  assert.deepEqual(graph.subgraph(IDS, EDGES, "ghost.md", 1), {
+    ids: [],
+    edges: [],
+  });
   assert.deepEqual(graph.subgraph(IDS, EDGES, "", 1), { ids: [], edges: [] });
-  assert.deepEqual(graph.subgraph([], EDGES, "README.md", 1), { ids: [], edges: [] });
+  assert.deepEqual(graph.subgraph([], EDGES, "README.md", 1), {
+    ids: [],
+    edges: [],
+  });
 });
 
 test("a local view keeps the document order and collapses duplicate links", () => {
@@ -324,7 +426,11 @@ test("a local view keeps the document order and collapses duplicate links", () =
   const second = graph.subgraph(IDS, edges, "README.md", 1);
 
   assert.deepEqual(first, second);
-  assert.deepEqual(first.ids, ["README.md", "guide/intro.md", "guide/setup.md"]);
+  assert.deepEqual(first.ids, [
+    "README.md",
+    "guide/intro.md",
+    "guide/setup.md",
+  ]);
   assert.deepEqual(first.edges, [
     { from: "README.md", to: "guide/intro.md" },
     { from: "guide/setup.md", to: "README.md" },
@@ -340,11 +446,20 @@ test("a local view treats a nonsense depth as one hop", () => {
     graph.subgraph(IDS, EDGES, "README.md", Number.NaN),
     graph.subgraph(IDS, EDGES, "README.md", 1),
   );
-  assert.deepEqual(graph.subgraph(IDS, EDGES, "README.md"), graph.subgraph(IDS, EDGES, "README.md", 1));
+  assert.deepEqual(
+    graph.subgraph(IDS, EDGES, "README.md"),
+    graph.subgraph(IDS, EDGES, "README.md", 1),
+  );
 });
 
 test("a local view lays out to the same coordinates as the same documents alone", () => {
   const cut = graph.subgraph(IDS, EDGES, "guide/intro.md", 1);
 
-  assert.deepEqual(graph.layout(cut.ids, cut.edges), graph.layout(cut.ids.slice(), cut.edges.map((edge) => ({ ...edge }))));
+  assert.deepEqual(
+    graph.layout(cut.ids, cut.edges),
+    graph.layout(
+      cut.ids.slice(),
+      cut.edges.map((edge) => ({ ...edge })),
+    ),
+  );
 });

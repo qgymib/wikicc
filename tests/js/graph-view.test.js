@@ -160,7 +160,14 @@ function fakeElement(tagName, namespaceURI) {
     // The canvas starts at the top-left corner of the window, so `clientX` and
     // `clientY` are already the graph's own coordinates.
     getBoundingClientRect() {
-      return { top: 0, left: 0, right: 320, bottom: 260, width: 320, height: 260 };
+      return {
+        top: 0,
+        left: 0,
+        right: 320,
+        bottom: 260,
+        width: 320,
+        height: 260,
+      };
     },
     appendChild(child) {
       child.parentNode = this;
@@ -186,12 +193,10 @@ function fakeElement(tagName, namespaceURI) {
     },
     getAttribute(name) {
       const key = String(name);
-      return Object.prototype.hasOwnProperty.call(this.attributes, key)
-        ? this.attributes[key]
-        : null;
+      return Object.hasOwn(this.attributes, key) ? this.attributes[key] : null;
     },
     hasAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(this.attributes, String(name));
+      return Object.hasOwn(this.attributes, String(name));
     },
     removeAttribute(name) {
       delete this.attributes[String(name)];
@@ -201,8 +206,14 @@ function fakeElement(tagName, namespaceURI) {
       // object. Listeners are kept apart so the capture pass can run first.
       const capture = options === true || (options && options.capture === true);
       const bucket = capture ? "capture" : "listeners";
-      const list = (this[bucket] = this[bucket] || {});
-      (list[type] = list[type] || []).push(handler);
+      if (!this[bucket]) {
+        this[bucket] = {};
+      }
+      const list = this[bucket];
+      if (!list[type]) {
+        list[type] = [];
+      }
+      list[type].push(handler);
     },
     removeEventListener(type, handler, options) {
       const capture = options === true || (options && options.capture === true);
@@ -357,7 +368,10 @@ function withGraph(run, options) {
       },
       /** A whole click: press, then release at the same spot. */
       click: function (target, settings) {
-        return dispatchMouse(target, Object.assign({}, settings, { release: true }));
+        return dispatchMouse(
+          target,
+          Object.assign({}, settings, { release: true }),
+        );
       },
       /**
        * A whole click as Chrome reports the one on a node: the press is taken by
@@ -366,7 +380,11 @@ function withGraph(run, options) {
       nodeClick: function (target, settings) {
         return dispatchMouse(
           target,
-          Object.assign({}, settings, { release: true, click: false, capturedOn: container }),
+          Object.assign({}, settings, {
+            release: true,
+            click: false,
+            capturedOn: container,
+          }),
         );
       },
       /**
@@ -381,7 +399,11 @@ function withGraph(run, options) {
       silentNodeClick: function (target, settings) {
         return dispatchMouse(
           target,
-          Object.assign({}, settings, { release: true, suppressClick: true, capturedOn: container }),
+          Object.assign({}, settings, {
+            release: true,
+            suppressClick: true,
+            capturedOn: container,
+          }),
         );
       },
     });
@@ -522,7 +544,10 @@ function dispatchMouse(target, options) {
   const pressed = withTimers(function () {
     // A browser reports the press twice, as a pointer event and as the mouse
     // event derived from it.
-    const press = propagate(target, mouseEvent("pointerdown", startX, startY, detail));
+    const press = propagate(
+      target,
+      mouseEvent("pointerdown", startX, startY, detail),
+    );
     propagate(target, mouseEvent("mousedown", startX, startY, detail));
 
     // A press on a link takes the focus: the element that had it announces a
@@ -531,7 +556,10 @@ function dispatchMouse(target, options) {
     // it reports the press as coming from a window that is focused, unlike the
     // first press after the reader was working in another window.
     if (settings.focusMoves !== false) {
-      propagate(globalThis.document, mouseEvent("blur", startX, startY, detail));
+      propagate(
+        globalThis.document,
+        mouseEvent("blur", startX, startY, detail),
+      );
       globalThis.document.activeElement = target;
     }
 
@@ -562,7 +590,11 @@ function dispatchMouse(target, options) {
       // listeners. That is why a node has to be opened without one; when the
       // click does come, it only describes the gesture the release has already
       // decided.
-      if (!pressed.defaultPrevented && !settings.suppressClick && settings.click !== false) {
+      if (
+        !pressed.defaultPrevented &&
+        !settings.suppressClick &&
+        settings.click !== false
+      ) {
         propagate(target, mouseEvent("click", endX, endY, detail));
       }
 
@@ -590,7 +622,9 @@ function installGlobal(key, value) {
 /** The node element standing for `id`. */
 function nodeFor(nodes, id) {
   const found = nodes.find(function (node) {
-    return (node.getAttribute("href") || "").endsWith(encodeURIComponent(id.split("/").pop()));
+    return (node.getAttribute("href") || "").endsWith(
+      encodeURIComponent(id.split("/").pop()),
+    );
   });
   assert.ok(found, `missing node ${id}`);
   return found;
@@ -600,8 +634,14 @@ test("draws one linked node per document", () => {
   withGraph(function (page) {
     assert.equal(page.nodes.length, DOCS.length);
     assert.equal(page.links.length, EDGES.length);
-    assert.equal(page.container.getAttribute("data-nodes"), String(DOCS.length));
-    assert.equal(page.container.getAttribute("data-links"), String(EDGES.length));
+    assert.equal(
+      page.container.getAttribute("data-nodes"),
+      String(DOCS.length),
+    );
+    assert.equal(
+      page.container.getAttribute("data-links"),
+      String(EDGES.length),
+    );
 
     const intro = nodeFor(page.nodes, "guide/intro.md");
     assert.equal(intro.getAttribute("href"), "#/doc/guide/intro.md");
@@ -615,7 +655,11 @@ test("a single plain left click opens the document", () => {
 
     page.click(intro);
 
-    assert.deepEqual(page.selected, ["guide/intro.md"], "one click must open the document once");
+    assert.deepEqual(
+      page.selected,
+      ["guide/intro.md"],
+      "one click must open the document once",
+    );
   });
 });
 
@@ -651,7 +695,11 @@ test("a second press on the same node opens it again once the reader has moved o
     page.nodeClick(setup);
     page.nodeClick(intro);
 
-    assert.deepEqual(page.selected, ["guide/intro.md", "guide/setup.md", "guide/intro.md"]);
+    assert.deepEqual(page.selected, [
+      "guide/intro.md",
+      "guide/setup.md",
+      "guide/intro.md",
+    ]);
   });
 });
 
@@ -711,7 +759,8 @@ test("the press on a child of the node is still a press on the node", () => {
 
     assert.deepEqual(page.selected, ["guide/intro.md"]);
     assert.ok(
-      circle.getAttribute("class") === null || !circle.getAttribute("class").includes("is-dragging"),
+      circle.getAttribute("class") === null ||
+        !circle.getAttribute("class").includes("is-dragging"),
       "a press is not a drag",
     );
   });
@@ -743,7 +792,10 @@ test("every node opens its own document", () => {
         page.click(node);
       });
 
-      assert.deepEqual(page.selected, DOCS.map((doc) => doc.id));
+      assert.deepEqual(
+        page.selected,
+        DOCS.map((doc) => doc.id),
+      );
     },
     { mode: "global" },
   );
@@ -759,7 +811,11 @@ test("a double click opens the document exactly once", () => {
     page.click(intro);
     page.click(intro, { detail: 2 });
 
-    assert.deepEqual(page.selected, ["guide/intro.md"], "a double click must not navigate twice");
+    assert.deepEqual(
+      page.selected,
+      ["guide/intro.md"],
+      "a double click must not navigate twice",
+    );
   });
 });
 
@@ -818,10 +874,18 @@ test("a modified click stays with the browser", () => {
 
     for (const modifier of ["ctrlKey", "metaKey", "shiftKey", "altKey"]) {
       const outcome = page.click(intro, { [modifier]: true });
-      assert.notEqual(outcome, "prevented", `${modifier} must keep the native behaviour`);
+      assert.notEqual(
+        outcome,
+        "prevented",
+        `${modifier} must keep the native behaviour`,
+      );
     }
 
-    assert.deepEqual(page.selected, [], "the reader must not take over a new-tab click");
+    assert.deepEqual(
+      page.selected,
+      [],
+      "the reader must not take over a new-tab click",
+    );
   });
 });
 
@@ -833,7 +897,11 @@ test("a drag moves the node without opening the document", () => {
     page.press(intro, { release: true, moveTo: { x: 260, y: 40 } });
 
     assert.deepEqual(page.selected, [], "a drag must not navigate");
-    assert.notEqual(intro.getAttribute("transform"), before, "the node must follow the pointer");
+    assert.notEqual(
+      intro.getAttribute("transform"),
+      before,
+      "the node must follow the pointer",
+    );
   });
 });
 
@@ -860,7 +928,10 @@ test("highlighting follows the pointer", () => {
 
       assert.ok(intro.getAttribute("class").split(" ").includes("is-hot"));
       assert.ok(
-        nodeFor(page.nodes, "notes.md").getAttribute("class").split(" ").includes("is-dim"),
+        nodeFor(page.nodes, "notes.md")
+          .getAttribute("class")
+          .split(" ")
+          .includes("is-dim"),
         "the unrelated node must be dimmed",
       );
 
@@ -869,7 +940,12 @@ test("highlighting follows the pointer", () => {
       });
 
       assert.ok(!intro.getAttribute("class").split(" ").includes("is-hot"));
-      assert.ok(!nodeFor(page.nodes, "notes.md").getAttribute("class").split(" ").includes("is-dim"));
+      assert.ok(
+        !nodeFor(page.nodes, "notes.md")
+          .getAttribute("class")
+          .split(" ")
+          .includes("is-dim"),
+      );
     },
     { mode: "global" },
   );
@@ -886,12 +962,26 @@ test("setActive marks the open document and leaves the rest alone", () => {
 
       page.graph.setActive("guide/setup.md");
 
-      assert.ok(nodeFor(nodes(), "guide/setup.md").getAttribute("class").includes("is-active"));
-      assert.equal(nodeFor(nodes(), "guide/setup.md").getAttribute("aria-current"), "true");
-      assert.equal(nodeFor(nodes(), "notes.md").getAttribute("aria-current"), null);
+      assert.ok(
+        nodeFor(nodes(), "guide/setup.md")
+          .getAttribute("class")
+          .includes("is-active"),
+      );
+      assert.equal(
+        nodeFor(nodes(), "guide/setup.md").getAttribute("aria-current"),
+        "true",
+      );
+      assert.equal(
+        nodeFor(nodes(), "notes.md").getAttribute("aria-current"),
+        null,
+      );
 
       page.graph.setActive(null);
-      assert.ok(!nodeFor(nodes(), "guide/setup.md").getAttribute("class").includes("is-active"));
+      assert.ok(
+        !nodeFor(nodes(), "guide/setup.md")
+          .getAttribute("class")
+          .includes("is-active"),
+      );
     },
     { mode: "global" },
   );
@@ -912,7 +1002,12 @@ test("fit resets the viewport without opening anything", () => {
 test("a missing container yields a no-op graph", () => {
   const graph = createGraph({ docs: DOCS, edges: EDGES, onSelect() {} });
 
-  assert.deepEqual(Object.keys(graph).sort(), ["fit", "getMode", "setActive", "setMode"]);
+  assert.deepEqual(Object.keys(graph).sort(), [
+    "fit",
+    "getMode",
+    "setActive",
+    "setMode",
+  ]);
   assert.doesNotThrow(function () {
     graph.setActive("README.md");
     graph.fit();
@@ -942,7 +1037,9 @@ function drawnIds(container) {
   return container
     .findAll("graph-node")
     .map(function (node) {
-      return decodeURIComponent(node.getAttribute("href").replace(/^#\/doc\//, ""));
+      return decodeURIComponent(
+        node.getAttribute("href").replace(/^#\/doc\//, ""),
+      );
     })
     .sort();
 }
@@ -953,7 +1050,11 @@ test("a graph opens on the local view of the document it is given", () => {
 
     assert.equal(page.graph.getMode(), "local");
     assert.equal(page.container.getAttribute("data-mode"), "local");
-    assert.deepEqual(drawnIds(page.container), ["README.md", "guide/intro.md", "guide/setup.md"]);
+    assert.deepEqual(drawnIds(page.container), [
+      "README.md",
+      "guide/intro.md",
+      "guide/setup.md",
+    ]);
     assert.equal(
       page.container.getAttribute("data-nodes"),
       "3",
@@ -967,13 +1068,30 @@ test("the local view follows the document the reader opens", () => {
   withGraph(function (page) {
     page.graph.setActive("guide/setup.md");
 
-    assert.deepEqual(drawnIds(page.container), ["guide/intro.md", "guide/setup.md"]);
-    assert.equal(nodeFor(page.container.findAll("graph-node"), "guide/setup.md").getAttribute("aria-current"), "true");
+    assert.deepEqual(drawnIds(page.container), [
+      "guide/intro.md",
+      "guide/setup.md",
+    ]);
+    assert.equal(
+      nodeFor(
+        page.container.findAll("graph-node"),
+        "guide/setup.md",
+      ).getAttribute("aria-current"),
+      "true",
+    );
 
     page.graph.setActive("notes.md");
-    assert.deepEqual(drawnIds(page.container), ["notes.md"], "a document with no links stands alone");
+    assert.deepEqual(
+      drawnIds(page.container),
+      ["notes.md"],
+      "a document with no links stands alone",
+    );
     assert.equal(page.container.getAttribute("data-links"), "0");
-    assert.equal(page.graph.getMode(), "local", "the mode belongs to the panel, not to the document");
+    assert.equal(
+      page.graph.getMode(),
+      "local",
+      "the mode belongs to the panel, not to the document",
+    );
   });
 });
 
@@ -988,7 +1106,11 @@ test("a local view of a lone document is a readable single node", () => {
       "the only node still says what it is and that it links nowhere",
     );
     assert.equal(page.container.findAll("graph-edge").length, 0);
-    assert.equal(page.container.getAttribute("class"), null, "no hint takes the place of the graph");
+    assert.equal(
+      page.container.getAttribute("class"),
+      null,
+      "no hint takes the place of the graph",
+    );
   });
 });
 
@@ -1001,10 +1123,19 @@ test("switching to the global view draws the whole site", () => {
 
     assert.equal(page.graph.getMode(), "global");
     assert.equal(page.container.getAttribute("data-mode"), "global");
-    assert.deepEqual(drawnIds(page.container), DOCS.map((doc) => doc.id).sort());
-    assert.equal(page.container.getAttribute("data-links"), String(EDGES.length));
+    assert.deepEqual(
+      drawnIds(page.container),
+      DOCS.map((doc) => doc.id).sort(),
+    );
     assert.equal(
-      nodeFor(page.container.findAll("graph-node"), "guide/setup.md").getAttribute("aria-current"),
+      page.container.getAttribute("data-links"),
+      String(EDGES.length),
+    );
+    assert.equal(
+      nodeFor(
+        page.container.findAll("graph-node"),
+        "guide/setup.md",
+      ).getAttribute("aria-current"),
       "true",
       "the document being read stays marked after the switch",
     );
@@ -1020,7 +1151,10 @@ test("switching back to the local view narrows the picture again", () => {
       page.graph.setMode("local");
 
       assert.equal(page.graph.getMode(), "local");
-      assert.deepEqual(drawnIds(page.container), ["guide/intro.md", "guide/setup.md"]);
+      assert.deepEqual(drawnIds(page.container), [
+        "guide/intro.md",
+        "guide/setup.md",
+      ]);
     },
     { mode: "global" },
   );
@@ -1029,13 +1163,19 @@ test("switching back to the local view narrows the picture again", () => {
 test("a local view is redrawn only when the neighbourhood really changes", () => {
   withGraph(function (page) {
     page.graph.setActive("guide/intro.md");
-    const first = nodeFor(page.container.findAll("graph-node"), "guide/intro.md");
+    const first = nodeFor(
+      page.container.findAll("graph-node"),
+      "guide/intro.md",
+    );
 
     // The same document again, as walking to another chapter of it does: the
     // picture has nothing new to show, so it keeps the arrangement the reader
     // may have given it.
     page.graph.setActive("guide/intro.md");
-    assert.equal(nodeFor(page.container.findAll("graph-node"), "guide/intro.md"), first);
+    assert.equal(
+      nodeFor(page.container.findAll("graph-node"), "guide/intro.md"),
+      first,
+    );
   });
 });
 
@@ -1073,7 +1213,10 @@ test("a mode the graph does not know is ignored", () => {
 test("a local view emphasises the pointer without dimming its neighbours", () => {
   withGraph(function (page) {
     page.graph.setActive("guide/intro.md");
-    const intro = nodeFor(page.container.findAll("graph-node"), "guide/intro.md");
+    const intro = nodeFor(
+      page.container.findAll("graph-node"),
+      "guide/intro.md",
+    );
 
     intro.listeners.mouseenter.forEach(function (handler) {
       handler.call(intro, { type: "mouseenter" });
@@ -1106,7 +1249,10 @@ test("the first local view before any document is known shows the whole site", (
   // `createGraph` runs before the first render names a document; drawing only
   // its neighbourhood would draw nothing at all for that moment.
   withGraph(function (page) {
-    assert.deepEqual(drawnIds(page.container), DOCS.map((doc) => doc.id).sort());
+    assert.deepEqual(
+      drawnIds(page.container),
+      DOCS.map((doc) => doc.id).sort(),
+    );
 
     page.graph.setActive("notes.md");
     assert.deepEqual(drawnIds(page.container), ["notes.md"]);
@@ -1123,7 +1269,11 @@ test("the mode survives a switch of document and a switch of mode", () => {
     page.graph.setMode("local");
     page.graph.setActive("guide/intro.md");
     assert.equal(page.graph.getMode(), "local");
-    assert.deepEqual(drawnIds(page.container), ["README.md", "guide/intro.md", "guide/setup.md"]);
+    assert.deepEqual(drawnIds(page.container), [
+      "README.md",
+      "guide/intro.md",
+      "guide/setup.md",
+    ]);
   });
 });
 
@@ -1131,7 +1281,9 @@ test("a click on the node of the open document does nothing in a local view eith
   withGraph(function (page) {
     page.graph.setActive("guide/intro.md");
 
-    page.nodeClick(nodeFor(page.container.findAll("graph-node"), "guide/intro.md"));
+    page.nodeClick(
+      nodeFor(page.container.findAll("graph-node"), "guide/intro.md"),
+    );
 
     assert.deepEqual(page.selected, []);
   });

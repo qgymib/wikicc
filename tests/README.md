@@ -198,12 +198,14 @@ a later reader knows why the assertion is shaped the way it is.
 
 ## Quality gates
 
-Every change has to leave all three green:
+Every change has to leave all four green; the first three are what
+`.github/workflows/lint.yml` runs in CI:
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo fmt --check                          # Rust formatting
+cargo clippy --all-targets -- -D warnings  # Rust lint
+npm run check                              # JS formatting and lint (Biome)
+cargo test                                 # everything, including the front-end suite
 ```
 
 ## See also

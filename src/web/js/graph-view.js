@@ -83,7 +83,13 @@ function isPlainLeftPress(event) {
   }
 
   var button = event.button === undefined ? LEFT_BUTTON : event.button;
-  return !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && button === LEFT_BUTTON;
+  return (
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey &&
+    button === LEFT_BUTTON
+  );
 }
 
 /** Whether a click should be handled by the router instead of the browser. */
@@ -112,7 +118,9 @@ function isNodeTarget(event, element) {
 /** Readable label for a node: the document title, truncated, else its id. */
 export function labelFor(doc) {
   var text = String((doc && (doc.title || doc.id)) || "");
-  return text.length > LABEL_LIMIT ? text.slice(0, LABEL_LIMIT - 1) + "\u2026" : text;
+  return text.length > LABEL_LIMIT
+    ? text.slice(0, LABEL_LIMIT - 1) + "\u2026"
+    : text;
 }
 
 /** Spoken description of a node, including how connected it is. */
@@ -174,7 +182,8 @@ export function createGraph(options) {
 
   /** A graph that draws nothing but still knows which view it is in. */
   function inertGraph() {
-    var current = options && options.mode === GLOBAL_MODE ? GLOBAL_MODE : LOCAL_MODE;
+    var current =
+      options && options.mode === GLOBAL_MODE ? GLOBAL_MODE : LOCAL_MODE;
 
     return {
       setActive: function () {},
@@ -301,7 +310,10 @@ export function createGraph(options) {
         return nodeById.has(link.from) && nodeById.has(link.to);
       })
       .map(function (link) {
-        var value = { source: nodeById.get(link.from), target: nodeById.get(link.to) };
+        var value = {
+          source: nodeById.get(link.from),
+          target: nodeById.get(link.to),
+        };
         value.shrink = value.target.radius + (simplified ? 0 : 3);
         return value;
       });
@@ -443,10 +455,16 @@ export function createGraph(options) {
 
       edgeSelection
         .classed(HOT_CLASS, function (link) {
-          return near !== null && near.has(link.source.id) && near.has(link.target.id);
+          return (
+            near !== null &&
+            near.has(link.source.id) &&
+            near.has(link.target.id)
+          );
         })
         .classed(DIM_CLASS, function (link) {
-          return dimming && !(near.has(link.source.id) && near.has(link.target.id));
+          return (
+            dimming && !(near.has(link.source.id) && near.has(link.target.id))
+          );
         });
     }
 
@@ -493,7 +511,11 @@ export function createGraph(options) {
 
     /** A press that moved is a pan or a drag, not a click. */
     function trackPointer(event) {
-      if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > DRAG_THRESHOLD_PX) {
+      if (
+        press &&
+        Math.hypot(event.clientX - press.x, event.clientY - press.y) >
+          DRAG_THRESHOLD_PX
+      ) {
         press.opens = false;
       }
     }
@@ -584,7 +606,9 @@ export function createGraph(options) {
         return;
       }
 
-      var view = (event && event.view) || (typeof globalThis !== "undefined" ? globalThis : null);
+      var view =
+        (event && event.view) ||
+        (typeof globalThis !== "undefined" ? globalThis : null);
       if (!view) {
         return;
       }
@@ -592,14 +616,22 @@ export function createGraph(options) {
       pointerWatcher = view;
       d3Select(view)
         .on("mousemove.press", trackPointer, { capture: true, passive: true })
-        .on("mouseup.press pointerup.press", function () {
-          settlePress();
-        }, { capture: true, passive: true })
+        .on(
+          "mouseup.press pointerup.press",
+          function () {
+            settlePress();
+          },
+          { capture: true, passive: true },
+        )
         .on("blur.press", dropPressOnLeave, { capture: true, passive: true })
         .on("touchmove.press", trackPointer, { capture: true, passive: true })
-        .on("touchend.press touchcancel.press", function (release) {
-          settlePress(release.type === "touchcancel");
-        }, { capture: true, passive: true });
+        .on(
+          "touchend.press touchcancel.press",
+          function (release) {
+            settlePress(release.type === "touchcancel");
+          },
+          { capture: true, passive: true },
+        );
     }
 
     var dragBehavior = d3Drag()
@@ -659,13 +691,13 @@ export function createGraph(options) {
     });
 
     nodeSelection
-      .on("mouseenter", function (event, node) {
+      .on("mouseenter", function (_event, node) {
         highlight(node.id);
       })
       .on("mouseleave", function () {
         highlight(null);
       })
-      .on("focus", function (event, node) {
+      .on("focus", function (_event, node) {
         highlight(node.id);
       })
       .on("blur", function () {

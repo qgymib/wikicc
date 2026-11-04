@@ -7,7 +7,7 @@
 # defaults to that; pinning the flag here keeps the CI guarantee explicit,
 # and keeping it here rather than in `.cargo/config.toml` leaves local
 # builds on their toolchain defaults.
-name: Rust (windows-latest)
+name: Build
 
 # `branches` must stay listed next to `tags`: on `push` events a `tags`
 # filter without `branches` would drop every branch build. With both filters
@@ -70,12 +70,10 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
-    # Edition 2024 needs Rust 1.85 or newer, and the quality gates below need
-    # `rustfmt` and `clippy`, which a bare runner does not always carry.
+    # Edition 2024 needs Rust 1.85 or newer. Formatting and lint checks live
+    # in `lint.yml`.
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
 
     # `build.rs` shells out to `node` to run the npm-installed esbuild, so the
     # front-end dependencies have to be present before any cargo command runs.
@@ -90,15 +88,9 @@ jobs:
     - name: Install front-end dependencies
       run: npm ci
 
-    # The three quality gates documented in `tests/README.md`. They do not
-    # depend on the build profile, so both profile jobs measure the same thing;
-    # a red one fails the whole matrix either way.
-    - name: Check formatting
-      run: cargo fmt --check
-
-    - name: Lint
-      run: cargo clippy --all-targets -- -D warnings
-
+    # Formatting and lint checks live in `lint.yml`, which owns every quality
+    # gate; this workflow builds and tests only.
+    #
     # The release flag is interpolated by Actions itself, before any shell sees
     # the line, so it reaches PowerShell and bash alike. Do NOT hoist it back
     # into an `env:` variable expanded as `$PROFILE_FLAG`: this runner's

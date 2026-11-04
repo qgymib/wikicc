@@ -193,9 +193,11 @@ export var MISSING_TAIL = " exists in this document.";
 export function createPreviewView(options) {
   var content = options.content;
   var byId = options.byId;
-  var theme = options.theme || function () {
-    return null;
-  };
+  var theme =
+    options.theme ||
+    function () {
+      return null;
+    };
   var onNavigate = options.onNavigate || null;
   // Called instead of opening a preview when the build already knows the
   // chapter does not exist. Injected rather than imported so this module stays
@@ -481,14 +483,19 @@ export function createPreviewView(options) {
     var rect = link.getBoundingClientRect();
     var width = panel.offsetWidth || 480;
     var height = panel.offsetHeight || 0;
-    var viewportWidth = view().innerWidth || document.documentElement.clientWidth;
-    var viewportHeight = view().innerHeight || document.documentElement.clientHeight;
+    var viewportWidth =
+      view().innerWidth || document.documentElement.clientWidth;
+    var viewportHeight =
+      view().innerHeight || document.documentElement.clientHeight;
 
     var below = rect.bottom + GAP_PX;
     var above = rect.top - GAP_PX - height;
     var top = below;
     if (height && below + height > viewportHeight - MARGIN_PX) {
-      top = above >= MARGIN_PX ? above : Math.max(MARGIN_PX, viewportHeight - height - MARGIN_PX);
+      top =
+        above >= MARGIN_PX
+          ? above
+          : Math.max(MARGIN_PX, viewportHeight - height - MARGIN_PX);
     }
 
     var left = Math.min(
@@ -509,11 +516,15 @@ export function createPreviewView(options) {
   function place(left, top) {
     var width = panel.offsetWidth || 0;
     var height = panel.offsetHeight || 0;
-    var viewportWidth = view().innerWidth || document.documentElement.clientWidth;
-    var viewportHeight = view().innerHeight || document.documentElement.clientHeight;
+    var viewportWidth =
+      view().innerWidth || document.documentElement.clientWidth;
+    var viewportHeight =
+      view().innerHeight || document.documentElement.clientHeight;
 
-    panel.style.left = Math.round(clampPosition(left, width, viewportWidth)) + "px";
-    panel.style.top = Math.round(clampPosition(top, height, viewportHeight)) + "px";
+    panel.style.left =
+      Math.round(clampPosition(left, width, viewportWidth)) + "px";
+    panel.style.top =
+      Math.round(clampPosition(top, height, viewportHeight)) + "px";
   }
 
   /** `value` kept inside `[MARGIN_PX, viewport - size - MARGIN_PX]`. */
@@ -530,11 +541,13 @@ export function createPreviewView(options) {
   function panelOrigin() {
     var left = parseFloat(panel.style.left);
     var top = parseFloat(panel.style.top);
-    var rect = panel.getBoundingClientRect ? panel.getBoundingClientRect() : null;
+    var rect = panel.getBoundingClientRect
+      ? panel.getBoundingClientRect()
+      : null;
 
     return {
-      left: isNaN(left) ? (rect ? rect.left : 0) : left,
-      top: isNaN(top) ? (rect ? rect.top : 0) : top,
+      left: Number.isNaN(left) ? (rect ? rect.left : 0) : left,
+      top: Number.isNaN(top) ? (rect ? rect.top : 0) : top,
     };
   }
 
@@ -562,7 +575,11 @@ export function createPreviewView(options) {
       return;
     }
     // A widget inside a preview is not a handle either.
-    if (target && typeof target.closest === "function" && target.closest("button")) {
+    if (
+      target &&
+      typeof target.closest === "function" &&
+      target.closest("button")
+    ) {
       return;
     }
 
@@ -620,7 +637,10 @@ export function createPreviewView(options) {
     if (!dragging) {
       // Below the threshold the panel does not move at all: a click must not
       // nudge it, and the browser's own sub-pixel jitter never gets past here.
-      if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) {
+      if (
+        Math.abs(dx) < DRAG_THRESHOLD_PX &&
+        Math.abs(dy) < DRAG_THRESHOLD_PX
+      ) {
         return;
       }
       dragging = true;
@@ -939,7 +959,7 @@ export function createPreviewView(options) {
 
   function onPointerOut(event) {
     var link = linkFrom(event);
-    if (!link || link !== pending && link !== anchor) {
+    if (!link || (link !== pending && link !== anchor)) {
       return;
     }
 
@@ -984,7 +1004,12 @@ export function createPreviewView(options) {
   function onClick(event) {
     // A click inside the panel is the reader reading it, not dismissing it; the
     // panel's own handler turns that click into the pin.
-    if (panel && !panel.hidden && event.target && panel.contains(event.target)) {
+    if (
+      panel &&
+      !panel.hidden &&
+      event.target &&
+      panel.contains(event.target)
+    ) {
       return;
     }
 
@@ -1053,7 +1078,11 @@ export function createPreviewView(options) {
   }
 
   function listen() {
-    if (listening || !content || typeof content.addEventListener !== "function") {
+    if (
+      listening ||
+      !content ||
+      typeof content.addEventListener !== "function"
+    ) {
       return;
     }
     listening = true;
@@ -1096,7 +1125,10 @@ export function createPreviewView(options) {
     var anchors = root.querySelectorAll("a[href]");
     Array.prototype.forEach.call(anchors, function (link) {
       var href = link.getAttribute("href");
-      if (typeof href !== "string" || href.indexOf(Links.ROUTE_HREF_PREFIX) !== 0) {
+      if (
+        typeof href !== "string" ||
+        href.indexOf(Links.ROUTE_HREF_PREFIX) !== 0
+      ) {
         return;
       }
 
@@ -1124,7 +1156,9 @@ export function createPreviewView(options) {
    * Returns whether `link` carries — or was just given — the mark.
    */
   function taggedMissing(link) {
-    if (Links.missingAnchorOf(link.getAttribute(Links.MISSING_ANCHOR_ATTRIBUTE))) {
+    if (
+      Links.missingAnchorOf(link.getAttribute(Links.MISSING_ANCHOR_ATTRIBUTE))
+    ) {
       if (link.classList) {
         link.classList.add(Links.MISSING_CLASS);
       }

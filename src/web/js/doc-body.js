@@ -63,7 +63,9 @@ export function fillDocBody(body, html, options) {
 export function createDocBody(html, options) {
   var body = document.createElement("div");
   body.className =
-    options && options.extraClass ? options.extraClass + " " + BODY_CLASS : BODY_CLASS;
+    options && options.extraClass
+      ? options.extraClass + " " + BODY_CLASS
+      : BODY_CLASS;
 
   return fillDocBody(body, html, options);
 }

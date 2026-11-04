@@ -57,7 +57,10 @@ export function createBanner(options) {
   var host = options.host || null;
   var doc = options.document || globalThis.document;
   var timers = options.timers || globalThis;
-  var timeoutMs = typeof options.timeoutMs === "number" ? options.timeoutMs : BANNER_TIMEOUT_MS;
+  var timeoutMs =
+    typeof options.timeoutMs === "number"
+      ? options.timeoutMs
+      : BANNER_TIMEOUT_MS;
 
   var timer = 0;
   var root = null;

@@ -1,0 +1,66 @@
+# Continuous integration quality gates. The build legs live in `ubuntu.yml`
+# and `windows.yml`, which compile and test the reader on both platforms;
+# this workflow owns every formatting and lint check, so each gate runs in
+# exactly one place:
+#
+# - Rust: `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`
+# - JS:   `npm run check`, one Biome pass over the reader's own sources that
+#   checks formatting and applies every rule enabled in `biome.jsonc`
+#
+# The checks do not depend on the runner platform, so a single Linux job
+# keeps the feedback fast. There is no `tags` filter: a tagged commit is
+# always pushed to a branch first, and this workflow attaches nothing to a
+# release.
+name: Lint
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: ubuntu-latest / lint
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    # Edition 2024 needs Rust 1.85 or newer, and the gates below need
+    # `rustfmt` and `clippy`, which a bare runner does not always carry.
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    # `build.rs` shells out to `node` to run the npm-installed esbuild, so the
+    # front-end dependencies have to be present before any cargo command runs.
+    # The version floor matches `engines.node` in `package.json` (the diagram
+    # engine rejects anything older).
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 'lts/*'
+        cache: 'npm'
+
+    - name: Install front-end dependencies
+      run: npm ci
+
+    # `clippy` compiles the crate, which runs `build.rs`, which needs the
+    # esbuild installed above — hence `npm ci` before this point.
+    - name: Check Rust formatting
+      run: cargo fmt --check
+
+    - name: Lint Rust
+      run: cargo clippy --all-targets -- -D warnings
+
+    # The JS gate: `biome check .` fails on a formatting difference or a lint
+    # violation in `src/web/js`, `tests/js` and `tools` (the scope of
+    # `biome.jsonc`); third-party code in `node_modules` is never touched.
+    - name: Lint JS
+      run: npm run check

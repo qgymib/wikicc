@@ -82,18 +82,25 @@ function fakeElement(tagName) {
       this.attributes[name] = String(value);
     },
     hasAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(this.attributes, name);
+      return Object.hasOwn(this.attributes, name);
     },
     removeAttribute(name) {
       delete this.attributes[name];
     },
     getAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+      return Object.hasOwn(this.attributes, name)
         ? this.attributes[name]
         : null;
     },
     getBoundingClientRect() {
-      return { top: 100, bottom: 120, left: 40, right: 160, width: 120, height: 20 };
+      return {
+        top: 100,
+        bottom: 120,
+        left: 40,
+        right: 160,
+        width: 120,
+        height: 20,
+      };
     },
     // A click inside the panel arrives with one of its descendants as the
     // target, so containment has to be decided over the whole subtree.
@@ -112,7 +119,7 @@ function fakeElement(tagName) {
       if (selector !== DOC_LINK_SELECTOR) {
         return null;
       }
-      var tagged = Object.prototype.hasOwnProperty.call(this.attributes, DOC_LINK_ATTRIBUTE);
+      var tagged = Object.hasOwn(this.attributes, DOC_LINK_ATTRIBUTE);
       return this.tagName === "A" && tagged ? this : null;
     },
     /** Every descendant matching `a[href]`, the one selector `tag` asks for. */
@@ -136,7 +143,10 @@ function fakeElement(tagName) {
     /** Set the class list the view reads through `classList.add`. */
     classList: null,
     addEventListener(type, handler) {
-      (this.listeners[type] = this.listeners[type] || []).push(handler);
+      if (!this.listeners[type]) {
+        this.listeners[type] = [];
+      }
+      this.listeners[type].push(handler);
     },
     removeEventListener(type, handler) {
       const handlers = this.listeners[type] || [];
@@ -202,7 +212,7 @@ function fakeDocument() {
       created.push(element);
       return element;
     },
-    createElementNS(namespace, tagName) {
+    createElementNS(_namespace, tagName) {
       const element = fakeElement(tagName);
       created.push(element);
       return element;
@@ -213,8 +223,14 @@ function fakeDocument() {
     // Both the document and the window stand for the page in these tests: a
     // handler registered on either is dispatched through the same `fire`.
     addEventListener(type, handler) {
-      const listeners = globalThis.__previewListeners || (globalThis.__previewListeners = {});
-      (listeners[type] = listeners[type] || []).push(handler);
+      if (!globalThis.__previewListeners) {
+        globalThis.__previewListeners = {};
+      }
+      const listeners = globalThis.__previewListeners;
+      if (!listeners[type]) {
+        listeners[type] = [];
+      }
+      listeners[type].push(handler);
     },
     removeEventListener(type, handler) {
       const listeners = globalThis.__previewListeners || {};
@@ -252,7 +268,10 @@ function withFakeWindow(run) {
   globalThis.innerHeight = 800;
 
   const fire = function (type, event) {
-    (globalThis.__previewListeners && globalThis.__previewListeners[type] || [])
+    (
+      (globalThis.__previewListeners && globalThis.__previewListeners[type]) ||
+      []
+    )
       .slice()
       .forEach(function (handler) {
         handler(event || {});
@@ -260,7 +279,11 @@ function withFakeWindow(run) {
   };
   globalThis.__previewListeners = {};
   globalThis.addEventListener = function (type, handler) {
-    (globalThis.__previewListeners[type] = globalThis.__previewListeners[type] || []).push(handler);
+    const listeners = globalThis.__previewListeners;
+    if (!listeners[type]) {
+      listeners[type] = [];
+    }
+    listeners[type].push(handler);
   };
   globalThis.removeEventListener = function (type, handler) {
     const handlers = globalThis.__previewListeners[type] || [];
@@ -331,7 +354,14 @@ function payload() {
       {
         id: "guide/intro.md",
         path: "guide/intro.md",
-        toc: [{ id: "getting-started", text: "Getting Started", level: 2, children: [] }],
+        toc: [
+          {
+            id: "getting-started",
+            text: "Getting Started",
+            level: 2,
+            children: [],
+          },
+        ],
         blocks: [
           {
             id: "getting-started",
@@ -348,7 +378,11 @@ function payload() {
 
 /** The one popover the view builds, or `null` before it is built. */
 function panelOf(doc) {
-  return doc.created.filter((element) => element.className === POPOVER_CLASS).pop() || null;
+  return (
+    doc.created
+      .filter((element) => element.className === POPOVER_CLASS)
+      .pop() || null
+  );
 }
 
 /** The element with `className`, searched depth first below `root`. */
@@ -406,7 +440,10 @@ function textOf(root) {
         parts.push(String(child.textContent));
         return;
       }
-      if (typeof child.textContent === "string" && !(child.children || []).length) {
+      if (
+        typeof child.textContent === "string" &&
+        !(child.children || []).length
+      ) {
         parts.push(child.textContent);
       }
       walk(child);
@@ -438,7 +475,15 @@ function setup(body) {
         },
       });
 
-      body({ view, content, doc, clock: window, messages, navigations, fire: window.fire });
+      body({
+        view,
+        content,
+        doc,
+        clock: window,
+        messages,
+        navigations,
+        fire: window.fire,
+      });
       view.dispose();
     } finally {
       globalThis.document = previousDocument;
@@ -454,14 +499,22 @@ test("hovering a chapter that exists opens the preview", () => {
 
     content.fire("pointerover", { target: anchor, relatedTarget: null });
 
-    assert.deepEqual(clock.delays(), [HOVER_DELAY_MS], "the open timer is armed");
+    assert.deepEqual(
+      clock.delays(),
+      [HOVER_DELAY_MS],
+      "the open timer is armed",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), true);
     assert.equal(anchor.getAttribute("aria-expanded"), "true");
 
     const panel = panelOf(doc);
-    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), null, "an ordinary preview");
+    assert.equal(
+      panel.getAttribute(MISSING_ATTRIBUTE),
+      null,
+      "an ordinary preview",
+    );
     assert.equal(panel.getAttribute("aria-label"), PREVIEW_LABEL);
     assert.match(textOf(panel), /Getting Started/);
   });
@@ -476,7 +529,11 @@ test("hovering a broken reference opens a notice and reports nothing", () => {
     content.fire("pointerover", { target: anchor, relatedTarget: null });
     clock.runAll();
 
-    assert.deepEqual(messages, [], "hovering is not a moment the reader reports");
+    assert.deepEqual(
+      messages,
+      [],
+      "hovering is not a moment the reader reports",
+    );
     assert.equal(view.isOpen(), true, "the notice is shown beside the link");
 
     const panel = panelOf(doc);
@@ -500,9 +557,14 @@ test("the notice is built from text, never from html", () => {
     clock.runAll();
 
     const panel = panelOf(doc);
-    const codes = byClass(panel, "preview-missing-code").map((element) => element.textContent);
+    const codes = byClass(panel, "preview-missing-code").map(
+      (element) => element.textContent,
+    );
 
-    assert.ok(codes.includes("<b>x</b> & <i>y</i>"), "the chapter is an element of its own");
+    assert.ok(
+      codes.includes("<b>x</b> & <i>y</i>"),
+      "the chapter is an element of its own",
+    );
     assert.equal(panel.innerHTML, "", "no html is assembled for the notice");
   });
 });
@@ -524,9 +586,17 @@ test("a notice replaces an open preview and leaves nothing behind", () => {
     clock.runAll();
 
     assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), "true");
-    assert.equal(good.getAttribute("aria-expanded"), "false", "the old link is released");
+    assert.equal(
+      good.getAttribute("aria-expanded"),
+      "false",
+      "the old link is released",
+    );
     assert.equal(broken.getAttribute("aria-expanded"), "true");
-    assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, "", "no preview body remains");
+    assert.equal(
+      byClass(panel, "preview-scroll")[0].innerHTML,
+      "",
+      "no preview body remains",
+    );
   });
 });
 
@@ -545,7 +615,11 @@ test("previewing after a notice restores the ordinary preview", () => {
     clock.runAll();
 
     const panel = panelOf(doc);
-    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), null, "the notice mark is gone");
+    assert.equal(
+      panel.getAttribute(MISSING_ATTRIBUTE),
+      null,
+      "the notice mark is gone",
+    );
     assert.equal(panel.getAttribute("aria-label"), PREVIEW_LABEL);
     assert.match(byClass(panel, "preview-scroll")[0].innerHTML, /<p>body<\/p>/);
   });
@@ -562,7 +636,11 @@ test("leaving a broken reference closes the notice", () => {
     assert.equal(view.isOpen(), true);
 
     content.fire("pointerout", { target: anchor, relatedTarget: null });
-    assert.deepEqual(clock.delays(), [CLOSE_DELAY_MS], "leaving waits before closing");
+    assert.deepEqual(
+      clock.delays(),
+      [CLOSE_DELAY_MS],
+      "leaving waits before closing",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), false);
@@ -606,7 +684,11 @@ test("focusing a broken reference opens the notice as hovering does", () => {
 
     content.fire("focusin", { target: anchor });
 
-    assert.deepEqual(clock.delays(), [HOVER_DELAY_MS], "keyboard users get the same delay");
+    assert.deepEqual(
+      clock.delays(),
+      [HOVER_DELAY_MS],
+      "keyboard users get the same delay",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), true);
@@ -655,7 +737,9 @@ test("clicking a broken reference still reports the chapter once", () => {
     clock.runAll();
     content.fire("click", { target: anchor, button: 0, preventDefault() {} });
 
-    assert.deepEqual(messages, [{ docId: "guide/intro.md", anchor: "1.4 配色与字体" }]);
+    assert.deepEqual(messages, [
+      { docId: "guide/intro.md", anchor: "1.4 配色与字体" },
+    ]);
     assert.deepEqual(navigations, [{ id: "guide/intro.md", anchor: null }]);
   });
 });
@@ -729,7 +813,11 @@ test("clicking a block reference leaves the navigation to the browser", () => {
       false,
       "the browser must follow the href, which is what routes and scrolls",
     );
-    assert.deepEqual(navigations, [], "the reader must not navigate a second time");
+    assert.deepEqual(
+      navigations,
+      [],
+      "the reader must not navigate a second time",
+    );
   });
 });
 
@@ -742,7 +830,11 @@ test("a modified click on a block reference is left alone as well", () => {
     view.tag(content);
 
     assert.equal(click(anchor, { metaKey: true }), false);
-    assert.equal(click(anchor, { button: 1 }), false, "a middle click opens a tab");
+    assert.equal(
+      click(anchor, { button: 1 }),
+      false,
+      "a middle click opens a tab",
+    );
     assert.deepEqual(navigations, []);
   });
 });
@@ -776,7 +868,11 @@ test("clicking a block reference closes the preview it opened", () => {
 
     click(anchor);
 
-    assert.equal(view.isOpen(), false, "the panel must not survive the navigation");
+    assert.equal(
+      view.isOpen(),
+      false,
+      "the panel must not survive the navigation",
+    );
   });
 });
 
@@ -791,7 +887,9 @@ test("a broken reference still reports its chapter and keeps the route in the re
     const prevented = click(anchor);
 
     assert.equal(prevented, true, "the document has no anchor to scroll to");
-    assert.deepEqual(messages, [{ docId: "guide/intro.md", anchor: "1.4 配色与字体" }]);
+    assert.deepEqual(messages, [
+      { docId: "guide/intro.md", anchor: "1.4 配色与字体" },
+    ]);
     assert.deepEqual(navigations, [{ id: "guide/intro.md", anchor: null }]);
   });
 });
@@ -807,7 +905,11 @@ test("the preview closes once the pointer leaves it", () => {
     assert.equal(view.isOpen(), true);
 
     content.fire("pointerout", { target: anchor, relatedTarget: null });
-    assert.deepEqual(clock.delays(), [CLOSE_DELAY_MS], "leaving waits before closing");
+    assert.deepEqual(
+      clock.delays(),
+      [CLOSE_DELAY_MS],
+      "leaving waits before closing",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), false);
@@ -834,7 +936,10 @@ test("the panel offers a pin and a close button", () => {
     const actions = byClass(panel, ACTIONS_CLASS)[0];
 
     assert.ok(actions, "the buttons sit in their own group");
-    assert.ok(byClass(panel, HEAD_TEXT_CLASS)[0], "the head keeps its text column");
+    assert.ok(
+      byClass(panel, HEAD_TEXT_CLASS)[0],
+      "the head keeps its text column",
+    );
 
     const pin = buttonOf(panel, PIN_CLASS);
     assert.equal(pin.getAttribute("type"), "button");
@@ -844,7 +949,11 @@ test("the panel offers a pin and a close button", () => {
     const close = buttonOf(panel, CLOSE_CLASS);
     assert.equal(close.getAttribute("type"), "button");
     assert.equal(close.getAttribute("aria-label"), CLOSE_LABEL);
-    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null, "a preview opens unpinned");
+    assert.equal(
+      panel.getAttribute(PIN_ATTRIBUTE),
+      null,
+      "a preview opens unpinned",
+    );
   });
 });
 
@@ -855,8 +964,14 @@ test("clicking inside the panel pins it", () => {
     clickInside(panel, byClass(panel, "preview-scroll")[0]);
 
     assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
-    assert.equal(buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"), "true");
-    assert.equal(buttonOf(panel, PIN_CLASS).getAttribute("aria-label"), UNPIN_LABEL);
+    assert.equal(
+      buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"),
+      "true",
+    );
+    assert.equal(
+      buttonOf(panel, PIN_CLASS).getAttribute("aria-label"),
+      UNPIN_LABEL,
+    );
   });
 });
 
@@ -871,7 +986,11 @@ test("a pinned preview survives the pointer leaving both the link and the panel"
     clock.runAll();
 
     panel.fire("pointerleave", {});
-    assert.deepEqual(clock.delays(), [], "leaving the panel arms no close timer");
+    assert.deepEqual(
+      clock.delays(),
+      [],
+      "leaving the panel arms no close timer",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), true);
@@ -926,9 +1045,17 @@ test("a pinned preview survives a navigation to another document", () => {
 
     assert.equal(prevented, false, "the browser follows the reference");
     assert.deepEqual(navigations, []);
-    assert.equal(view.isOpen(), true, "navigating does not dismiss a pinned panel");
+    assert.equal(
+      view.isOpen(),
+      true,
+      "navigating does not dismiss a pinned panel",
+    );
     assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
-    assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, shown, "the content is unchanged");
+    assert.equal(
+      byClass(panel, "preview-scroll")[0].innerHTML,
+      shown,
+      "the content is unchanged",
+    );
   });
 });
 
@@ -973,12 +1100,18 @@ function enterPointer(content, to) {
 
 test("moving between the children of one link does not restart the open timer", () => {
   setup(function ({ view, content, clock }) {
-    const { anchor, inner } = nestedLink("#/doc/guide/intro.md#getting-started");
+    const { anchor, inner } = nestedLink(
+      "#/doc/guide/intro.md#getting-started",
+    );
     content.appendChild(anchor);
     view.tag(content);
 
     enterPointer(content, anchor);
-    assert.deepEqual(clock.delays(), [HOVER_DELAY_MS], "the first hover arms the timer");
+    assert.deepEqual(
+      clock.delays(),
+      [HOVER_DELAY_MS],
+      "the first hover arms the timer",
+    );
 
     // The pointer is still on the link, it has merely crossed into the code
     // span inside its label: the browser reports an `out` and an `over` pair
@@ -992,13 +1125,19 @@ test("moving between the children of one link does not restart the open timer", 
 
     clock.runAll();
 
-    assert.equal(view.isOpen(), true, "the preview must still open after the delay");
+    assert.equal(
+      view.isOpen(),
+      true,
+      "the preview must still open after the delay",
+    );
   });
 });
 
 test("crossing a link with nested elements opens its preview", () => {
   setup(function ({ view, content, clock }) {
-    const { anchor, inner } = nestedLink("#/doc/guide/intro.md#getting-started");
+    const { anchor, inner } = nestedLink(
+      "#/doc/guide/intro.md#getting-started",
+    );
     content.appendChild(anchor);
     view.tag(content);
 
@@ -1013,7 +1152,9 @@ test("crossing a link with nested elements opens its preview", () => {
 
 test("a pointer leaving a link for its own child keeps the preview open", () => {
   setup(function ({ view, content, clock }) {
-    const { anchor, inner } = nestedLink("#/doc/guide/intro.md#getting-started");
+    const { anchor, inner } = nestedLink(
+      "#/doc/guide/intro.md#getting-started",
+    );
     content.appendChild(anchor);
     view.tag(content);
 
@@ -1022,7 +1163,11 @@ test("a pointer leaving a link for its own child keeps the preview open", () => 
     assert.equal(view.isOpen(), true);
 
     movePointer(content, anchor, inner);
-    assert.deepEqual(clock.delays(), [], "moving inside the link arms no close timer");
+    assert.deepEqual(
+      clock.delays(),
+      [],
+      "moving inside the link arms no close timer",
+    );
     clock.runAll();
     assert.equal(view.isOpen(), true);
   });
@@ -1041,7 +1186,11 @@ test("a pointer leaving the link for the page starts the close delay", () => {
     assert.equal(view.isOpen(), true);
 
     movePointer(content, anchor, outside);
-    assert.deepEqual(clock.delays(), [CLOSE_DELAY_MS], "leaving the link waits before closing");
+    assert.deepEqual(
+      clock.delays(),
+      [CLOSE_DELAY_MS],
+      "leaving the link waits before closing",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), false);
@@ -1050,7 +1199,9 @@ test("a pointer leaving the link for the page starts the close delay", () => {
 
 test("repeated hovers over one link arm exactly one timer", () => {
   setup(function ({ view, content, clock }) {
-    const { anchor, inner } = nestedLink("#/doc/guide/intro.md#getting-started");
+    const { anchor, inner } = nestedLink(
+      "#/doc/guide/intro.md#getting-started",
+    );
     content.appendChild(anchor);
     view.tag(content);
 
@@ -1109,7 +1260,11 @@ test("a full enter/leave/enter cycle reopens the preview", () => {
     movePointer(content, outside, anchor);
     clock.runAll();
 
-    assert.equal(view.isOpen(), true, "hovering again after a close must open again");
+    assert.equal(
+      view.isOpen(),
+      true,
+      "hovering again after a close must open again",
+    );
   });
 });
 
@@ -1131,7 +1286,11 @@ test("a close armed before re-entering the link never fires", () => {
 
     clock.runAll();
 
-    assert.equal(view.isOpen(), true, "the stale close timer must not close the panel");
+    assert.equal(
+      view.isOpen(),
+      true,
+      "the stale close timer must not close the panel",
+    );
   });
 });
 
@@ -1150,7 +1309,11 @@ test("a superseded open timer does not open the wrong link", () => {
 
     const panel = panelOf(doc);
     assert.equal(view.isOpen(), true);
-    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), "true", "the second link is the one shown");
+    assert.equal(
+      panel.getAttribute(MISSING_ATTRIBUTE),
+      "true",
+      "the second link is the one shown",
+    );
   });
 });
 
@@ -1181,7 +1344,9 @@ test("the panel builds its icons through the document, not through the svg", () 
     })(panel);
 
     assert.equal(paths.length, 5, "the pin and the cross draw five strokes");
-    const createdByDocument = doc.created.filter((element) => element.tagName === "PATH");
+    const createdByDocument = doc.created.filter(
+      (element) => element.tagName === "PATH",
+    );
     assert.equal(
       createdByDocument.length,
       paths.length,
@@ -1202,7 +1367,11 @@ test("a pinned panel ignores pointer boundary events", () => {
     view.tag(content);
 
     enterPointer(content, other);
-    assert.deepEqual(clock.delays(), [], "no preview is scheduled over a pinned one");
+    assert.deepEqual(
+      clock.delays(),
+      [],
+      "no preview is scheduled over a pinned one",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), true);
@@ -1223,11 +1392,19 @@ test("hovering another reference leaves a pinned preview alone", () => {
     ctx.view.tag(content);
 
     content.fire("pointerover", { target: other, relatedTarget: null });
-    assert.deepEqual(clock.delays(), [], "no preview is scheduled over a pinned one");
+    assert.deepEqual(
+      clock.delays(),
+      [],
+      "no preview is scheduled over a pinned one",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), true);
-    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), null, "the pinned role is unchanged");
+    assert.equal(
+      panel.getAttribute(MISSING_ATTRIBUTE),
+      null,
+      "the pinned role is unchanged",
+    );
     assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, shown);
   });
 });
@@ -1249,7 +1426,11 @@ test("the pin button pins and unpins an open preview", () => {
     assert.equal(pin.getAttribute("aria-label"), PIN_LABEL);
 
     // Unpinning hands the panel back to the pointer: leaving closes it.
-    assert.equal(view.isOpen(), true, "the panel stays while the click is still on it");
+    assert.equal(
+      view.isOpen(),
+      true,
+      "the panel stays while the click is still on it",
+    );
     content.fire("pointerout", { target: anchor, relatedTarget: null });
     clock.runAll();
 
@@ -1267,7 +1448,11 @@ test("the close button closes a pinned preview and clears its state", () => {
     clock.runAll();
 
     assert.equal(view.isOpen(), false);
-    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null, "no pinned frame is left behind");
+    assert.equal(
+      panel.getAttribute(PIN_ATTRIBUTE),
+      null,
+      "no pinned frame is left behind",
+    );
     assert.equal(panel.hidden, true);
     assert.equal(anchor.getAttribute("aria-expanded"), "false");
     assert.equal(panelOf(doc), panel, "the panel is still the one instance");
@@ -1278,7 +1463,10 @@ test("the close button closes a pinned preview and clears its state", () => {
 
     assert.equal(view.isOpen(), true);
     assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
-    assert.equal(buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"), "false");
+    assert.equal(
+      buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"),
+      "false",
+    );
   });
 });
 
@@ -1298,7 +1486,11 @@ test("clicking the reference a pinned panel describes unpins and closes it", () 
     });
     clock.runAll();
 
-    assert.equal(prevented, true, "the browser must not follow the link as well");
+    assert.equal(
+      prevented,
+      true,
+      "the browser must not follow the link as well",
+    );
     assert.equal(view.isOpen(), false);
     assert.deepEqual(navigations, [], "closing the panel is not a navigation");
     assert.equal(anchor.getAttribute("aria-expanded"), "false");
@@ -1355,7 +1547,11 @@ test("unpinning with the pointer away closes the panel after the delay", () => {
 
     press(buttonOf(panel, PIN_CLASS));
     assert.equal(view.isOpen(), true, "the click is still on the panel");
-    assert.deepEqual(clock.delays(), [CLOSE_DELAY_MS], "the grace period comes back");
+    assert.deepEqual(
+      clock.delays(),
+      [CLOSE_DELAY_MS],
+      "the grace period comes back",
+    );
 
     clock.runAll();
     assert.equal(view.isOpen(), false);
@@ -1412,7 +1608,7 @@ test("switching documents keeps a pinned preview and drops nothing of it", () =>
 /* ---------- dragging the panel by its head ---------- */
 
 /** A press on the head, dispatched where the view listens for it. */
-function pressHead(panel, head, x, y) {
+function pressHead(_panel, head, x, y) {
   let prevented = false;
   head.fire("pointerdown", {
     target: head,
@@ -1446,7 +1642,11 @@ function releasePointer(fire, x, y) {
  */
 function openPanel(ctx) {
   const opened = openPreview(ctx);
-  return Object.assign({ head: byClass(opened.panel, HEAD_CLASS)[0] }, ctx, opened);
+  return Object.assign(
+    { head: byClass(opened.panel, HEAD_CLASS)[0] },
+    ctx,
+    opened,
+  );
 }
 
 test("the head is the handle a reader drags the panel by", () => {
@@ -1455,7 +1655,11 @@ test("the head is the handle a reader drags the panel by", () => {
 
     assert.ok(head, "the head is the element the pointer has to find");
     assert.equal(head.getAttribute("title"), DRAG_LABEL);
-    assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null, "nothing is being dragged yet");
+    assert.equal(
+      panel.getAttribute(DRAGGING_ATTRIBUTE),
+      null,
+      "nothing is being dragged yet",
+    );
   });
 });
 
@@ -1474,7 +1678,11 @@ test("dragging the head moves the panel with the pointer", () => {
 
     releasePointer(fire, 160, 150);
 
-    assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null, "the drag is over");
+    assert.equal(
+      panel.getAttribute(DRAGGING_ATTRIBUTE),
+      null,
+      "the drag is over",
+    );
     assert.equal(
       parseFloat(panel.style.left),
       left + DRAG_THRESHOLD_PX + 57,
@@ -1486,19 +1694,34 @@ test("dragging the head moves the panel with the pointer", () => {
 test("a drag pins the panel before it moves a pixel", () => {
   setup(function (ctx) {
     const { view, content, panel, head, clock, fire, anchor } = openPanel(ctx);
-    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null, "a hovered preview is unpinned");
+    assert.equal(
+      panel.getAttribute(PIN_ATTRIBUTE),
+      null,
+      "a hovered preview is unpinned",
+    );
 
     pressHead(panel, head, 100, 110);
 
-    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true", "the press itself claims the panel");
-    assert.equal(buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"), "true");
+    assert.equal(
+      panel.getAttribute(PIN_ATTRIBUTE),
+      "true",
+      "the press itself claims the panel",
+    );
+    assert.equal(
+      buttonOf(panel, PIN_CLASS).getAttribute("aria-pressed"),
+      "true",
+    );
 
     // The pointer leaves the link on its way out of the panel: a pinned panel
     // must not arm the close delay it is guarded against.
     content.fire("pointerout", { target: anchor, relatedTarget: null });
     panel.fire("pointerleave", {});
     fire("scroll", {});
-    assert.deepEqual(clock.delays(), [], "no delay may take a dragged panel away");
+    assert.deepEqual(
+      clock.delays(),
+      [],
+      "no delay may take a dragged panel away",
+    );
     clock.runAll();
 
     assert.equal(view.isOpen(), true);
@@ -1533,7 +1756,11 @@ test("a press on a head button starts no drag", () => {
       dragTo(fire, 100 + DRAG_THRESHOLD_PX + 80, 110);
       releasePointer(fire, 200, 110);
 
-      assert.equal(panel.style.left, left, "the buttons keep their own meaning");
+      assert.equal(
+        panel.style.left,
+        left,
+        "the buttons keep their own meaning",
+      );
       assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null);
     }
   });
@@ -1592,7 +1819,10 @@ test("a dragged panel keeps its place until it is closed", () => {
     dragTo(fire, 200 + DRAG_THRESHOLD_PX + 10, 200 + 10);
     releasePointer(fire, 213, 213);
 
-    assert.equal(parseFloat(panel.style.left), parseFloat(left) + DRAG_THRESHOLD_PX + 10);
+    assert.equal(
+      parseFloat(panel.style.left),
+      parseFloat(left) + DRAG_THRESHOLD_PX + 10,
+    );
     assert.equal(parseFloat(panel.style.top), parseFloat(top) + 10);
 
     // A render, a scroll and the pointer leaving all leave it alone.
@@ -1603,7 +1833,10 @@ test("a dragged panel keeps its place until it is closed", () => {
     clock.runAll();
 
     assert.equal(view.isOpen(), true);
-    assert.equal(panel.style.left, String(parseFloat(left) + DRAG_THRESHOLD_PX + 10) + "px");
+    assert.equal(
+      panel.style.left,
+      String(parseFloat(left) + DRAG_THRESHOLD_PX + 10) + "px",
+    );
   });
 });
 
@@ -1626,7 +1859,11 @@ test("closing a dragged panel forgets where the reader put it", () => {
     clock.runAll();
 
     assert.equal(view.isOpen(), true);
-    assert.equal(panel.style.left, original, "the manual place does not outlive the panel");
+    assert.equal(
+      panel.style.left,
+      original,
+      "the manual place does not outlive the panel",
+    );
     assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
   });
 });
@@ -1651,7 +1888,11 @@ test("a notice is dragged by the same head", () => {
     releasePointer(fire, 133, 130);
 
     assert.equal(parseFloat(panel.style.left), left + DRAG_THRESHOLD_PX + 30);
-    assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), "true", "the notice keeps its role");
+    assert.equal(
+      panel.getAttribute(MISSING_ATTRIBUTE),
+      "true",
+      "the notice keeps its role",
+    );
     assert.equal(panel.getAttribute(PIN_ATTRIBUTE), "true");
   });
 });

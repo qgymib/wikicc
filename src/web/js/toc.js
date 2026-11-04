@@ -36,7 +36,13 @@ export var LOCK_MAX_MS = 2000;
 
 /** Whether a click should be handled by the router instead of the browser. */
 function isPlainLeftClick(event) {
-  return !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0;
+  return (
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey &&
+    event.button === 0
+  );
 }
 
 /**
@@ -153,7 +159,9 @@ export function createToc(options) {
 
     var scroll = scrollTop();
     offsets = links.map(function (link) {
-      var heading = globalThis.document.getElementById(link.getAttribute("data-anchor"));
+      var heading = globalThis.document.getElementById(
+        link.getAttribute("data-anchor"),
+      );
       if (!heading) {
         return Infinity;
       }
@@ -289,7 +297,12 @@ export function createToc(options) {
       return false;
     }
     var height = viewportHeight();
-    return pointerY >= 0 && pointerY <= height && pointerX >= 0 && pointerX <= (view.innerWidth || 0);
+    return (
+      pointerY >= 0 &&
+      pointerY <= height &&
+      pointerX >= 0 &&
+      pointerX <= (view.innerWidth || 0)
+    );
   }
 
   /** Whether the locked entry is the one the reading line points at now. */
@@ -442,7 +455,9 @@ export function createToc(options) {
     }
 
     build(toc, container);
-    links = Array.prototype.slice.call(container.querySelectorAll("a[data-anchor]"));
+    links = Array.prototype.slice.call(
+      container.querySelectorAll("a[data-anchor]"),
+    );
     anchors = links.map(function (link) {
       return link.getAttribute("data-anchor");
     });
@@ -454,7 +469,8 @@ export function createToc(options) {
     // that anchor right after this call. Locking it now keeps the outline on
     // the linked section while the jump is in flight.
     var route = parseHash(view.location.hash);
-    var linked = route.id === docId && route.anchor ? anchors.indexOf(route.anchor) : -1;
+    var linked =
+      route.id === docId && route.anchor ? anchors.indexOf(route.anchor) : -1;
     if (linked >= 0) {
       engageLock(anchors[linked]);
     } else {

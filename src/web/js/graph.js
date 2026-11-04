@@ -12,7 +12,13 @@
  * SVG layer lives in `graph-view.js`. Nothing here calls `Math.random`,
  * `Date.now` or `performance.now`.
  */
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from "d3-force";
+import {
+  forceCenter,
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+} from "d3-force";
 
 /** Above this many nodes the renderer drops labels and arrowheads. */
 export var SIMPLIFY_THRESHOLD = 400;
@@ -60,7 +66,10 @@ export function frameFor(count) {
     total = 1;
   }
 
-  var spread = Math.min(MAX_SPREAD, Math.max(MIN_SPREAD, Math.sqrt(total / REF_NODES)));
+  var spread = Math.min(
+    MAX_SPREAD,
+    Math.max(MIN_SPREAD, Math.sqrt(total / REF_NODES)),
+  );
   return {
     width: LAYOUT_DEFAULTS.width * spread,
     height: LAYOUT_DEFAULTS.height * spread,
@@ -125,7 +134,8 @@ function endpoint(value) {
  * `(from, to)` so the layout never depends on the payload order of the edges.
  */
 export function dedupeEdges(edges, knownIds) {
-  var known = knownIds === null || knownIds === undefined ? null : new Set(knownIds);
+  var known =
+    knownIds === null || knownIds === undefined ? null : new Set(knownIds);
   var seen = new Set();
   var result = [];
 
@@ -243,7 +253,11 @@ export function neighbors(adjacency, id) {
     return [];
   }
 
-  return unionNeighbors(adjacency.out ? adjacency.out.get(id) : null, adjacency.incoming ? adjacency.incoming.get(id) : null, id);
+  return unionNeighbors(
+    adjacency.out ? adjacency.out.get(id) : null,
+    adjacency.incoming ? adjacency.incoming.get(id) : null,
+    id,
+  );
 }
 
 /** Hops a local view reaches out from its seed. */
@@ -285,7 +299,10 @@ export function subgraph(ids, edges, seed, depth) {
     return { ids: [], edges: [] };
   }
 
-  var hops = Number.isFinite(Number(depth)) && Number(depth) >= 1 ? Math.floor(Number(depth)) : LOCAL_DEPTH;
+  var hops =
+    Number.isFinite(Number(depth)) && Number(depth) >= 1
+      ? Math.floor(Number(depth))
+      : LOCAL_DEPTH;
   var kept = dedupeEdges(edges, list);
   var adjacency = buildAdjacency(kept);
 
@@ -341,7 +358,8 @@ function centroid(nodes) {
 function maxRadius(nodes, center) {
   return nodes.reduce(function (largest, node) {
     var distance = Math.sqrt(
-      (node.x - center.x) * (node.x - center.x) + (node.y - center.y) * (node.y - center.y),
+      (node.x - center.x) * (node.x - center.x) +
+        (node.y - center.y) * (node.y - center.y),
     );
     return Math.max(largest, distance);
   }, 0);
@@ -380,7 +398,10 @@ function normalize(nodes, settings) {
   var spanY = maxY - minY;
   var innerWidth = Math.max(1, settings.width - 2 * settings.padding);
   var innerHeight = Math.max(1, settings.height - 2 * settings.padding);
-  var scale = Math.min(spanX > 0 ? innerWidth / spanX : Infinity, spanY > 0 ? innerHeight / spanY : Infinity);
+  var scale = Math.min(
+    spanX > 0 ? innerWidth / spanX : Infinity,
+    spanY > 0 ? innerHeight / spanY : Infinity,
+  );
 
   if (!Number.isFinite(scale)) {
     scale = 1;
@@ -434,7 +455,12 @@ export function layout(ids, edges, options) {
   var adjacency = buildAdjacency(links);
 
   if (!list.length) {
-    return { width: settings.width, height: settings.height, links: [], nodes: [] };
+    return {
+      width: settings.width,
+      height: settings.height,
+      links: [],
+      nodes: [],
+    };
   }
 
   // An explicit viewport wins; otherwise the frame follows the node count, so
@@ -505,7 +531,10 @@ export function layout(ids, edges, options) {
     // Documents that link nowhere would be pushed far away by the repulsion,
     // so they are parked on a ring around the connected cluster instead.
     var center = centroid(connected);
-    var ring = Math.max(maxRadius(connected, center) * settings.isolateScale, settings.linkDistance);
+    var ring = Math.max(
+      maxRadius(connected, center) * settings.isolateScale,
+      settings.linkDistance,
+    );
 
     isolated.forEach(function (node, index) {
       var angle = (2 * Math.PI * index) / isolated.length - Math.PI / 2;

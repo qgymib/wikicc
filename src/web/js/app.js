@@ -42,7 +42,9 @@ function readPayload() {
 /** Theme the operating system asks for. */
 export function systemTheme() {
   if (typeof globalThis.matchMedia === "function") {
-    return globalThis.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    return globalThis.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
   }
   return "dark";
 }
@@ -52,7 +54,7 @@ function storedTheme() {
   try {
     var value = globalThis.localStorage.getItem(THEME_KEY);
     return value === "light" || value === "dark" ? value : null;
-  } catch (error) {
+  } catch (_error) {
     return null;
   }
 }
@@ -60,7 +62,7 @@ function storedTheme() {
 function storeTheme(theme) {
   try {
     globalThis.localStorage.setItem(THEME_KEY, theme);
-  } catch (error) {
+  } catch (_error) {
     /* Storage can be disabled; the theme still applies for this page. */
   }
 }
@@ -80,7 +82,8 @@ export function applyTheme(theme, toggle) {
 
   if (toggle) {
     var current = theme || systemTheme();
-    var label = current === "light" ? "Switch to dark theme" : "Switch to light theme";
+    var label =
+      current === "light" ? "Switch to dark theme" : "Switch to light theme";
     toggle.setAttribute("aria-pressed", current === "light" ? "true" : "false");
     toggle.setAttribute("aria-label", label);
     toggle.setAttribute("title", label);
@@ -102,7 +105,9 @@ export function syncModeButton(button, mode) {
   }
 
   var global = mode === GraphView.GLOBAL_MODE;
-  var label = global ? "Show only this document and its neighbours" : "Show the whole graph";
+  var label = global
+    ? "Show only this document and its neighbours"
+    : "Show the whole graph";
   button.textContent = global ? "Global" : "Local";
   button.setAttribute("aria-pressed", global ? "true" : "false");
   button.setAttribute("aria-label", label);
@@ -128,7 +133,9 @@ export function start() {
   var sidebarToggle = document.getElementById("sidebar-toggle");
   var backdrop = document.getElementById("drawer-backdrop");
   var themeToggle = document.getElementById("theme-toggle");
-  var tabs = Array.prototype.slice.call(document.querySelectorAll(".inspector-tab"));
+  var tabs = Array.prototype.slice.call(
+    document.querySelectorAll(".inspector-tab"),
+  );
 
   var index = Search.createSearch(docs);
   var currentId = null;
@@ -186,7 +193,10 @@ export function start() {
   if (modeButton) {
     syncModeButton(modeButton, graph.getMode());
     modeButton.addEventListener("click", function () {
-      var next = graph.getMode() === GraphView.GLOBAL_MODE ? GraphView.LOCAL_MODE : GraphView.GLOBAL_MODE;
+      var next =
+        graph.getMode() === GraphView.GLOBAL_MODE
+          ? GraphView.LOCAL_MODE
+          : GraphView.GLOBAL_MODE;
       graph.setMode(next);
       syncModeButton(modeButton, graph.getMode());
     });
@@ -311,7 +321,10 @@ export function start() {
     }
 
     var remaining = typeof frames === "number" ? frames : 2;
-    if (remaining <= 0 || typeof globalThis.requestAnimationFrame !== "function") {
+    if (
+      remaining <= 0 ||
+      typeof globalThis.requestAnimationFrame !== "function"
+    ) {
       scrollToAnchor(findAnchor(doc, anchor));
       return;
     }
@@ -455,7 +468,9 @@ export function start() {
     if (changed) {
       renderDocument(doc);
       toc.render(doc.toc, doc.id);
-      document.title = doc.title ? doc.title + " · " + bundle.title : bundle.title;
+      document.title = doc.title
+        ? doc.title + " · " + bundle.title
+        : bundle.title;
     }
 
     docList.render(null, route.id);
@@ -494,7 +509,7 @@ export function start() {
       // browsers refuse `replaceState` on `file://`; the page still works.
       try {
         globalThis.history.replaceState(null, "", Router.formatHash(route.id));
-      } catch (error) {
+      } catch (_error) {
         /* Keep the hash the user arrived with. */
       }
     }
@@ -642,7 +657,10 @@ export function start() {
   /* ---------- stats ---------- */
 
   if (stats) {
-    var assets = bundle.stats && typeof bundle.stats.assets === "number" ? bundle.stats.assets : 0;
+    var assets =
+      bundle.stats && typeof bundle.stats.assets === "number"
+        ? bundle.stats.assets
+        : 0;
     stats.textContent =
       docs.length +
       (docs.length === 1 ? " document" : " documents") +

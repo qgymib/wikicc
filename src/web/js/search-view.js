@@ -178,7 +178,11 @@ export var QUERY_DELAY_MS = 90;
 
 /** Whether a keyboard event is the one that opens the panel on this platform. */
 export function isSearchShortcut(event) {
-  if (!event || typeof event.key !== "string" || event.key.toLowerCase() !== "f") {
+  if (
+    !event ||
+    typeof event.key !== "string" ||
+    event.key.toLowerCase() !== "f"
+  ) {
     return false;
   }
 
@@ -221,10 +225,12 @@ export function createSearchView(options) {
       return null;
     };
   var delay =
-    options && typeof options.delay === "number" ? Math.max(0, options.delay) : QUERY_DELAY_MS;
+    options && typeof options.delay === "number"
+      ? Math.max(0, options.delay)
+      : QUERY_DELAY_MS;
 
   /** The button that opens and closes the panel, if the page has one. */
-  var toggle = (options && options.toggle) || null;
+  var toggleButton = (options && options.toggle) || null;
 
   var input = null;
   var results = null;
@@ -305,17 +311,18 @@ export function createSearchView(options) {
     icon.setAttribute("class", "search-icon");
     icon.setAttribute("viewBox", "0 0 24 24");
     icon.setAttribute("aria-hidden", "true");
-    [["circle", { cx: "11", cy: "11", r: "7" }], ["path", { d: "M16.5 16.5 21 21" }]].forEach(
-      function (shape) {
-        var node = document.createElementNS
-          ? document.createElementNS("http://www.w3.org/2000/svg", shape[0])
-          : document.createElement(shape[0]);
-        Object.keys(shape[1]).forEach(function (name) {
-          node.setAttribute(name, shape[1][name]);
-        });
-        icon.appendChild(node);
-      },
-    );
+    [
+      ["circle", { cx: "11", cy: "11", r: "7" }],
+      ["path", { d: "M16.5 16.5 21 21" }],
+    ].forEach(function (shape) {
+      var node = document.createElementNS
+        ? document.createElementNS("http://www.w3.org/2000/svg", shape[0])
+        : document.createElement(shape[0]);
+      Object.keys(shape[1]).forEach(function (name) {
+        node.setAttribute(name, shape[1][name]);
+      });
+      icon.appendChild(node);
+    });
 
     input = document.createElement("input");
     input.className = INPUT_CLASS;
@@ -401,14 +408,14 @@ export function createSearchView(options) {
    * would open the panel again and leave it stuck on screen.
    */
   function insideToggle(node) {
-    if (!toggle || !node) {
+    if (!toggleButton || !node) {
       return false;
     }
-    if (typeof toggle.contains === "function") {
-      return toggle.contains(node);
+    if (typeof toggleButton.contains === "function") {
+      return toggleButton.contains(node);
     }
 
-    return node === toggle;
+    return node === toggleButton;
   }
 
   /**
@@ -419,14 +426,18 @@ export function createSearchView(options) {
    * has gone; the caller keeps its own sync for the paths it drives.
    */
   function setToggleExpanded(expanded) {
-    if (toggle && typeof toggle.setAttribute === "function") {
-      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    if (toggleButton && typeof toggleButton.setAttribute === "function") {
+      toggleButton.setAttribute("aria-expanded", expanded ? "true" : "false");
     }
   }
 
   /** A press outside the panel closes it; one inside it is used by the panel. */
   function onPointerDown(event) {
-    if (!open || contains(event && event.target) || insideToggle(event && event.target)) {
+    if (
+      !open ||
+      contains(event && event.target) ||
+      insideToggle(event && event.target)
+    ) {
       return;
     }
 
@@ -531,9 +542,10 @@ export function createSearchView(options) {
    * download, a `target` the author set — is left to the browser.
    */
   function onPreviewClick(event) {
-    var link = event && event.target && typeof event.target.closest === "function"
-      ? event.target.closest("a[href]")
-      : null;
+    var link =
+      event && event.target && typeof event.target.closest === "function"
+        ? event.target.closest("a[href]")
+        : null;
     if (!link) {
       return;
     }
@@ -711,10 +723,14 @@ export function createSearchView(options) {
     if (entry.snippet) {
       var cut = entry.snippet;
       context.appendChild(
-        document.createTextNode((cut.trimmedStart ? ELLIPSIS : "") + cut.before),
+        document.createTextNode(
+          (cut.trimmedStart ? ELLIPSIS : "") + cut.before,
+        ),
       );
       context.appendChild(markNode(cut.hit));
-      context.appendChild(document.createTextNode(cut.after + (cut.trimmedEnd ? ELLIPSIS : "")));
+      context.appendChild(
+        document.createTextNode(cut.after + (cut.trimmedEnd ? ELLIPSIS : "")),
+      );
     } else {
       // A document matched on its title alone has no passage to quote; its own
       // path is the next most useful thing to put beside the title.
@@ -824,7 +840,7 @@ export function createSearchView(options) {
 
     try {
       return documentOf(id) || null;
-    } catch (error) {
+    } catch (_error) {
       // The preview is built from whatever the page hands over; a payload
       // that throws is the page's problem to log, not a reason the panel
       // stops answering.
@@ -854,7 +870,9 @@ export function createSearchView(options) {
       document.createTextNode((cut.trimmedStart ? ELLIPSIS : "") + cut.before),
     );
     passage.appendChild(markNode(cut.hit));
-    passage.appendChild(document.createTextNode(cut.after + (cut.trimmedEnd ? ELLIPSIS : "")));
+    passage.appendChild(
+      document.createTextNode(cut.after + (cut.trimmedEnd ? ELLIPSIS : "")),
+    );
     preview.appendChild(passage);
   }
 
@@ -941,12 +959,16 @@ export function createSearchView(options) {
       return "";
     }
 
-    return String(node.nodeValue === undefined ? node.textContent : node.nodeValue);
+    return String(
+      node.nodeValue === undefined ? node.textContent : node.nodeValue,
+    );
   }
 
   /** `NodeFilter.SHOW_TEXT`, without depending on the constant being exposed. */
   function textNodes() {
-    return typeof NodeFilter === "undefined" || !NodeFilter.SHOW_TEXT ? 4 : NodeFilter.SHOW_TEXT;
+    return typeof NodeFilter === "undefined" || !NodeFilter.SHOW_TEXT
+      ? 4
+      : NodeFilter.SHOW_TEXT;
   }
 
   /** Whether a text node sits in a subtree whose text is left alone. */
@@ -957,7 +979,10 @@ export function createSearchView(options) {
 
     var parent = node.parentNode;
     while (parent && parent !== preview) {
-      if (parent.tagName && UNHIGHLIGHTED_TAGS.indexOf(String(parent.tagName).toUpperCase()) !== -1) {
+      if (
+        parent.tagName &&
+        UNHIGHLIGHTED_TAGS.indexOf(String(parent.tagName).toUpperCase()) !== -1
+      ) {
         return true;
       }
       parent = parent.parentNode;
@@ -1126,7 +1151,11 @@ export function createSearchView(options) {
     // Only a panel that was built ever registered the listener, and a shell
     // without a container never builds one — so there may be nothing to take
     // away, and where there is no document there is nothing to take it from.
-    if (input && typeof document !== "undefined" && document.removeEventListener) {
+    if (
+      input &&
+      typeof document !== "undefined" &&
+      document.removeEventListener
+    ) {
       document.removeEventListener("pointerdown", onPointerDown, true);
     }
     if (container) {

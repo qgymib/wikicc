@@ -23,7 +23,7 @@ export const ROUTE_PREFIX = "#/doc/";
 export function decodePart(text) {
   try {
     return decodeURIComponent(text);
-  } catch (error) {
+  } catch (_error) {
     return text;
   }
 }

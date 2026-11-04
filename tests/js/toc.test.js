@@ -39,9 +39,15 @@ test("stays inside the section when no heading is anywhere near the screen", () 
 test("picks the closest preceding heading for every position", () => {
   for (let line = 0; line <= 5000; line += 25) {
     const index = toc.pickActive(OFFSETS, line, false);
-    assert.ok(OFFSETS[index] <= line, `line ${line} must not point below itself`);
+    assert.ok(
+      OFFSETS[index] <= line,
+      `line ${line} must not point below itself`,
+    );
     if (index + 1 < OFFSETS.length) {
-      assert.ok(OFFSETS[index + 1] > line, `line ${line} must not skip a section`);
+      assert.ok(
+        OFFSETS[index + 1] > line,
+        `line ${line} must not skip a section`,
+      );
     }
   }
 });
@@ -50,7 +56,10 @@ test("never moves backwards while the reading line advances", () => {
   let previous = -1;
   for (let line = 0; line <= 5000; line += 7) {
     const index = toc.pickActive(OFFSETS, line, false);
-    assert.ok(index >= previous, `line ${line} went back from ${previous} to ${index}`);
+    assert.ok(
+      index >= previous,
+      `line ${line} went back from ${previous} to ${index}`,
+    );
     previous = index;
   }
 });

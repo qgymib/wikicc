@@ -90,18 +90,21 @@ function fakeElement(tagName) {
       this.attributes[name] = String(value);
     },
     getAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+      return Object.hasOwn(this.attributes, name)
         ? this.attributes[name]
         : null;
     },
     hasAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(this.attributes, name);
+      return Object.hasOwn(this.attributes, name);
     },
     removeAttribute(name) {
       delete this.attributes[name];
     },
     addEventListener(type, handler) {
-      (this.listeners[type] = this.listeners[type] || []).push(handler);
+      if (!this.listeners[type]) {
+        this.listeners[type] = [];
+      }
+      this.listeners[type].push(handler);
     },
     removeEventListener(type, handler) {
       var list = this.listeners[type] || [];
@@ -142,7 +145,10 @@ function fakeElement(tagName) {
       var node = this;
 
       while (node) {
-        if (node.tagName === tag && (!needsHref || node.getAttribute("href") !== null)) {
+        if (
+          node.tagName === tag &&
+          (!needsHref || node.getAttribute("href") !== null)
+        ) {
           return node;
         }
         node = node.parentNode;
@@ -186,7 +192,9 @@ function fakeElement(tagName) {
     get() {
       // A node with children reads theirs, as a browser does; a node written
       // with `textContent` holds its own text and has none.
-      return element.children.length ? element.children.map(textOf).join("") : text;
+      return element.children.length
+        ? element.children.map(textOf).join("")
+        : text;
     },
     set(value) {
       text = String(value);
@@ -226,11 +234,20 @@ function outerOf(node) {
 
   var attributes = Object.keys(node.attributes || {})
     .map(function (name) {
-      return ' ' + name + '="' + node.attributes[name] + '"';
+      return " " + name + '="' + node.attributes[name] + '"';
     })
     .join("");
 
-  return "<" + node.tagName.toLowerCase() + attributes + ">" + node.children.map(outerOf).join("") + "</" + node.tagName.toLowerCase() + ">";
+  return (
+    "<" +
+    node.tagName.toLowerCase() +
+    attributes +
+    ">" +
+    node.children.map(outerOf).join("") +
+    "</" +
+    node.tagName.toLowerCase() +
+    ">"
+  );
 }
 
 /**
@@ -419,7 +436,7 @@ function withPage(work) {
     createElement(tagName) {
       return make(tagName);
     },
-    createElementNS(namespace, tagName) {
+    createElementNS(_namespace, tagName) {
       return make(tagName);
     },
     createTextNode(value) {
@@ -429,7 +446,10 @@ function withPage(work) {
       return treeWalker(root);
     },
     addEventListener(type, handler) {
-      (documentListeners[type] = documentListeners[type] || []).push(handler);
+      if (!documentListeners[type]) {
+        documentListeners[type] = [];
+      }
+      documentListeners[type].push(handler);
     },
     removeEventListener(type, handler) {
       var list = documentListeners[type] || [];
@@ -457,9 +477,11 @@ function withPage(work) {
       container: container,
       /** Deliver a press anywhere: the panel listens to the whole document. */
       press(target) {
-        (documentListeners.pointerdown || []).slice().forEach(function (handler) {
-          handler({ target: target });
-        });
+        (documentListeners.pointerdown || [])
+          .slice()
+          .forEach(function (handler) {
+            handler({ target: target });
+          });
       },
       /** Run the debounced query the field scheduled, if any is pending. */
       settle() {
@@ -490,7 +512,13 @@ function withPage(work) {
 
 /** The snippet a result carries: a body hit with both ends cut. */
 function snippet(hit) {
-  return { before: "or ", hit: hit, after: " and more", trimmedStart: true, trimmedEnd: true };
+  return {
+    before: "or ",
+    hit: hit,
+    after: " and more",
+    trimmedStart: true,
+    trimmedEnd: true,
+  };
 }
 
 /** One entry as `search.js` returns it, naming its occurrence when given. */
@@ -626,7 +654,11 @@ test("typing asks one question per pause, not one per keystroke", () => {
     input.value = "alp";
     input.fire("input", { target: input });
 
-    assert.equal(built.calls.queries.length, 0, "nothing is asked while the hand is still moving");
+    assert.equal(
+      built.calls.queries.length,
+      0,
+      "nothing is asked while the hand is still moving",
+    );
 
     page.settle();
 
@@ -658,7 +690,9 @@ test("the list shows the title and the context of every match", () => {
     var context = page.container.findAll("search-result-context")[0];
     assert.equal(textOf(context), "\u2026or alpha and more\u2026");
     assert.equal(
-      page.container.findAll("search-result-context")[1].parentNode.getAttribute("aria-selected"),
+      page.container
+        .findAll("search-result-context")[1]
+        .parentNode.getAttribute("aria-selected"),
       "false",
     );
   });
@@ -680,17 +714,27 @@ test("the context of a match never arrives as markup", () => {
     built.view.open();
     type(built.view, page, "bold");
 
-    assert.equal(page.container.findAll("search-result-title")[0].textContent, title);
+    assert.equal(
+      page.container.findAll("search-result-title")[0].textContent,
+      title,
+    );
 
     var marks = page.container.findAllByTag("mark");
-    assert.ok(marks.length > 0, "the hit is marked in the list and in the preview: " + marks.length);
+    assert.ok(
+      marks.length > 0,
+      "the hit is marked in the list and in the preview: " + marks.length,
+    );
     assert.ok(
       marks.every(function (node) {
         return node.children.length === 0;
       }),
       "the text is set as text, not parsed",
     );
-    assert.equal(page.container.findAll("search-result-context")[0].children[1].textContent, hit);
+    assert.equal(
+      page.container.findAll("search-result-context")[0].children[1]
+        .textContent,
+      hit,
+    );
   });
 });
 
@@ -712,8 +756,13 @@ test("the preview shows the passage of the selected match, with the hit marked",
     assert.equal(passage.className, "search-passage");
     assert.deepEqual(
       passage.children.map(function (node) {
-        assert.ok(!node.children.length, "a passage is text and one mark, never markup");
-        return node.tagName === "MARK" ? "[" + textOf(node) + "]" : textOf(node);
+        assert.ok(
+          !node.children.length,
+          "a passage is text and one mark, never markup",
+        );
+        return node.tagName === "MARK"
+          ? "[" + textOf(node) + "]"
+          : textOf(node);
       }),
       ["\u2026or ", "[alpha]", " and more\u2026"],
     );
@@ -734,7 +783,7 @@ function documentOf(page) {
 test("the preview shows the whole document, not just the passage", () => {
   withPage(function (page) {
     var html =
-      "<h1 id=\"alpha\">Alpha</h1>\n<p>alpha one</p>\n<p>alpha two</p>\n<p>alpha three</p>\n";
+      '<h1 id="alpha">Alpha</h1>\n<p>alpha one</p>\n<p>alpha two</p>\n<p>alpha three</p>\n';
     var built = build({
       container: page.container,
       documents: { "a.md": documentModel("a.md", "Alpha", html) },
@@ -763,7 +812,8 @@ test("the preview shows the whole document, not just the passage", () => {
 
 test("every hit in the whole document is marked, not only the first", () => {
   withPage(function (page) {
-    var html = "<h1>A</h1>\n<p>alpha here</p>\n<p>nothing</p>\n<p>alpha again</p>\n";
+    var html =
+      "<h1>A</h1>\n<p>alpha here</p>\n<p>nothing</p>\n<p>alpha again</p>\n";
     var built = build({
       container: page.container,
       documents: { "a.md": documentModel("a.md", "Alpha", html) },
@@ -818,7 +868,11 @@ test("the preview is scrolled to the first hit", () => {
     var built = build({
       container: page.container,
       documents: {
-        "a.md": documentModel("a.md", "Alpha", "<p>alpha first</p>\n<p>alpha second</p>\n"),
+        "a.md": documentModel(
+          "a.md",
+          "Alpha",
+          "<p>alpha first</p>\n<p>alpha second</p>\n",
+        ),
       },
       answer() {
         return [entry("a.md", "Alpha", "alpha")];
@@ -863,7 +917,11 @@ test("an occurrence past the marked hits lands on the last mark there is", () =>
 
     var marks = page.container.findAll(HIT_CLASS);
     assert.equal(marks.length, 1, "the code block's hit is not marked");
-    assert.deepEqual(scrolled, [marks[0]], "the eye is brought to the nearest mark there is");
+    assert.deepEqual(
+      scrolled,
+      [marks[0]],
+      "the eye is brought to the nearest mark there is",
+    );
   });
 });
 
@@ -880,10 +938,17 @@ test("picking another occurrence of one document scrolls, and does not redraw", 
     var built = build({
       container: page.container,
       documents: {
-        "a.md": documentModel("a.md", "Alpha", "<p>alpha first</p>\n<p>alpha second</p>\n"),
+        "a.md": documentModel(
+          "a.md",
+          "Alpha",
+          "<p>alpha first</p>\n<p>alpha second</p>\n",
+        ),
       },
       answer() {
-        return [entry("a.md", "Alpha", "alpha", 0), entry("a.md", "Alpha", "alpha", 1)];
+        return [
+          entry("a.md", "Alpha", "alpha", 0),
+          entry("a.md", "Alpha", "alpha", 1),
+        ];
       },
     });
     built.view.open();
@@ -896,10 +961,20 @@ test("picking another occurrence of one document scrolls, and does not redraw", 
 
     // The second row names the second occurrence of the document already on
     // screen: the marks stand where they stood, and only the eye moves.
-    page.container.findAll(RESULT_CLASS)[1].fire("click", { preventDefault() {} });
+    page.container
+      .findAll(RESULT_CLASS)[1]
+      .fire("click", { preventDefault() {} });
 
-    assert.equal(built.calls.asked.length, drawn, "the same document is not drawn twice");
-    assert.deepEqual(scrolled, [marks[1]], "the scroll lands on the occurrence the row names");
+    assert.equal(
+      built.calls.asked.length,
+      drawn,
+      "the same document is not drawn twice",
+    );
+    assert.deepEqual(
+      scrolled,
+      [marks[1]],
+      "the scroll lands on the occurrence the row names",
+    );
     assert.equal(built.view.isOpen(), true);
   });
 });
@@ -917,7 +992,11 @@ test("the scope button starts local, and every query names the scope it was aske
 
     var mode = page.container.findAll(MODE_CLASS)[0];
     assert.ok(mode, "the field carries a scope button");
-    assert.equal(mode.textContent, MODE_LOCAL_LABEL, "the default reads the document in view");
+    assert.equal(
+      mode.textContent,
+      MODE_LOCAL_LABEL,
+      "the default reads the document in view",
+    );
     assert.equal(mode.getAttribute("aria-pressed"), "false");
     assert.deepEqual(built.calls.modes, [LOCAL_MODE]);
     assert.equal(built.view.mode(), LOCAL_MODE);
@@ -942,15 +1021,25 @@ test("pressing the scope button re-asks at once, in the scope just chosen", () =
     input.fire("input", { target: input });
     assert.equal(page.pending(), 1, "a debounce is scheduled");
 
-    page.container.findAll(MODE_CLASS)[0].fire("click", { preventDefault() {} });
+    page.container
+      .findAll(MODE_CLASS)[0]
+      .fire("click", { preventDefault() {} });
 
     assert.deepEqual(
       built.calls.modes,
       [LOCAL_MODE, GLOBAL_MODE],
       "the press re-asks in the new scope",
     );
-    assert.deepEqual(built.calls.queries, ["alpha", "alph"], "the field's own words are asked");
-    assert.equal(page.pending(), 0, "the old scope's debounce is cancelled, not kept");
+    assert.deepEqual(
+      built.calls.queries,
+      ["alpha", "alph"],
+      "the field's own words are asked",
+    );
+    assert.equal(
+      page.pending(),
+      0,
+      "the old scope's debounce is cancelled, not kept",
+    );
     assert.equal(built.view.mode(), GLOBAL_MODE);
 
     var mode = page.container.findAll(MODE_CLASS)[0];
@@ -987,9 +1076,15 @@ test("an empty field makes the switch a change of mind, not a question", () => {
     var built = build({ container: page.container });
     built.view.open();
 
-    page.container.findAll(MODE_CLASS)[0].fire("click", { preventDefault() {} });
+    page.container
+      .findAll(MODE_CLASS)[0]
+      .fire("click", { preventDefault() {} });
 
-    assert.deepEqual(built.calls.queries, [], "nothing is asked of an empty field");
+    assert.deepEqual(
+      built.calls.queries,
+      [],
+      "nothing is asked of an empty field",
+    );
     assert.equal(built.view.mode(), GLOBAL_MODE);
   });
 });
@@ -999,7 +1094,9 @@ test("a query typed after the switch is asked in the scope in force", () => {
     var built = build({ container: page.container });
     built.view.open();
 
-    page.container.findAll(MODE_CLASS)[0].fire("click", { preventDefault() {} });
+    page.container
+      .findAll(MODE_CLASS)[0]
+      .fire("click", { preventDefault() {} });
     type(built.view, page, "alpha");
 
     assert.deepEqual(built.calls.modes, [GLOBAL_MODE]);
@@ -1010,18 +1107,26 @@ test("the scope survives closing and reopening the panel", () => {
   withPage(function (page) {
     var built = build({ container: page.container });
     built.view.open();
-    page.container.findAll(MODE_CLASS)[0].fire("click", { preventDefault() {} });
+    page.container
+      .findAll(MODE_CLASS)[0]
+      .fire("click", { preventDefault() {} });
     built.view.close();
     built.view.open();
 
-    assert.equal(built.view.mode(), GLOBAL_MODE, "the reader was probably not done looking");
-    assert.equal(page.container.findAll(MODE_CLASS)[0].textContent, MODE_GLOBAL_LABEL);
+    assert.equal(
+      built.view.mode(),
+      GLOBAL_MODE,
+      "the reader was probably not done looking",
+    );
+    assert.equal(
+      page.container.findAll(MODE_CLASS)[0].textContent,
+      MODE_GLOBAL_LABEL,
+    );
   });
 });
 
 test("the preview is drawn again for a new query, and not for the same row", () => {
   withPage(function (page) {
-    var asked = [];
     var built = build({
       container: page.container,
       documents: {
@@ -1040,11 +1145,19 @@ test("the preview is drawn again for a new query, and not for the same row", () 
 
     // Moving inside the row already selected is not a new document.
     input.fire("keydown", { key: "ArrowUp" });
-    assert.equal(built.calls.asked.length, first, "the same row is not asked for twice");
+    assert.equal(
+      built.calls.asked.length,
+      first,
+      "the same row is not asked for twice",
+    );
 
     input.fire("keydown", { key: "ArrowDown" });
     assert.equal(built.calls.asked[built.calls.asked.length - 1], "b.md");
-    assert.equal(textOf(documentOf(page)), "beta", "the second document is on screen");
+    assert.equal(
+      textOf(documentOf(page)),
+      "beta",
+      "the second document is on screen",
+    );
   });
 });
 
@@ -1061,7 +1174,11 @@ test("a payload that cannot answer falls back to the excerpt", () => {
 
     assert.equal(documentOf(page), null);
     var passage = page.container.findAll("search-passage");
-    assert.equal(passage.length, 1, "the reader still sees where the query was found");
+    assert.equal(
+      passage.length,
+      1,
+      "the reader still sees where the query was found",
+    );
     assert.equal(textOf(passage[0]), "\u2026or alpha and more\u2026");
   });
 });
@@ -1084,7 +1201,11 @@ test("the document's own text is never turned into markup", () => {
     var marks = page.container.findAll(HIT_CLASS);
     assert.equal(marks.length, 1);
     assert.equal(textOf(marks[0]), "bold");
-    assert.equal(marks[0].children.length, 0, "a mark holds text, never elements");
+    assert.equal(
+      marks[0].children.length,
+      0,
+      "a mark holds text, never elements",
+    );
   });
 });
 
@@ -1120,7 +1241,9 @@ test("a link in the previewed document navigates and closes the panel", () => {
     });
 
     assert.equal(prevented, true);
-    assert.deepEqual(built.calls.selections, [{ id: "b.md", anchor: "details" }]);
+    assert.deepEqual(built.calls.selections, [
+      { id: "b.md", anchor: "details" },
+    ]);
     assert.equal(built.view.isOpen(), false);
   });
 });
@@ -1130,7 +1253,11 @@ test("an external link in the preview is left to the browser", () => {
     var built = build({
       container: page.container,
       documents: {
-        "a.md": documentModel("a.md", "Alpha", '<p><a href="https://example.com">out</a></p>'),
+        "a.md": documentModel(
+          "a.md",
+          "Alpha",
+          '<p><a href="https://example.com">out</a></p>',
+        ),
       },
       answer() {
         return [entry("a.md", "Alpha", "alpha")];
@@ -1142,7 +1269,11 @@ test("an external link in the preview is left to the browser", () => {
     var link = page.container.findAllByTag("a")[0];
     previewOf(page).fire("click", { target: link, preventDefault() {} });
 
-    assert.deepEqual(built.calls.selections, [], "the panel is not a router for the web");
+    assert.deepEqual(
+      built.calls.selections,
+      [],
+      "the panel is not a router for the web",
+    );
     assert.equal(built.view.isOpen(), true);
   });
 });
@@ -1188,7 +1319,10 @@ test("the arrow keys stay inside the list", () => {
 
     var input = built.view.input();
     input.fire("keydown", { key: "ArrowUp" });
-    assert.equal(page.container.findAll(RESULT_CLASS)[0].getAttribute("aria-selected"), "true");
+    assert.equal(
+      page.container.findAll(RESULT_CLASS)[0].getAttribute("aria-selected"),
+      "true",
+    );
 
     input.fire("keydown", { key: "ArrowDown" });
     input.fire("keydown", { key: "ArrowDown" });
@@ -1236,7 +1370,11 @@ test("Enter asks for what was typed even when the pause has not come yet", () =>
     input.fire("input", { target: input });
     input.fire("keydown", { key: "Enter" });
 
-    assert.deepEqual(built.calls.queries, ["alp"], "a query still pending is asked now");
+    assert.deepEqual(
+      built.calls.queries,
+      ["alp"],
+      "a query still pending is asked now",
+    );
     assert.deepEqual(built.calls.selections, [{ id: "a.md", anchor: null }]);
   });
 });
@@ -1276,7 +1414,9 @@ test("clicking a result selects it and keeps the panel open", () => {
     built.view.open();
     type(built.view, page, "a");
 
-    page.container.findAll(RESULT_CLASS)[1].fire("click", { preventDefault() {} });
+    page.container
+      .findAll(RESULT_CLASS)[1]
+      .fire("click", { preventDefault() {} });
 
     var rows = page.container.findAll(RESULT_CLASS);
     assert.equal(rows[0].getAttribute("aria-selected"), "false");
@@ -1350,7 +1490,10 @@ test("a press on the toggle is left to the button that opens the panel", () => {
 
 test("a press outside the panel closes it even when a toggle is given", () => {
   withPage(function (page) {
-    var built = build({ container: page.container, toggle: fakeElement("button") });
+    var built = build({
+      container: page.container,
+      toggle: fakeElement("button"),
+    });
     built.view.open();
 
     page.press({ tagName: "ARTICLE" });
@@ -1406,7 +1549,11 @@ test("Escape closes the panel", () => {
     });
 
     assert.equal(built.view.isOpen(), false);
-    assert.equal(prevented, true, "the key must not also close the preview behind it");
+    assert.equal(
+      prevented,
+      true,
+      "the key must not also close the preview behind it",
+    );
     assert.equal(page.container.hidden, true);
   });
 });
@@ -1424,7 +1571,11 @@ test("a query that matches nothing empties both halves, each naming itself", () 
 
     var empties = page.container.findAll(EMPTY_CLASS);
     assert.equal(page.container.findAll(RESULT_CLASS).length, 0);
-    assert.equal(empties.length, 2, "the list and the preview both have nothing");
+    assert.equal(
+      empties.length,
+      2,
+      "the list and the preview both have nothing",
+    );
     assert.deepEqual(
       empties.map(textOf),
       [RESULTS_IDLE_LABEL, PREVIEW_IDLE_LABEL],
@@ -1449,7 +1600,10 @@ test("a document matched on its title alone has no passage to preview", () => {
       "a.md",
       "the path stands in for the passage the document does not have",
     );
-    assert.equal(page.container.findAll(EMPTY_CLASS)[0].textContent, PREVIEW_IDLE_LABEL);
+    assert.equal(
+      page.container.findAll(EMPTY_CLASS)[0].textContent,
+      PREVIEW_IDLE_LABEL,
+    );
     assert.equal(page.container.findAll("mark").length, 0);
   });
 });
@@ -1469,8 +1623,15 @@ test("an empty query empties the panel again", () => {
     type(built.view, page, "   ");
 
     assert.equal(page.container.findAll(RESULT_CLASS).length, 0);
-    assert.equal(page.container.findAll(EMPTY_CLASS)[0].textContent, RESULTS_IDLE_LABEL);
-    assert.deepEqual(built.calls.queries, ["alpha"], "a blank query is not asked about");
+    assert.equal(
+      page.container.findAll(EMPTY_CLASS)[0].textContent,
+      RESULTS_IDLE_LABEL,
+    );
+    assert.deepEqual(
+      built.calls.queries,
+      ["alpha"],
+      "a blank query is not asked about",
+    );
   });
 });
 
@@ -1513,7 +1674,11 @@ test("reopening a panel with a query asks about it again", () => {
 
     assert.deepEqual(built.calls.queries, ["alpha"]);
     assert.equal(built.view.input().focused, true);
-    assert.equal(page.container.findAll(RESULT_CLASS).length, 0, "a closed panel forgets its list");
+    assert.equal(
+      page.container.findAll(RESULT_CLASS).length,
+      0,
+      "a closed panel forgets its list",
+    );
   });
 });
 
@@ -1546,7 +1711,10 @@ test("the shortcut is Ctrl+F or Cmd+F, and nothing else", () => {
   assert.equal(isSearchShortcut({ key: "F", ctrlKey: true }), true);
   assert.equal(isSearchShortcut({ key: "f", metaKey: true }), true);
   assert.equal(isSearchShortcut({ key: "f" }), false);
-  assert.equal(isSearchShortcut({ key: "f", ctrlKey: true, altKey: true }), false);
+  assert.equal(
+    isSearchShortcut({ key: "f", ctrlKey: true, altKey: true }),
+    false,
+  );
   assert.equal(isSearchShortcut({ key: "g", ctrlKey: true }), false);
   assert.equal(isSearchShortcut(null), false);
 });

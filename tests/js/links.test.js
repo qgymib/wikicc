@@ -31,7 +31,9 @@ test("a route without a chapter has no anchor", () => {
 
 test("percent-encoded ids and chapters are decoded", () => {
   assert.deepEqual(
-    parseDocLink("#/doc/%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E.md#%E7%AC%AC%E4%B8%80%E7%AB%A0"),
+    parseDocLink(
+      "#/doc/%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E.md#%E7%AC%AC%E4%B8%80%E7%AB%A0",
+    ),
     { id: "中文/说明.md", anchor: "第一章" },
   );
   assert.deepEqual(parseDocLink("#/doc/my%20notes.md#A%20B"), {
@@ -78,7 +80,11 @@ test("the missing class matches what the build writes", () => {
 test("a link the build marked missing reports the chapter the author wrote", () => {
   assert.equal(missingAnchorOf("1.4 配色与字体1"), "1.4 配色与字体1");
   assert.equal(missingAnchorOf("no-such-chapter"), "no-such-chapter");
-  assert.equal(missingAnchorOf(" spaced "), " spaced ", "the authored spelling is kept");
+  assert.equal(
+    missingAnchorOf(" spaced "),
+    " spaced ",
+    "the authored spelling is kept",
+  );
 });
 
 test("a link without the mark is not missing", () => {
@@ -116,17 +122,34 @@ test("the same route is recognised whatever the percent encoding", () => {
     true,
   );
   assert.equal(
-    isSameRoute("#/doc/%E4%B8%AD%E6%96%87.md#34-%E6%8A%80%E6%9C%AF", "#/doc/中文.md#34-技术"),
+    isSameRoute(
+      "#/doc/%E4%B8%AD%E6%96%87.md#34-%E6%8A%80%E6%9C%AF",
+      "#/doc/中文.md#34-技术",
+    ),
     true,
   );
 });
 
 test("an empty current address or a foreign href is never the same route", () => {
   for (const current of ["", "#", "#/doc/", null, undefined]) {
-    assert.equal(isSameRoute(current, "#/doc/a.md"), false, `current: ${String(current)}`);
+    assert.equal(
+      isSameRoute(current, "#/doc/a.md"),
+      false,
+      `current: ${String(current)}`,
+    );
   }
-  for (const href of ["https://example.com", "#anchor", "a.md", null, undefined]) {
-    assert.equal(isSameRoute("#/doc/a.md", href), false, `href: ${String(href)}`);
+  for (const href of [
+    "https://example.com",
+    "#anchor",
+    "a.md",
+    null,
+    undefined,
+  ]) {
+    assert.equal(
+      isSameRoute("#/doc/a.md", href),
+      false,
+      `href: ${String(href)}`,
+    );
   }
 });
 

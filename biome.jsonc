@@ -1,0 +1,50 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": ["src/web/js/**", "tests/js/**", "tools/**"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 80
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "complexity": {
+        // The codebase deliberately writes `function () {}` expressions; a
+        // mechanical arrow rewrite would be a style migration, not a fix.
+        "useArrowFunction": "off",
+        // Existing style chains `a && a.b.c` guards; the rewrite churns 40
+        // expressions without changing observable behaviour.
+        "useOptionalChain": "off"
+      },
+      "correctness": {
+        // Block-scoped function declarations inside branches are legal in
+        // modules and part of the established style; modules never run in
+        // sloppy mode, where this rule's bug class lives.
+        "noInnerDeclarations": "off"
+      },
+      "style": {
+        // `a + " " + b` concatenation is the established style.
+        "useTemplate": "off"
+      }
+    }
+  },
+  "assist": {
+    "enabled": false
+  }
+}

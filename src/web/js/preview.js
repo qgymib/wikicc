@@ -76,7 +76,9 @@ export var FALLBACK_SLUG = "section";
  * reader navigates to always comes from the outline, which the build wrote.
  */
 export function slugify(text) {
-  var lowered = String(text === null || text === undefined ? "" : text).toLowerCase();
+  var lowered = String(
+    text === null || text === undefined ? "" : text,
+  ).toLowerCase();
   var slug = "";
   var dashPending = false;
 

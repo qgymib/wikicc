@@ -30,7 +30,12 @@ function doc() {
           },
         ],
       },
-      { id: "getting-started", text: "Getting Started", level: 2, children: [] },
+      {
+        id: "getting-started",
+        text: "Getting Started",
+        level: 2,
+        children: [],
+      },
       { id: "第一章", text: "第一章", level: 2, children: [] },
     ],
   });
@@ -63,7 +68,11 @@ function withBlocks(source) {
 
   // Every open ancestor contains the block, exactly as the build fills it in.
   blocks.forEach(function (block, index) {
-    for (let ancestor = block.parent; ancestor !== null; ancestor = blocks[ancestor].parent) {
+    for (
+      let ancestor = block.parent;
+      ancestor !== null;
+      ancestor = blocks[ancestor].parent
+    ) {
       blocks[ancestor].subtree.push(index);
     }
   });
@@ -89,12 +98,20 @@ test("a heading's text resolves to the slug the reader emits", () => {
 
 test("a CJK anchor resolves exactly and through its slug", () => {
   assert.equal(resolveEntry(doc(), "第一章").id, "第一章");
-  assert.equal(resolveEntry(doc(), "第二章"), null, "only real chapters resolve");
+  assert.equal(
+    resolveEntry(doc(), "第二章"),
+    null,
+    "only real chapters resolve",
+  );
 });
 
 test("an unknown chapter resolves to nothing", () => {
   for (const anchor of ["nope", "", null, undefined]) {
-    assert.equal(resolveEntry(doc(), anchor), null, `anchor: ${String(anchor)}`);
+    assert.equal(
+      resolveEntry(doc(), anchor),
+      null,
+      `anchor: ${String(anchor)}`,
+    );
   }
   assert.equal(resolveEntry(null, "a"), null);
   assert.equal(resolveEntry({ id: "a.md" }, "a"), null);
@@ -121,7 +138,11 @@ test("a resolved anchor carries the element and the outline entry", () => {
     return id === element.id ? element : null;
   });
 
-  assert.deepEqual(found, { entry: doc().toc[0].children[0], element, anchor: element.id });
+  assert.deepEqual(found, {
+    entry: doc().toc[0].children[0],
+    element,
+    anchor: element.id,
+  });
 });
 
 test("an element without an outline entry still anchors the document", () => {

@@ -23,13 +23,22 @@ test("tokenizes CJK text into words instead of one blob", () => {
   assert.deepEqual(cjk.slice(0, 2), ["中文", "说明"]);
   assert.ok(cjk.length >= 3, `tokens: ${cjk.join("/")}`);
   assert.ok(search.tokenize("中文说明文档正文").length > 1);
-  assert.deepEqual(search.tokenize("Install the CLI"), ["Install", "the", "CLI"]);
+  assert.deepEqual(search.tokenize("Install the CLI"), [
+    "Install",
+    "the",
+    "CLI",
+  ]);
   assert.deepEqual(search.tokenize(""), []);
 });
 
 test("flattens a nested outline into one searchable string", () => {
   assert.equal(
-    search.headingsText([{ text: "One", children: [{ text: "Two", children: [{ text: "Three" }] }] }]),
+    search.headingsText([
+      {
+        text: "One",
+        children: [{ text: "Two", children: [{ text: "Three" }] }],
+      },
+    ]),
     "One Two Three",
   );
   assert.equal(search.headingsText([]), "");
@@ -64,11 +73,16 @@ test("ranks a title hit above a body hit", () => {
 });
 
 test("ranks a heading hit above a body hit", () => {
-  const heading = doc("heading.md", "Other", "unrelated", [{ text: "Deployment", children: [] }]);
+  const heading = doc("heading.md", "Other", "unrelated", [
+    { text: "Deployment", children: [] },
+  ]);
   const body = doc("body.md", "Another", "deployment notes");
   const local = search.createSearch([body, heading]);
 
-  assert.deepEqual(search.search(local, "deployment"), ["heading.md", "body.md"]);
+  assert.deepEqual(search.search(local, "deployment"), [
+    "heading.md",
+    "body.md",
+  ]);
 });
 
 test("finds CJK words inside body text", () => {
@@ -80,7 +94,10 @@ test("returns nothing for an unknown term", () => {
 });
 
 test("repeated queries are deterministic", () => {
-  assert.deepEqual(search.search(index, "introduction"), search.search(index, "introduction"));
+  assert.deepEqual(
+    search.search(index, "introduction"),
+    search.search(index, "introduction"),
+  );
 });
 
 test("a snippet cuts the text around the hit and says what it dropped", () => {
@@ -120,7 +137,9 @@ test("a tag name is not a word a query can start in", () => {
 });
 
 test("a snippet of text that fits keeps the ends and marks no trimming", () => {
-  const snippet = search.matchSnippet("the setup notes", "setup", { radius: 80 });
+  const snippet = search.matchSnippet("the setup notes", "setup", {
+    radius: 80,
+  });
 
   assert.deepEqual(snippet, {
     before: "the ",
@@ -148,14 +167,18 @@ test("an exact hit wins over a prefix one", () => {
 test("the earliest hit wins among words of equal standing", () => {
   // "one" occurs twice; the first one is the one the snippet starts at, which
   // the "two" that follows it proves.
-  const snippet = search.matchSnippet("one two three one", "one", { radius: 6 });
+  const snippet = search.matchSnippet("one two three one", "one", {
+    radius: 6,
+  });
 
   assert.equal(snippet.before, "");
   assert.equal(snippet.after, " two");
 });
 
 test("a snippet finds CJK text by its words", () => {
-  const snippet = search.matchSnippet("中文，说明，文档", "说明", { radius: 1 });
+  const snippet = search.matchSnippet("中文，说明，文档", "说明", {
+    radius: 1,
+  });
 
   assert.equal(snippet.hit, "说明");
   assert.equal(snippet.before, "，");
@@ -178,7 +201,9 @@ test("every hit of a word is found, in order", () => {
 });
 
 test("a hit is only recognised at the start of a word", () => {
-  assert.deepEqual(search.matchRanges("concatenate the cat", "cat"), [{ start: 16, length: 3 }]);
+  assert.deepEqual(search.matchRanges("concatenate the cat", "cat"), [
+    { start: 16, length: 3 },
+  ]);
 });
 
 test("a prefix hit covers the whole word it begins", () => {
@@ -222,11 +247,14 @@ test("hits ignore case", () => {
 });
 
 test("every word of a multi-word query is highlighted", () => {
-  assert.deepEqual(search.matchRanges("install the tool, then install", "install tool"), [
-    { start: 0, length: 7 },
-    { start: 12, length: 4 },
-    { start: 23, length: 7 },
-  ]);
+  assert.deepEqual(
+    search.matchRanges("install the tool, then install", "install tool"),
+    [
+      { start: 0, length: 7 },
+      { start: 12, length: 4 },
+      { start: 23, length: 7 },
+    ],
+  );
 });
 
 test("overlapping hits merge instead of nesting", () => {
@@ -265,7 +293,10 @@ test("ranges never overlap and stay inside the text", () => {
 
   ranges.forEach((range, index) => {
     assert.ok(range.start >= 0 && range.length > 0);
-    assert.ok(range.start + range.length <= text.length, "a range stays inside the text");
+    assert.ok(
+      range.start + range.length <= text.length,
+      "a range stays inside the text",
+    );
     if (index > 0) {
       const previous = ranges[index - 1];
       assert.ok(
@@ -277,7 +308,11 @@ test("ranges never overlap and stay inside the text", () => {
 });
 
 test("occurrences pairs every ranked document with its first place", () => {
-  const entries = search.occurrences(docs, search.search(index, "introduction"), "introduction");
+  const entries = search.occurrences(
+    docs,
+    search.search(index, "introduction"),
+    "introduction",
+  );
 
   assert.deepEqual(
     entries.map((entry) => entry.id),
@@ -298,7 +333,11 @@ test("every occurrence of a document becomes its own entry", () => {
   const local = [doc("one.md", "Ones", "one two one three one")];
   const entries = search.occurrences(local, ["one.md"], "one");
 
-  assert.equal(entries.length, 3, "three places, three entries — none merged or dropped");
+  assert.equal(
+    entries.length,
+    3,
+    "three places, three entries — none merged or dropped",
+  );
   assert.deepEqual(
     entries.map((entry) => entry.hit),
     [0, 1, 2],
@@ -329,7 +368,11 @@ test("a prefix query widens each occurrence to the word it begins", () => {
   const local = [doc("intro.md", "Intro", "introduction and intro")];
   const entries = search.occurrences(local, ["intro.md"], "introd");
 
-  assert.equal(entries.length, 1, "the tail of a longer word is not a hit of its own");
+  assert.equal(
+    entries.length,
+    1,
+    "the tail of a longer word is not a hit of its own",
+  );
   assert.equal(entries[0].snippet.hit, "introduction");
 });
 
@@ -356,7 +399,9 @@ test("CJK occurrences are found by word", () => {
 
 test("occurrences falls back to the outline when the body holds no hit", () => {
   const local = [
-    doc("heading.md", "Other", "unrelated words", [{ text: "Deployment", children: [] }]),
+    doc("heading.md", "Other", "unrelated words", [
+      { text: "Deployment", children: [] },
+    ]),
   ];
   const entries = search.occurrences(local, ["heading.md"], "deployment");
 
@@ -377,6 +422,8 @@ test("a document matched only on its title is listed without a snippet", () => {
 
 test("an id the payload does not hold is dropped rather than rendered as a blank row", () => {
   assert.deepEqual(search.occurrences(docs, ["missing.md"], "the"), []);
-  assert.equal(search.occurrences(docs, ["a.md", "missing.md", "b.md"], "the").length, 2);
+  assert.equal(
+    search.occurrences(docs, ["a.md", "missing.md", "b.md"], "the").length,
+    2,
+  );
 });
-

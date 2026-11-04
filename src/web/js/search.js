@@ -197,7 +197,10 @@ function startsWord(text, index) {
 
   // A surrogate pair is one character and cannot be split: stepping into the
   // middle of one would make the test see half a character and never a break.
-  var before = index >= 2 && isLowSurrogate(text.charCodeAt(index - 1)) ? index - 2 : index - 1;
+  var before =
+    index >= 2 && isLowSurrogate(text.charCodeAt(index - 1))
+      ? index - 2
+      : index - 1;
   return VALUE_END.test(String.fromCodePoint(text.codePointAt(before)));
 }
 
@@ -244,13 +247,21 @@ function indexOfTerm(text, term, whole, from) {
   }
 
   var fallback = -1;
-  for (var start = Math.max(0, from || 0); start + term.length <= text.length; start += 1) {
+  for (
+    var start = Math.max(0, from || 0);
+    start + term.length <= text.length;
+    start += 1
+  ) {
     if (!matchesAt(text, start, term) || !startsWord(text, start)) {
       continue;
     }
 
     var end = start + term.length;
-    if (!whole || end === text.length || VALUE_END.test(String.fromCodePoint(text.codePointAt(end)))) {
+    if (
+      !whole ||
+      end === text.length ||
+      VALUE_END.test(String.fromCodePoint(text.codePointAt(end)))
+    ) {
       return start;
     }
     if (fallback === -1) {
@@ -355,7 +366,10 @@ export function matchRanges(text, query) {
     if (previous && hit.start < previous.start + previous.length) {
       // The new hit begins inside the one before it: the earlier range grows
       // to cover both, so no character is highlighted twice.
-      previous.length = Math.max(previous.length, hit.start + hit.length - previous.start);
+      previous.length = Math.max(
+        previous.length,
+        hit.start + hit.length - previous.start,
+      );
     } else {
       found.push(hit);
     }
@@ -456,7 +470,9 @@ export function matchSnippet(text, query, options) {
  */
 function cutAround(text, start, length, options) {
   var radius =
-    options && typeof options.radius === "number" ? Math.max(0, options.radius) : SNIPPET_RADIUS;
+    options && typeof options.radius === "number"
+      ? Math.max(0, options.radius)
+      : SNIPPET_RADIUS;
 
   var end = start + length;
   var from = Math.max(0, start - radius);

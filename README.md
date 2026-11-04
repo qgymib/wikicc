@@ -10,12 +10,6 @@ their chapter outline.
 
 ## Features
 
-### The executable
-
-- **Icon in the file explorer.** On Windows, `wikicc.exe` carries the project
-  logo as a PE resource, in every size the file explorer asks for. The other
-  platforms are unaffected.
-
 ### Reader
 
 - **Search** over titles, headings and body text, including CJK.
@@ -69,9 +63,10 @@ bytes are stored once no matter how many documents reference them.
 
 - **Rust 1.85 or newer** (the crate uses edition 2024).
 - **Node.js 22.12 or newer** and npm — the reader is bundled at build time, and
-  22.12 is the floor of the diagram engine. Node is only needed to install the
-  bundler: `build.rs` runs the native esbuild executable of the
-  `@esbuild/<os>-<cpu>` package directly.
+  22.12 is the floor of the diagram engine. Node is needed for the build and
+  the quality tooling: `build.rs` runs the native esbuild executable of the
+  `@esbuild/<os>-<cpu>` package directly, and the formatter and linter of the
+  front-end sources are installed into the same `node_modules`.
 
 ```sh
 npm ci                     # once, and again whenever package-lock.json changes
@@ -155,26 +150,14 @@ one.
 
 - [`CHANGELOG.md`](CHANGELOG.md) — what changed in each release.
 - [`docs/design.md`](docs/design.md) — how `wikicc` is built.
+- [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — the development rules: the
+  quality gates every commit has to pass, and the steps that regenerate the
+  Windows icon.
 - [`tests/README.md`](tests/README.md) — how the test suite is organised.
 
-### The Windows icon
+## Development
 
-`docs/logo.svg` is the design source of the executable icon;
-`docs/logo.ico` is a derived asset, rendered from it and committed, so that
-the build needs no image toolchain. **After changing the design source, the
-icon has to be rendered again:**
-
-1. Render `docs/logo.svg` to square PNGs named `logo-<size>.png`, with
-   `<size>` in 16, 24, 32, 48, 64, 128 and 256. Any renderer will do; the
-   sizes have to match exactly.
-2. Pack them into the icon:
-
-   ```sh
-   node tools/make-icon.mjs <png-dir> docs/logo.ico
-   ```
-
-3. Rebuild. `tools/make-icon.mjs` refuses a PNG whose size does not match its
-   name, so an incomplete set is caught before the icon is written.
+See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md).
 
 ## License
 

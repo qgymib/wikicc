@@ -5,6 +5,11 @@
   "description": "Third-party front-end libraries and the bundler used by the wikicc reader",
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "check": "biome check .",
+    "format": "biome format --write .",
+    "lint": "biome lint ."
+  },
   "engines": {
     "node": ">=22.12.0"
   },
@@ -17,6 +22,7 @@
     "minisearch": "7.2.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.4",
     "esbuild": "0.28.2"
   }
 }

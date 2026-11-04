@@ -72,18 +72,21 @@ function fakeElement(tagName) {
       this.attributes[name] = String(value);
     },
     hasAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(this.attributes, name);
+      return Object.hasOwn(this.attributes, name);
     },
     removeAttribute(name) {
       delete this.attributes[name];
     },
     getAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+      return Object.hasOwn(this.attributes, name)
         ? this.attributes[name]
         : null;
     },
     addEventListener(type, handler) {
-      (this.listeners[type] = this.listeners[type] || []).push(handler);
+      if (!this.listeners[type]) {
+        this.listeners[type] = [];
+      }
+      this.listeners[type].push(handler);
     },
     removeEventListener() {},
     fire(type, event) {
@@ -152,14 +155,29 @@ function payload() {
         html: '<p>root</p><a href="#/doc/guide/intro.md#getting-started">test</a>',
         text: "root",
         toc: [{ id: "top", text: "Top", level: 2, children: [] }],
-        blocks: [{ id: "top", level: 2, parent: null, html: "<p>root</p>", subtree: [0] }],
+        blocks: [
+          {
+            id: "top",
+            level: 2,
+            parent: null,
+            html: "<p>root</p>",
+            subtree: [0],
+          },
+        ],
       },
       {
         id: "guide/intro.md",
         title: "Intro",
         html: '<h2 id="getting-started">Getting Started</h2><p>body</p>',
         text: "intro",
-        toc: [{ id: "getting-started", text: "Getting Started", level: 2, children: [] }],
+        toc: [
+          {
+            id: "getting-started",
+            text: "Getting Started",
+            level: 2,
+            children: [],
+          },
+        ],
         blocks: [
           {
             id: "getting-started",
@@ -295,14 +313,17 @@ function withSession(options, body) {
     createElement(tagName) {
       return fakeElement(tagName);
     },
-    createElementNS(namespace, tagName) {
+    createElementNS(_namespace, tagName) {
       return fakeElement(tagName);
     },
     createTextNode(value) {
       return { nodeType: 3, textContent: String(value) };
     },
     addEventListener(type, handler) {
-      (doc.listeners[type] = doc.listeners[type] || []).push(handler);
+      if (!doc.listeners[type]) {
+        doc.listeners[type] = [];
+      }
+      doc.listeners[type].push(handler);
     },
     removeEventListener() {},
     listeners: {},
@@ -339,7 +360,10 @@ function withSession(options, body) {
   // a page and in this fake one too.
   const windowListeners = {};
   globalThis.addEventListener = function (type, handler) {
-    (windowListeners[type] = windowListeners[type] || []).push(handler);
+    if (!windowListeners[type]) {
+      windowListeners[type] = [];
+    }
+    windowListeners[type].push(handler);
   };
   globalThis.removeEventListener = function (type, handler) {
     const handlers = windowListeners[type] || [];
@@ -352,7 +376,7 @@ function withSession(options, body) {
     frames.push(handler);
     return frames.length;
   };
-  globalThis.scrollTo = function (x, y) {
+  globalThis.scrollTo = function (_x, y) {
     scrollTop = y;
   };
   globalThis.setTimeout = function (callback) {
@@ -469,7 +493,10 @@ test("the chapter is walked to again once the markup has settled", async () => {
 
     const heading = session.headings.get("getting-started");
     assert.equal(heading.scrollCalls.length, 1);
-    assert.ok(session.frames.length, "corrections are queued for the next frames");
+    assert.ok(
+      session.frames.length,
+      "corrections are queued for the next frames",
+    );
 
     session.runFrames();
     assert.ok(
@@ -493,7 +520,9 @@ test("a navigation the reader is already on scrolls without re-rendering", async
       body,
       "the article is not rebuilt: a render would drop the position just reached",
     );
-    assert.deepEqual(session.headings.get("getting-started").scrollCalls, [{ block: "start" }]);
+    assert.deepEqual(session.headings.get("getting-started").scrollCalls, [
+      { block: "start" },
+    ]);
   });
 });
 
@@ -520,7 +549,11 @@ test("the document list keeps every document and highlights the open one", async
 
     // The sidebar no longer filters: searching is the panel's job, so the list
     // is the site's table of contents for the whole session.
-    assert.equal(countLinks(session.shell.get("doc-list")), 2, "both documents are listed");
+    assert.equal(
+      countLinks(session.shell.get("doc-list")),
+      2,
+      "both documents are listed",
+    );
   });
 });
 
@@ -569,7 +602,10 @@ test("the mode button switches the graph and describes the next state", async ()
 
     assert.equal(button.textContent, "Global");
     assert.equal(button.getAttribute("aria-pressed"), "true");
-    assert.equal(button.getAttribute("aria-label"), "Show only this document and its neighbours");
+    assert.equal(
+      button.getAttribute("aria-label"),
+      "Show only this document and its neighbours",
+    );
 
     button.fire("click");
 
@@ -586,7 +622,11 @@ test("the mode survives a navigation to another document", async () => {
     button.fire("click");
     session.follow("#/doc/guide/intro.md#getting-started");
 
-    assert.equal(button.getAttribute("aria-pressed"), "true", "the reader chose the global view, not one document");
+    assert.equal(
+      button.getAttribute("aria-pressed"),
+      "true",
+      "the reader chose the global view, not one document",
+    );
     assert.equal(button.textContent, "Global");
   });
 });
@@ -600,7 +640,10 @@ function searchInput(shell) {
     if (found) {
       return;
     }
-    if (node.tagName === "INPUT" && String(node.className).indexOf("search-input") !== -1) {
+    if (
+      node.tagName === "INPUT" &&
+      String(node.className).indexOf("search-input") !== -1
+    ) {
       found = node;
       return;
     }
@@ -672,7 +715,10 @@ test("Ctrl+F opens the search panel instead of the browser's find", async () => 
 
     assert.equal(prevented, true, "the browser's own find bar must not open");
     assert.equal(session.shell.get("search-panel").hidden, false);
-    assert.equal(session.shell.get("search-toggle").getAttribute("aria-expanded"), "true");
+    assert.equal(
+      session.shell.get("search-toggle").getAttribute("aria-expanded"),
+      "true",
+    );
   });
 });
 
@@ -686,7 +732,11 @@ test("Escape closes the search panel and returns the focus to its button", async
 
     assert.equal(session.shell.get("search-panel").hidden, true);
     assert.equal(button.getAttribute("aria-expanded"), "false");
-    assert.equal(button.focused, true, "the keyboard reader lands back on the button");
+    assert.equal(
+      button.focused,
+      true,
+      "the keyboard reader lands back on the button",
+    );
   });
 });
 
@@ -707,7 +757,11 @@ test("the search panel starts local, reading the document in view", async () => 
 
     const mode = searchParts(session.shell, "search-mode")[0];
     assert.ok(mode, "the field carries a scope switch");
-    assert.equal(mode.textContent, "Local", "the scope starts at the document in view");
+    assert.equal(
+      mode.textContent,
+      "Local",
+      "the scope starts at the document in view",
+    );
     assert.deepEqual(
       searchParts(session.shell, "search-result-title").map(function (node) {
         return node.textContent;

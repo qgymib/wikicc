@@ -118,7 +118,9 @@ export function parseCell(text) {
 
 /** Coerce anything that is not a parsed cell into the empty cell. */
 function asCell(cell) {
-  return cell && typeof cell.kind === "string" && KIND_RANK[cell.kind] !== undefined
+  return cell &&
+    typeof cell.kind === "string" &&
+    KIND_RANK[cell.kind] !== undefined
     ? cell
     : EMPTY_CELL;
 }
@@ -126,7 +128,9 @@ function asCell(cell) {
 /** The parsed cell at `column`, or the empty cell when the row is short. */
 function cellAt(row, column) {
   var cells = row && row.cells;
-  return cells && column >= 0 && column < cells.length ? asCell(cells[column]) : EMPTY_CELL;
+  return cells && column >= 0 && column < cells.length
+    ? asCell(cells[column])
+    : EMPTY_CELL;
 }
 
 /** Original position of a model row, used as the stable tie-breaker. */
@@ -161,10 +165,12 @@ export function compareCells(a, b) {
   }
 
   if (left.kind === "text") {
-    return sign(String(left.value).localeCompare(String(right.value), undefined, {
-      numeric: true,
-      sensitivity: "base",
-    }));
+    return sign(
+      String(left.value).localeCompare(String(right.value), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    );
   }
 
   return sign(left.value - right.value);
@@ -289,7 +295,8 @@ export function distinctValues(rows, column) {
  * that hides the whole column, exactly like Excel.
  */
 export function normalizeSelection(selectedKeys, allKeys) {
-  var selected = selectedKeys instanceof Set ? selectedKeys : new Set(selectedKeys || []);
+  var selected =
+    selectedKeys instanceof Set ? selectedKeys : new Set(selectedKeys || []);
   var all = allKeys || [];
 
   if (!all.length) {
@@ -301,7 +308,8 @@ export function normalizeSelection(selectedKeys, allKeys) {
   }
 
   for (var index = 0; index < all.length; index += 1) {
-    var key = all[index] && all[index].key !== undefined ? all[index].key : all[index];
+    var key =
+      all[index] && all[index].key !== undefined ? all[index].key : all[index];
     if (!selected.has(key)) {
       return Array.from(selected);
     }
@@ -351,7 +359,9 @@ export function filterRows(rows, selections) {
  */
 export function buildTableModel(headers, rows) {
   var headerList = (headers || []).map(function (header) {
-    return { text: header === null || header === undefined ? "" : String(header) };
+    return {
+      text: header === null || header === undefined ? "" : String(header),
+    };
   });
 
   var body = (rows || []).map(function (cells, index) {
@@ -377,7 +387,11 @@ export function buildTableModel(headers, rows) {
 export function nextSortState(current, column) {
   var state = current || {};
 
-  if (state.column !== column || !state.direction || state.direction === "none") {
+  if (
+    state.column !== column ||
+    !state.direction ||
+    state.direction === "none"
+  ) {
     return { column: column, direction: "asc" };
   }
 

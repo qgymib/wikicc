@@ -21,7 +21,9 @@ import path from "node:path";
 const SIZES = [16, 24, 32, 48, 64, 128, 256];
 
 /** The PNG signature every entry has to start with. */
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
 
 /** The width and height a PNG header carries. */
 function pngSize(buffer) {
@@ -76,5 +78,8 @@ entries.forEach((entry, index) => {
   offset += entry.data.length;
 });
 
-fs.writeFileSync(outFile, Buffer.concat([header, directory, ...entries.map((e) => e.data)]));
+fs.writeFileSync(
+  outFile,
+  Buffer.concat([header, directory, ...entries.map((e) => e.data)]),
+);
 console.log(`wrote ${outFile} (${offset} bytes, ${entries.length} sizes)`);

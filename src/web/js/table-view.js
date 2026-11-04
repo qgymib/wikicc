@@ -73,7 +73,8 @@ var activePanel = null;
 
 /** Header text, falling back to the column number for labels. */
 function headerLabel(cell, index) {
-  var text = cell && typeof cell.textContent === "string" ? cell.textContent.trim() : "";
+  var text =
+    cell && typeof cell.textContent === "string" ? cell.textContent.trim() : "";
   return text || "column " + (index + 1);
 }
 
@@ -112,7 +113,8 @@ function positionPanel(panel, anchor) {
   var height = panel.offsetHeight || 0;
   var margin = 8;
   var viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-  var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  var viewportHeight =
+    window.innerHeight || document.documentElement.clientHeight;
 
   // Align with the button's left edge like Excel does, then pull the panel back
   // inside the viewport when the column sits near an edge.
@@ -124,7 +126,10 @@ function positionPanel(panel, anchor) {
 
   if (height && top + height > viewportHeight - margin) {
     var above = rect.top - height - 6;
-    top = above >= margin ? above : Math.max(margin, viewportHeight - height - margin);
+    top =
+      above >= margin
+        ? above
+        : Math.max(margin, viewportHeight - height - margin);
   }
 
   panel.style.left = Math.round(left) + "px";
@@ -289,7 +294,8 @@ function openFilterPanel(options) {
     if (visible.length > MAX_RENDERED_VALUES) {
       var more = document.createElement("p");
       more.className = FILTER_MORE_CLASS;
-      more.textContent = visible.length - MAX_RENDERED_VALUES + " " + MORE_VALUES_TEXT;
+      more.textContent =
+        visible.length - MAX_RENDERED_VALUES + " " + MORE_VALUES_TEXT;
       fragment.appendChild(more);
     }
 
@@ -365,7 +371,12 @@ function openFilterPanel(options) {
 
   function onViewportChange(event) {
     // Scrolling the candidate list must not reposition the panel.
-    if (event && event.target && event.target.nodeType && panel.contains(event.target)) {
+    if (
+      event &&
+      event.target &&
+      event.target.nodeType &&
+      panel.contains(event.target)
+    ) {
       return;
     }
     if (!options.anchor.isConnected) {
@@ -424,7 +435,11 @@ function openFilterPanel(options) {
  * idempotent and leaves exotic tables (raw HTML without `<thead>`) untouched.
  */
 export function enhanceTable(table) {
-  if (!table || typeof table.hasAttribute !== "function" || table.hasAttribute(Table.TABLE_MARKER)) {
+  if (
+    !table ||
+    typeof table.hasAttribute !== "function" ||
+    table.hasAttribute(Table.TABLE_MARKER)
+  ) {
     return false;
   }
 
@@ -449,7 +464,7 @@ export function enhanceTable(table) {
     }),
   );
 
-  var values = headers.map(function (cell, index) {
+  var values = headers.map(function (_cell, index) {
     return Table.distinctValues(model.rows, index);
   });
   var selections = headers.map(function () {
@@ -483,9 +498,11 @@ export function enhanceTable(table) {
   }
 
   function applySort() {
-    Table.sortRows(model.rows, sortState.column, sortState.direction).forEach(function (row) {
-      body.appendChild(rows[row.index]);
-    });
+    Table.sortRows(model.rows, sortState.column, sortState.direction).forEach(
+      function (row) {
+        body.appendChild(rows[row.index]);
+      },
+    );
 
     // The placeholder is not part of the model, so it is re-appended to stay
     // the last row after every reorder.
@@ -495,7 +512,11 @@ export function enhanceTable(table) {
       var sorted = sortState.direction !== "none" && index === sortState.column;
       header.setAttribute(
         "aria-sort",
-        sorted ? (sortState.direction === "asc" ? "ascending" : "descending") : "none",
+        sorted
+          ? sortState.direction === "asc"
+            ? "ascending"
+            : "descending"
+          : "none",
       );
       if (sorted) {
         header.setAttribute("data-sort", sortState.direction);
@@ -550,7 +571,10 @@ export function enhanceTable(table) {
     button.className = FILTER_BUTTON_CLASS;
     button.setAttribute("aria-haspopup", "dialog");
     button.setAttribute("aria-expanded", "false");
-    button.setAttribute("aria-label", "Filter column " + headerLabel(header, index));
+    button.setAttribute(
+      "aria-label",
+      "Filter column " + headerLabel(header, index),
+    );
     button.title = "Filter " + headerLabel(header, index);
     button.appendChild(createFunnelIcon());
 
@@ -591,7 +615,11 @@ export function enhanceTable(table) {
       sortBy(index);
     });
     header.addEventListener("keydown", function (event) {
-      if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+      if (
+        event.key === "Enter" ||
+        event.key === " " ||
+        event.key === "Spacebar"
+      ) {
         event.preventDefault();
         sortBy(index);
       }
@@ -618,14 +646,18 @@ export function enhanceTable(table) {
 export function enhanceTables(root) {
   closeActivePanel();
 
-  var scope = root && typeof root.querySelectorAll === "function" ? root : document;
+  var scope =
+    root && typeof root.querySelectorAll === "function" ? root : document;
   var count = 0;
 
-  Array.prototype.forEach.call(scope.querySelectorAll("table"), function (table) {
-    if (enhanceTable(table)) {
-      count += 1;
-    }
-  });
+  Array.prototype.forEach.call(
+    scope.querySelectorAll("table"),
+    function (table) {
+      if (enhanceTable(table)) {
+        count += 1;
+      }
+    },
+  );
 
   return count;
 }

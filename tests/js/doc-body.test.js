@@ -74,7 +74,11 @@ test("createDocBody builds a doc-body carrying the markup", () => {
     assert.equal(created.length, 1, "one element, built by the document");
     assert.equal(body.tagName, "DIV");
     assert.equal(body.className, "doc-body");
-    assert.equal(body.innerHTML, "<p>alpha</p>", "the markup arrived as markup");
+    assert.equal(
+      body.innerHTML,
+      "<p>alpha</p>",
+      "the markup arrived as markup",
+    );
     assert.equal(fillDocBody(body, ""), body, "the fill hands the body back");
   });
 });
@@ -110,7 +114,11 @@ test("fillDocBody leaves the tables alone unless asked", () => {
     assert.deepEqual(body.queries, [], "no walk without the option");
 
     fillDocBody(body, "<p>alpha</p>", { enhanceTables: false });
-    assert.deepEqual(body.queries, [], "an explicit false is the same as absent");
+    assert.deepEqual(
+      body.queries,
+      [],
+      "an explicit false is the same as absent",
+    );
   });
 });
 
@@ -123,7 +131,14 @@ test("drawDiagrams hands the body to the diagram engine", () => {
     // The engine answers a promise even when there is nothing to draw — a
     // body without diagram blocks is the common case — and the recorded query
     // is the evidence the body, not something else, was handed over.
-    assert.ok(drawing && typeof drawing.then === "function", "the drawing is asynchronous");
-    assert.deepEqual(body.queries, ["pre.mermaid"], "the engine walked the body for diagrams");
+    assert.ok(
+      drawing && typeof drawing.then === "function",
+      "the drawing is asynchronous",
+    );
+    assert.deepEqual(
+      body.queries,
+      ["pre.mermaid"],
+      "the engine walked the body for diagrams",
+    );
   });
 });

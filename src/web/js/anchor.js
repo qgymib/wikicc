@@ -32,7 +32,9 @@ export function resolveEntry(doc, anchor) {
     return null;
   }
 
-  return resolveAnchor(doc.toc, anchor) || resolveAnchor(doc.toc, slugify(anchor));
+  return (
+    resolveAnchor(doc.toc, anchor) || resolveAnchor(doc.toc, slugify(anchor))
+  );
 }
 
 /**
