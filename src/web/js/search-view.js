@@ -52,7 +52,7 @@
  * are deliberately *not* enhanced, because the sort and filter buttons belong
  * to the article and not to a dialog.
  *
- * Document text reaches the page as text, never as markup: titles and contexts
+ * Document text reaches the page as text, never as markup: contexts and paths
  * are written with `textContent`, and a passage that falls back to the excerpt
  * is assembled from three nodes. Highlighting works on text nodes for the same
  * reason — the query may as well name a tag as a word, and replacing inside
@@ -109,12 +109,6 @@ export var HIT_CLASS = "search-hit";
 
 /** Class of the one hit the preview is scrolled to, the reader's pick. */
 export var HIT_ACTIVE_CLASS = "search-hit-active";
-
-/** Class of the banner naming the document the preview shows. */
-export var DOC_TITLE_CLASS = "search-doc-title";
-
-/** Class of the document's path under the banner. */
-export var DOC_PATH_CLASS = "search-doc-path";
 
 /**
  * Elements whose text is never highlighted.
@@ -908,25 +902,11 @@ export function createSearchView(options) {
   /**
    * Insert the whole document, mark every hit, and scroll to the first one.
    *
-   * The path above the body is the one thing the article has and this must
-   * not: a reader already knows which document they picked, so the banner
-   * repeats it quietly rather than as a title.
+   * The preview is the document alone: no banner names it above the body,
+   * because the row the reader picked already said which file this is, and
+   * a dialog that repeats what the list just read out says nothing new.
    */
   function renderDocument(doc, entry) {
-    var banner = document.createElement("div");
-    banner.className = "search-doc-head";
-
-    var title = document.createElement("p");
-    title.className = DOC_TITLE_CLASS;
-    title.textContent = String(doc.title || entry.title || entry.id || "");
-
-    var path = document.createElement("p");
-    path.className = DOC_PATH_CLASS;
-    path.textContent = String(doc.id || entry.path || entry.id || "");
-
-    banner.appendChild(title);
-    banner.appendChild(path);
-
     // The body is the article's own render — the shared document-body module —
     // with the dialog's one declared difference: its tables stay untouched,
     // because the sort and filter buttons belong to the article and the filter
@@ -936,7 +916,6 @@ export function createSearchView(options) {
       enhanceTables: false,
     });
 
-    preview.appendChild(banner);
     preview.appendChild(body);
 
     highlight(body, query());

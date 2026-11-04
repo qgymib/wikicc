@@ -826,6 +826,21 @@ test("the preview shows the whole document, not just the passage", () => {
       0,
       "the excerpt is only the fallback",
     );
+    assert.equal(
+      page.container.findAll("search-doc-head").length,
+      0,
+      "no banner sits between the panel and the document",
+    );
+    assert.equal(
+      page.container.findAll("search-doc-title").length,
+      0,
+      "no title line repeats what the reader picked",
+    );
+    assert.equal(
+      page.container.findAll("search-doc-path").length,
+      0,
+      "no path line above the body",
+    );
   });
 });
 

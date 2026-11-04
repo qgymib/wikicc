@@ -2079,7 +2079,7 @@ a {
    a book's heading over three lines, so every size steps down one and the
    spacing tightens to match. */
 .search-preview .doc-body {
-  padding: 0 22px 26px;
+  padding: 18px 22px 26px;
   font-size: 13.5px;
   line-height: 1.7;
 }
@@ -2116,32 +2116,6 @@ a {
   display: block;
   max-width: 100%;
   overflow-x: auto;
-}
-
-/* The banner naming the document: the reader already knows which one they
-   picked, so it is a caption, not a title. */
-.search-doc-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 12px 22px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
-}
-
-.search-doc-title {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.search-doc-path {
-  margin: 2px 0 0;
-  color: var(--text-dim);
-  font-size: 11.5px;
-  line-height: 1.3;
 }
 
 /* The excerpt, for a shell that cannot hand over the whole document. */
@@ -2563,14 +2537,9 @@ a {
     padding: 8px 12px 8px 16px;
   }
 
-  /* The narrowest screen gives the reading column back its margin, in both
-    the banner and the document below it. */
-  .search-doc-head {
-    padding: 10px 14px 8px;
-  }
-
+  /* The narrowest screen gives the reading column back its margin. */
   .search-preview .doc-body {
-    padding: 0 14px 20px;
+    padding: 14px 14px 20px;
   }
 
 
