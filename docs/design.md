@@ -195,6 +195,20 @@ one is stated as a contract rather than left to the implementation.
   in `package.json` and bytes pinned by `package-lock.json`. `npm ci` is a build
   prerequisite; a missing dependency fails the build with an actionable message
   instead of degrading silently.
+- **Chapter folding is a declared option of the shared body.** `doc-body.js`
+  owns both halves of a whole-document render, and each is the caller's
+  declaration rather than the module's guess: the article enhances its tables
+  *and* folds its chapters, the hover preview enhances the tables and folds
+  nothing, and the search preview does neither — the filter panel would be read
+  as a press outside the dialog, and a fold arrow inside it would answer a click
+  that already belongs to the list. Chapters are taken from the rendered DOM,
+  not from the payload's outline, so a heading an author wrote as raw HTML is
+  foldable too; a chapter runs to the next heading of the same or a higher
+  level, so folding one covers everything nested under it. The fold state lives
+  in the DOM alone (`aria-expanded`, `hidden`) and is never stored, so a body
+  rebuilt for another document opens whole; a navigation into a folded chapter
+  reopens the chapters that hold it before scrolling, because nothing scrolls to
+  a hidden element.
 - **Layering rule.** Pure logic and DOM access live in separate modules
   (`router.js`, `links.js`, `search.js`, `table.js`, `graph.js`, `preview.js`,
   `toc.js`, `anchor.js` versus `table-view.js`, `graph-view.js`,

@@ -100,11 +100,33 @@ function fakeElement(tagName) {
     select() {
       this.selected = true;
     },
-    querySelector() {
-      return null;
+    /**
+     * Answer a selector over this element's subtree.
+     *
+     * The session asks two questions — the article's document body by class,
+     * and the inspector's tabs — so both are honoured over children, which is
+     * the shape the browser answers them in.
+     */
+    querySelector(selector) {
+      const found = this.querySelectorAll(selector);
+      return found.length ? found[0] : null;
     },
-    querySelectorAll() {
-      return [];
+    querySelectorAll(selector) {
+      const found = [];
+      const wanted = String(selector).replace(/^\./, "");
+
+      if (String(selector).indexOf(".") === 0) {
+        (function walk(node) {
+          (node.children || []).forEach(function (child) {
+            if (String(child.className).split(" ").indexOf(wanted) !== -1) {
+              found.push(child);
+            }
+            walk(child);
+          });
+        })(this);
+      }
+
+      return found;
     },
     scrollIntoView(options) {
       this.scrollCalls.push(options || {});
@@ -118,6 +140,29 @@ function fakeElement(tagName) {
       return this.children.some(function (child) {
         return typeof child.contains === "function" && child.contains(node);
       });
+    },
+  };
+
+  // `classList` reads and writes the same `className` string the browser's
+  // does, so a module that adds a class is visible to a selector asking for it.
+  element.classList = {
+    add(name) {
+      const parts = String(element.className).split(" ").filter(Boolean);
+      if (parts.indexOf(name) === -1) {
+        parts.push(name);
+      }
+      element.className = parts.join(" ");
+    },
+    remove(name) {
+      element.className = String(element.className)
+        .split(" ")
+        .filter(function (part) {
+          return part && part !== name;
+        })
+        .join(" ");
+    },
+    contains(name) {
+      return String(element.className).split(" ").indexOf(name) !== -1;
     },
   };
 

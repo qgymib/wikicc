@@ -779,6 +779,169 @@ fn the_article_typography_reaches_the_preview_one_size_down() {
 }
 
 #[test]
+fn a_chapter_arrow_is_quiet_until_the_chapter_is_under_the_pointer() {
+    // A reading column full of arrows would be a table of contents, so the
+    // arrow is only furniture while the pointer is on its heading — or the
+    // keyboard is on the arrow, which is what keeps it reachable. Its
+    // visibility follows the fade, or a hidden arrow would still be a click
+    // target and a tab stop nobody asked for.
+    let css = SHELL_CSS;
+    let arrow = rule_of(
+        css,
+        ".doc-body.chapter-collapsible .chapter-toggle {\n  position: absolute;",
+    );
+
+    assert_eq!(declaration(arrow, "position"), Some("absolute"));
+    assert_eq!(
+        declaration(arrow, "left"),
+        Some("-22px"),
+        "the arrow hangs flush with the heading's left edge: the pointer \
+         crosses from the heading onto the arrow without leaving hover \
+         territory, which is what makes it reachable: {arrow}"
+    );
+    assert_eq!(
+        declaration(arrow, "opacity"),
+        Some("0"),
+        "an arrow that is not being looked at is not there"
+    );
+    assert_eq!(
+        declaration(arrow, "visibility"),
+        Some("hidden"),
+        "and it is not a click or a tab stop either"
+    );
+
+    let shown = css
+        .find(".doc-body.chapter-collapsible .chapter-toggle:hover,")
+        .expect("the arrow's own states");
+    let shown = rule_of(&css[shown..], ".doc-body.chapter-collapsible");
+    assert_eq!(declaration(shown, "opacity"), Some("1"));
+    assert_eq!(declaration(shown, "visibility"), Some("visible"));
+
+    for level in 1..=6 {
+        let selector = format!(".doc-body.chapter-collapsible h{level}:hover .chapter-toggle,");
+        assert!(
+            css.contains(&selector),
+            "the heading's own hover reveals its arrow, at every level: {selector}"
+        );
+    }
+}
+
+#[test]
+fn folding_a_chapter_leaves_its_heading_exactly_as_it_was() {
+    // The point of folding is the arrow and nothing else: the heading keeps its
+    // size, its rule and its spacing, because the chapter's elements are hidden
+    // rather than moved. Only the glyph turns, and the button stays put — the
+    // pointer that folded a chapter is still on the arrow that unfolds it.
+    let css = SHELL_CSS;
+    let glyph = rule_of(css, ".chapter-toggle svg {");
+    let folded = rule_of(css, ".chapter-toggle[aria-expanded=\"false\"] svg {");
+
+    assert_eq!(
+        declaration(glyph, "transform"),
+        Some("rotate(90deg)"),
+        "the chevron points down while the chapter is open"
+    );
+    assert_eq!(
+        declaration(folded, "transform"),
+        Some("none"),
+        "and right once it is folded"
+    );
+
+    // The body is a grid so the headings hang into the margin the arrows are
+    // drawn in, and every element gets a row of its own; the heading keeps a
+    // column of its own so its text is not pushed aside for the arrow.
+    let body = rule_of(css, ".doc-body.chapter-collapsible {");
+    assert_eq!(declaration(body, "display"), Some("grid"));
+    assert!(
+        declaration(body, "grid-template-columns")
+            .is_some_and(|value| value.starts_with("28px minmax(0, 1fr)")),
+        "the gutter then the reading column: {body}"
+    );
+
+    // The list is one rule over every level; the h2 line inside it is the
+    // proof that a heading — not only the narrowest one — is addressed.
+    let heading = rule_of(css, ".doc-body.chapter-collapsible > h1,");
+    assert_eq!(
+        declaration(heading, "grid-column"),
+        Some("1 / -1"),
+        "the heading starts at the very left edge, where its text does"
+    );
+    assert!(
+        heading.contains(".doc-body.chapter-collapsible > h2,"),
+        "every level of heading spans the full width"
+    );
+    assert_eq!(
+        declaration(heading, "position"),
+        Some("relative"),
+        "the heading is the positioned ancestor its arrow hangs from"
+    );
+
+    // Nothing in the sheet folds a chapter by hiding a heading: a folded
+    // chapter shows its title.
+    assert!(
+        !css.contains(".doc-body.chapter-collapsible h2[data-collapsed]"),
+        "a folded chapter keeps its heading on screen"
+    );
+}
+
+#[test]
+fn folding_is_the_article_s_own_furniture() {
+    // The search dialog reads a click outside itself as a dismissal and the
+    // hover preview is a window onto a chapter rather than a place to read one,
+    // so neither can fold a document. Both are kept out by scope, not by a
+    // runtime test: every rule of the feature hangs off the class only the
+    // article asks for.
+    let css = SHELL_CSS;
+
+    // The arrow's own rules hang off the article's class, so a document body
+    // that did not ask for the arrows has no rule to pick up. The glyph rules
+    // are the one exception: they draw nothing until an arrow exists, and only
+    // the article builds one.
+    let scoped: Vec<&str> = css
+        .lines()
+        .filter(|line| line.contains(".chapter-toggle"))
+        .filter(|line| !line.contains(".chapter-toggle svg"))
+        .filter(|line| !line.contains(".chapter-toggle[aria-expanded"))
+        .collect();
+
+    assert!(!scoped.is_empty(), "the sheet has rules for the arrows");
+    for line in scoped {
+        // The print block speaks for the whole sheet — a printed page has no
+        // arrows at all — so its plain selector is the documented exception.
+        let indented = line.starts_with("  ");
+        assert!(
+            line.contains(".chapter-collapsible") || indented,
+            "the arrow is the article's own furniture: {line}"
+        );
+    }
+
+    // The body only becomes a grid under the article's class, so the two other
+    // document bodies keep the typography's layout untouched.
+    assert!(
+        css.contains(".doc-body.chapter-collapsible {"),
+        "the grid the arrows hang from is the article's alone"
+    );
+
+    // Printed paper cannot be folded, and the arrows are not content. The sheet
+    // has more than one print block — the banner's early one takes itself off
+    // the page too — so the last one is the sheet-wide block the arrows leave
+    // with.
+    let print_at = css.rfind("@media print").expect("a print block");
+    let print = media_block(&css[print_at..], "print");
+    assert!(
+        print.contains(".chapter-toggle {"),
+        "the print rules take the arrows off the page"
+    );
+    assert!(
+        print[print.find(".chapter-toggle {").expect("arrow rule")..]
+            .split('}')
+            .next()
+            .is_some_and(|rule| declaration(rule, "display") == Some("none")),
+        "a printed page carries no fold arrows"
+    );
+}
+
+#[test]
 fn a_hit_is_marked_in_the_document_without_shouting() {
     // A document holds dozens of hits, and the reader is reading rather than
     // scanning markers: the wash is quiet, and only the one the reader picked

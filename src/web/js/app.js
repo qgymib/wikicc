@@ -385,9 +385,26 @@ export function start() {
     });
   }
 
-  /** Park the document at `anchor`, which `findAnchor` has already resolved. */
+  /**
+   * Park the document at `anchor`, which `findAnchor` has already resolved.
+   *
+   * A chapter the reader folded away is `hidden`, and nothing scrolls to a
+   * hidden element: a deep link, an outline entry or a block reference pointing
+   * inside a folded chapter would open the document at the top and say
+   * nothing. Reopening the chapters that hold it first is what keeps every
+   * route working, and it is the reader's own request that reopens them.
+   */
   function scrollToAnchor(found) {
-    if (found && found.element && found.element.scrollIntoView) {
+    if (!found || !found.element) {
+      return;
+    }
+
+    var body = content.querySelector("." + DocBody.BODY_CLASS);
+    if (body) {
+      DocBody.expandTo(body, found.element);
+    }
+
+    if (found.element.scrollIntoView) {
       found.element.scrollIntoView({ block: "start" });
     }
   }
@@ -399,8 +416,14 @@ export function start() {
 
     // The shared document-body render: markup in, tables enhanced in the same
     // breath and still before insertion, so the first paint already carries
-    // the sortable headers and filter buttons.
-    var body = DocBody.createDocBody(doc.html, { enhanceTables: true });
+    // the sortable headers, filter buttons and chapter fold arrows. Folding is
+    // asked for here and nowhere else: the search preview would read the arrow
+    // as a press outside its dialog, and the hover preview is a window onto a
+    // chapter rather than a place to read one.
+    var body = DocBody.createDocBody(doc.html, {
+      enhanceTables: true,
+      collapsible: true,
+    });
 
     // Only the article is replaced: the banner slot sits beside it in `content`
     // for the whole session, so a document change can neither remove it nor

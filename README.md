@@ -16,6 +16,11 @@ their chapter outline.
 - **Link graph** of the folder with zoom, pan and drag; clicking a node opens
   that document.
 - **Chapter outline** of the current document, following the section being read.
+- **Chapter folding**: an arrow beside a heading folds that chapter — and
+  everything nested under it — down to its title, and unfolds it again. The
+  arrows appear when the pointer is on a heading and stay out of the way
+  otherwise; folding is never remembered, so every document opens whole.
+  Following a link or an outline entry into a folded chapter reopens it.
 - **Block references**: a link to a chapter of another document previews that
   chapter on hover and opens it on click. A chapter that does not exist is
   reported as a broken reference and explained by the reader.

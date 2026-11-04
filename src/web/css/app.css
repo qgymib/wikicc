@@ -563,6 +563,158 @@ a {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
+/* ---------- chapter folding ---------- */
+
+/* The fold arrows of the article.
+
+   The script puts one arrow inside the heading it folds, ahead of its text —
+   the heading, the arrow within it, then the chapter — so a fold never hides
+   the control that undoes it. The arrow hangs in the margin beside its
+   heading: absolutely positioned against the heading itself, so it takes no
+   width and the heading's type, its rule and its spacing are exactly what
+   they are in a document that cannot fold.
+
+   Living inside the heading is also what keeps the arrow reachable: hover
+   follows the DOM tree rather than the geometry, so a pointer that moves from
+   the heading onto its arrow is still hovering the heading — there is no gap
+   on the way where the arrow has already begun to fade. The heading is the
+   positioned ancestor the arrow hangs from.
+
+   The body is a grid so the headings hang into the margin the arrows are
+   drawn in, while every other element keeps the reading column. */
+.doc-body.chapter-collapsible {
+  display: grid;
+  /* The margin the arrows hang in, then the reading column. The gutter is
+     wider than the arrow so the two never touch: the arrow is 22px and the
+     column keeps a further 6px of air before the heading's first letter. */
+  grid-template-columns: 28px minmax(0, 1fr);
+  /* The heading's own top margin stays a gap between rows, as it is between
+     blocks in the flow; a grid row cannot let it collapse away. */
+  row-gap: 0;
+}
+
+/* Everything the body holds is the reading column; the heading is the one
+   element allowed to start at the very left edge, so its own box begins where
+   the text does. */
+.doc-body.chapter-collapsible > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.doc-body.chapter-collapsible > h1,
+.doc-body.chapter-collapsible > h2,
+.doc-body.chapter-collapsible > h3,
+.doc-body.chapter-collapsible > h4,
+.doc-body.chapter-collapsible > h5,
+.doc-body.chapter-collapsible > h6 {
+  grid-column: 1 / -1;
+  /* The positioned ancestor its arrow hangs from. */
+  position: relative;
+}
+
+/* The arrow itself: quiet furniture in the margin, pulled left so it never
+   stands between the reader and the first letter of a heading. Nothing in the
+   flow moves for it — it is absolutely positioned against the heading, which
+   the grid lets start at the body's own left edge. */
+.doc-body.chapter-collapsible .chapter-toggle {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  /* The arrow steps back over its own width into the margin, and its right
+     edge lands exactly on the heading's own edge: the pointer crosses from
+     the heading onto the arrow without ever leaving hover territory. */
+  left: -22px;
+  /* Centered on the first line of the heading's text: half of the 1.25 line
+     height, less half of the arrow, in the heading's own font size. */
+  top: calc(0.625em - 11px);
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  /* Hidden until the pointer is on the heading, or the keyboard is on the
+     arrow: a reading column full of arrows would be a table of contents, and
+     this is not one. `visibility` follows the fade rather than starting a
+     transition of its own, so an invisible arrow is never a click target. */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 140ms ease, visibility 140ms ease, color 140ms ease,
+    background-color 140ms ease;
+}
+
+/* A lane that widens the arrow's reach above and below its own box, so a
+   pointer that leaves the heading at an angle — beside the arrow, not at it —
+   is caught on the way instead of slipping into the fade. It draws nothing
+   and stops at the arrow's own width: it never reaches into the heading's
+   text, so a click meant for a letter never folds a chapter. It keeps itself
+   visible because visibility inherits: a hidden button would hide the lane
+   with it, and the lane is what brings the pointer back to a hidden arrow. */
+.doc-body.chapter-collapsible .chapter-toggle::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  right: 0;
+  bottom: -8px;
+  left: 0;
+  visibility: visible;
+}
+
+/* Hovering the arrow is hovering the heading — the arrow is its child — so
+   one rule over every level answers for both directions, and a folded chapter
+   keeps its heading, so the arrow of one stays reachable to reopen it. */
+.doc-body.chapter-collapsible h1:hover .chapter-toggle,
+.doc-body.chapter-collapsible h2:hover .chapter-toggle,
+.doc-body.chapter-collapsible h3:hover .chapter-toggle,
+.doc-body.chapter-collapsible h4:hover .chapter-toggle,
+.doc-body.chapter-collapsible h5:hover .chapter-toggle,
+.doc-body.chapter-collapsible h6:hover .chapter-toggle,
+.doc-body.chapter-collapsible .chapter-toggle:hover,
+.doc-body.chapter-collapsible .chapter-toggle:focus-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.doc-body.chapter-collapsible .chapter-toggle:hover,
+.doc-body.chapter-collapsible .chapter-toggle:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.doc-body.chapter-collapsible .chapter-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* One chevron, two states: it points down while the chapter is open and turns
+   a quarter to point right once it is folded. The button itself never moves,
+   so the pointer that just folded a chapter is still on the arrow that unfolds
+   it; a reader who asked for less motion gets the turn without the travel. */
+.chapter-toggle svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(90deg);
+  transition: transform 160ms ease;
+}
+
+.chapter-toggle[aria-expanded="false"] svg {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chapter-toggle svg {
+    transition: none;
+  }
+}
+
 /* ---------- mermaid diagrams ---------- */
 
 /* Until the engine runs, the block is the diagram source: keep it readable and
@@ -2429,6 +2581,17 @@ a {
     left: 18px;
     right: 18px;
   }
+
+  /* The reading column narrows to a 20px gutter and the article's own margin
+     down to 18px, so the arrow steps back a little less: still inside the
+     margin, still clear of the text on a phone. */
+  .doc-body.chapter-collapsible {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .doc-body.chapter-collapsible .chapter-toggle {
+    left: -16px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2488,6 +2651,13 @@ a {
   .doc-body .table-filter-toggle,
   .table-filter-panel,
   .preview-popover {
+    display: none;
+  }
+
+  /* A printed page cannot be folded, so the arrows are not furniture on it —
+     and a page printed from a folded document keeps the chapter it shows:
+     paper has no pointer to unfold one. */
+  .chapter-toggle {
     display: none;
   }
 
