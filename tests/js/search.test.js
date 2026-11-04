@@ -194,6 +194,51 @@ test("a snippet of text without the query is null", () => {
   assert.equal(search.matchSnippet(null, "anything"), null);
 });
 
+test("the default window fills one row and keeps the hit in sight", () => {
+  // The result row caps its context at one line, and a one-line cut reads the
+  // text from its start — so the default window spans about one line of the
+  // widest panel, most of it spent on the tail, with the highlighted word
+  // left near the head where the cut can never take it away.
+  const latin = [];
+  for (let i = 0; i < 120; i += 1) {
+    latin.push(`w${String(i).padStart(3, "0")}`);
+  }
+  const words = latin.join(" ");
+  const snippet = search.matchSnippet(`${words} needle ${words}`, "needle");
+
+  assert.equal(snippet.hit, "needle");
+  assert.ok(snippet.before.length > 0, "some lead-in survives");
+  assert.ok(snippet.before.length <= 20, "the lead-in stays short");
+  assert.ok(snippet.after.length >= 90, "the tail fills the line");
+  assert.equal(snippet.trimmedStart, true);
+  assert.equal(snippet.trimmedEnd, true);
+});
+
+test("the default window keeps whole lines of CJK around the hit", () => {
+  // Han text has no spaces, so the boundary logic leaves the window exactly
+  // as cut: the lead and the tail are what the widest row line holds.
+  const lead = "前".repeat(60);
+  const tail = "后".repeat(160);
+  const snippet = search.matchSnippet(`${lead}探针${tail}`, "探针");
+
+  assert.equal(snippet.before, lead.slice(-20));
+  assert.equal(snippet.after, tail.slice(0, 100));
+});
+
+test("one side of the window can be widened without the other", () => {
+  const snippet = search.matchSnippet(
+    "前前前前前前前前中中后后后后后后后后",
+    "中中",
+    {
+      lead: 3,
+      tail: 5,
+    },
+  );
+
+  assert.equal(snippet.before, "前前前");
+  assert.equal(snippet.after, "后后后后后");
+});
+
 test("every hit of a word is found, in order", () => {
   const ranges = search.matchRanges("one two one three one", "one");
 

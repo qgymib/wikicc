@@ -2025,12 +2025,15 @@ a {
   color: var(--text-dim);
   font-size: 12.5px;
   line-height: 1.45;
-  /* Two lines of context, which is closer to how the passage actually reads
-     than one cut-off line, and a row whose height never depends on the
-     document beside it. */
+  /* One line, on every screen: the window is cut to roughly one line of the
+     panel at its widest, so a wide screen reads a full line of context where
+     it used to stop well short of the row's edge, and a narrower screen loses
+     only the tail to the ellipsis. The highlighted word sits near the head of
+     the window — a one-line cut reads from the start, and the words the row
+     was found by must never be the part that gets cut away. */
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   overflow: hidden;
 }
 

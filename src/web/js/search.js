@@ -195,8 +195,32 @@ export function search(index, query) {
 
 /* ---------- context around a hit ---------- */
 
-/** Characters of text kept on each side of a hit, before the ellipsis. */
-export var SNIPPET_RADIUS = 40;
+/**
+ * Characters of text kept before a hit, before the ellipsis.
+ *
+ * The result row caps its context at one line, and a one-line cut reads the
+ * text from its start — so the highlighted word has to sit near the head of
+ * the window, or a narrow screen would cut the very words the reader typed
+ * out of the row that found them. Twenty characters is a lead-in short
+ * enough to survive that cut at every width the panel is used at, and still
+ * enough to show how the sentence was running.
+ */
+export var SNIPPET_LEAD = 20;
+
+/**
+ * Characters of text kept after a hit, before the ellipsis.
+ *
+ * The two sides together cut about one line of the panel at its widest —
+ * around a hundred and twenty-five Chinese characters — so a wide screen
+ * reads a full line of context where the window used to stop well short of
+ * the row's edge, and a narrower screen loses only the tail to the ellipsis.
+ * Every row keeps the same single-line height however wide the panel is.
+ * Latin script packs roughly twice as many characters into that line, so a
+ * Latin row fills about half of it; the window is measured in characters
+ * because the alternative — measuring the rendered row — would put layout
+ * questions inside the engine.
+ */
+export var SNIPPET_TAIL = 100;
 
 /** Stands in for text a snippet had to drop. */
 export var ELLIPSIS = "\u2026";
@@ -563,19 +587,30 @@ export function matchSnippet(text, query, options) {
  * `matchSnippet` finds its range and cuts around it; `occurrences` is handed
  * the ranges already — one per place the query occurs — and cuts around each,
  * so the cut lives here for both. It is the same cut whatever the caller: a
- * window of `radius` characters on each side, moved to a word boundary where
- * one is close enough to reach, with the two flags saying whether text was
- * dropped at that end.
+ * short lead before the hit and a long tail behind it — together about one
+ * row line of the widest panel, with the hit kept where a one-line cut can
+ * never take it — moved to a word boundary where one is close enough to
+ * reach, with the two flags saying whether text was dropped at that end.
+ * A `radius` option still cuts symmetrically, which is what the tests use to
+ * exercise the boundary logic at small sizes.
  */
 function cutAround(text, start, length, options) {
-  var radius =
-    options && typeof options.radius === "number"
-      ? Math.max(0, options.radius)
-      : SNIPPET_RADIUS;
+  var lead =
+    options && typeof options.lead === "number"
+      ? Math.max(0, options.lead)
+      : options && typeof options.radius === "number"
+        ? Math.max(0, options.radius)
+        : SNIPPET_LEAD;
+  var tail =
+    options && typeof options.tail === "number"
+      ? Math.max(0, options.tail)
+      : options && typeof options.radius === "number"
+        ? Math.max(0, options.radius)
+        : SNIPPET_TAIL;
 
   var end = start + length;
-  var from = Math.max(0, start - radius);
-  var to = Math.min(text.length, end + radius);
+  var from = Math.max(0, start - lead);
+  var to = Math.min(text.length, end + tail);
 
   // A window that begins or ends inside a word would read as a typo, so the
   // cut moves to the word boundary when one is close enough to reach — and

@@ -618,7 +618,12 @@ fn a_search_result_reads_as_a_row_of_a_table_of_findings() {
         Some("1"),
         "the passage is the leading column"
     );
-    assert_eq!(declaration(context, "-webkit-line-clamp"), Some("2"));
+    assert_eq!(
+        declaration(context, "-webkit-line-clamp"),
+        Some("1"),
+        "one line on every screen: the window fills the widest line and the \
+         cut never takes the highlighted word"
+    );
 
     // The trailing cell is the file itself, one line and one value: it names
     // where the row leads rather than what the document calls itself, because
