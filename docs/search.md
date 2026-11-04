@@ -71,8 +71,11 @@ The rules behind the table:
 - It does not rank by position or count only: a hit in a title always leads,
   however early or late it sits in the body.
 - It does not search code blocks or diagram sources for highlighting: a hit
-  inside one is still a real result in the list, but the preview leaves those
-  subtrees as authored so a rendered diagram is never turned back into source.
+  inside one is still a real result in the list, and selecting it scrolls the
+  preview to the block that holds it, but the preview leaves those subtrees
+  as authored so a rendered diagram is never turned back into source. Rows
+  after such a hit still land on their own places — the block holds the
+  hit's place in the order, whether or not it is marked.
 - It does not hold on to your query: clearing the field (the clear button at
   the left of the scope button, or deleting the text) empties the list and the
   preview, and closing the panel forgets the query.

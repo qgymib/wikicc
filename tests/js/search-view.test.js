@@ -274,7 +274,7 @@ function parseInto(root, html) {
         open.pop();
       }
     } else {
-      var node = fakeElement(match[2]);
+      var node = createNode(match[2]);
       var attribute = /([a-zA-Z-]+)="([^"]*)"/g;
       var found = attribute.exec(match[3] || "");
 
@@ -292,6 +292,16 @@ function parseInto(root, html) {
     match = pattern.exec(html);
   }
 }
+
+/**
+ * The factory parsed markup's elements come from.
+ *
+ * A test that has to observe a node the payload's HTML brought in — the
+ * `<pre>` a code block's hit scrolls to — swaps this for the page's own
+ * factory while it runs, which `withPage` does; the default is the plain
+ * one, so no test sees a hook it did not ask for.
+ */
+var createNode = fakeElement;
 
 /** The few entities the build writes into a body. */
 function decodeText(value) {
@@ -370,28 +380,71 @@ function textOf(node) {
 /**
  * A walker over the text nodes below `root`, in document order.
  *
- * The snapshot is taken when the walker is created, which is what the real
- * API does not promise but what the caller here needs: nodes split while the
- * walk runs appear behind the cursor, and `nextNode` must continue past them
- * rather than visit the new halves again.
+ * The walk is live, as the browser's own is: nodes that enter the tree while
+ * it runs — the halves `splitText` leaves behind, the text a fresh mark now
+ * holds — are visited where a browser would visit them, because the view's
+ * bookkeeping depends on that behaviour rather than on a snapshot of it.
  */
 function treeWalker(root) {
-  var queue = [];
-  (function collect(node) {
-    (node.children || []).forEach(function (child) {
-      if (child.nodeType === 3) {
-        queue.push(child);
-      }
-      collect(child);
-    });
-  })(root);
+  /** The node the walk last returned, or the root before the first ask. */
+  var current = root;
 
-  var index = -1;
+  /** The first text node below `node`, or `null`. */
+  function firstText(node) {
+    for (var index = 0; index < node.children.length; index += 1) {
+      var child = node.children[index];
+      if (child.nodeType === 3) {
+        return child;
+      }
+      var found = firstText(child);
+      if (found) {
+        return found;
+      }
+    }
+
+    return null;
+  }
+
+  /** The next text node from `node`'s position onward, or `null` at the end. */
+  function nextFrom(node) {
+    if (node.nodeType !== 3) {
+      var inner = firstText(node);
+      if (inner) {
+        return inner;
+      }
+    }
+
+    var parent = node.parentNode;
+    while (parent) {
+      var siblings = parent.children;
+      for (
+        var index = siblings.indexOf(node) + 1;
+        index < siblings.length;
+        index += 1
+      ) {
+        if (siblings[index].nodeType === 3) {
+          return siblings[index];
+        }
+        var found = firstText(siblings[index]);
+        if (found) {
+          return found;
+        }
+      }
+
+      node = parent;
+      if (node === root) {
+        return null;
+      }
+      parent = node.parentNode;
+    }
+
+    return null;
+  }
 
   return {
     nextNode() {
-      index += 1;
-      return index < queue.length ? queue[index] : null;
+      current = nextFrom(current);
+      return current;
     },
   };
 }
@@ -403,6 +456,7 @@ function withPage(work) {
     NodeFilter: globalThis.NodeFilter,
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
+    createNode: createNode,
   };
 
   var body = fakeElement("body");
@@ -463,6 +517,11 @@ function withPage(work) {
 
   globalThis.document = doc;
   globalThis.NodeFilter = { SHOW_TEXT: 4 };
+  // Parsed markup's elements go through the page's factory, so a test can
+  // observe the `<pre>` a code block's hit is brought to as well.
+  createNode = function (tagName) {
+    return make(tagName);
+  };
   globalThis.setTimeout = function (callback) {
     timers.push(callback);
     return timers.length;
@@ -507,6 +566,7 @@ function withPage(work) {
     globalThis.NodeFilter = previous.NodeFilter;
     globalThis.setTimeout = previous.setTimeout;
     globalThis.clearTimeout = previous.clearTimeout;
+    createNode = previous.createNode;
     timers.length = 0;
   }
 }
@@ -1025,7 +1085,7 @@ test("a document drawn without a mark leaves no standout behind", () => {
   });
 });
 
-test("an occurrence past the marked hits lands on the last mark there is", () => {
+test("a code block's occurrence is brought to its block, not a textual stand-in", () => {
   var scrolled = [];
 
   withPage(function (page) {
@@ -1055,6 +1115,11 @@ test("an occurrence past the marked hits lands on the last mark there is", () =>
 
     var marks = page.container.findAll(HIT_CLASS);
     assert.equal(marks.length, 1, "the code block's hit is not marked");
+    assert.equal(
+      marks[0].className,
+      HIT_CLASS,
+      "no textual hit is made to stand in for the code block's own",
+    );
 
     // Only the preview's asks are read here; the list's `nearest` reveal of
     // its own row is the row navigation's business.
@@ -1068,8 +1133,8 @@ test("an occurrence past the marked hits lands on the last mark there is", () =>
 
     assert.deepEqual(
       revealed,
-      [marks[0]],
-      "the eye is brought to the nearest mark there is",
+      [previewOf(page).findAllByTag("PRE")[0]],
+      "the eye is brought to the block the hit sits in",
     );
   });
 });
@@ -2085,4 +2150,155 @@ test("the shortcut is Ctrl+F or Cmd+F, and nothing else", () => {
   );
   assert.equal(isSearchShortcut({ key: "g", ctrlKey: true }), false);
   assert.equal(isSearchShortcut(null), false);
+});
+
+/**
+ * The list numbers occurrences over the document's whole text — a code block's
+ * text included — while the highlight leaves code as authored, so the row an
+ * ordinal names and the mark the preview addresses must stay paired even when
+ * the code block's own occurrences hold no mark at all.
+ */
+test("every occurrence addresses its own mark, even past a code block", () => {
+  var scrolled = [];
+
+  withPage(function (page) {
+    page.decorate(function (element) {
+      element.scrollIntoView = function (options) {
+        scrolled.push({ text: textOf(element), options: options });
+      };
+    });
+
+    // The engine's `occurrences` reads "… one … two … three … four …" — the
+    // code block's hit is the second of four, and carries no mark below.
+    var html =
+      "<p>alpha one</p>\n<pre><code>alpha two</code></pre>\n" +
+      "<p>alpha three</p>\n<p>alpha four</p>\n";
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", html) },
+      answer() {
+        return [
+          entry("a.md", "Alpha", "alpha one", 0),
+          entry("a.md", "Alpha", "alpha two", 1),
+          entry("a.md", "Alpha", "alpha three", 2),
+          entry("a.md", "Alpha", "alpha four", 3),
+        ];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 3, "the code block alone stays unwrapped");
+
+    /** The preview's own asks since `scrolled.length` was last reset. */
+    function revealed() {
+      return scrolled
+        .filter(function (call) {
+          return call.options && call.options.block === "center";
+        })
+        .map(function (call) {
+          return call.text;
+        });
+    }
+
+    // The code block's own row: nothing pretends to highlight it, and the
+    // block that holds the hit is where the eye is brought.
+    scrolled.length = 0;
+    page.container
+      .findAll(RESULT_CLASS)[1]
+      .fire("click", { preventDefault() {} });
+    assert.deepEqual(
+      marks.map(function (mark) {
+        return mark.className;
+      }),
+      [HIT_CLASS, HIT_CLASS, HIT_CLASS],
+      "a hit inside the code block is addressed without a standout",
+    );
+    assert.deepEqual(
+      revealed(),
+      ["alpha two"],
+      "the code block's row is brought to the code block itself",
+    );
+
+    // The row after it names the next paragraph, not the one the code block
+    // just displaced.
+    scrolled.length = 0;
+    page.container
+      .findAll(RESULT_CLASS)[2]
+      .fire("click", { preventDefault() {} });
+    assert.deepEqual(
+      marks.map(function (mark) {
+        return mark.className;
+      }),
+      [HIT_CLASS, HIT_CLASS + " " + HIT_ACTIVE_CLASS, HIT_CLASS],
+      "the third occurrence stands out where its paragraph says",
+    );
+    assert.deepEqual(
+      revealed(),
+      ["alpha"],
+      "the third occurrence's own mark is the one brought to the middle",
+    );
+
+    // The last row keeps its pairing too.
+    page.container
+      .findAll(RESULT_CLASS)[3]
+      .fire("click", { preventDefault() {} });
+    assert.deepEqual(
+      marks.map(function (mark) {
+        return mark.className;
+      }),
+      [HIT_CLASS, HIT_CLASS, HIT_CLASS + " " + HIT_ACTIVE_CLASS],
+      "the fourth occurrence stands out where its paragraph says",
+    );
+  });
+});
+
+/** Two hits sharing one text node must be addressed in the order read. */
+test("two hits of one paragraph are addressed in reading order", () => {
+  withPage(function (page) {
+    var html = "<p>alpha and alpha again</p>\n";
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", html) },
+      answer() {
+        return [
+          entry("a.md", "Alpha", "alpha", 0),
+          entry("a.md", "Alpha", "alpha", 1),
+        ];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 2, "both hits of the paragraph are marked");
+    assert.equal(
+      documentOf(page).textContent,
+      "alpha and alpha again\n",
+      "wrapping two hits of one node keeps the paragraph's text whole",
+    );
+
+    page.container
+      .findAll(RESULT_CLASS)[0]
+      .fire("click", { preventDefault() {} });
+    assert.deepEqual(
+      marks.map(function (mark) {
+        return mark.className;
+      }),
+      [HIT_CLASS + " " + HIT_ACTIVE_CLASS, HIT_CLASS],
+      "the first hit of the paragraph is the first one addressed",
+    );
+
+    page.container
+      .findAll(RESULT_CLASS)[1]
+      .fire("click", { preventDefault() {} });
+    assert.deepEqual(
+      marks.map(function (mark) {
+        return mark.className;
+      }),
+      [HIT_CLASS, HIT_CLASS + " " + HIT_ACTIVE_CLASS],
+      "the second hit of the paragraph is the second one addressed",
+    );
+  });
 });

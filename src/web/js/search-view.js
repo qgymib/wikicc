@@ -282,8 +282,18 @@ export function createSearchView(options) {
    */
   var drawnHit = null;
 
-  /** The text node wrapped for each hit, so a redraw can put them back. */
-  var hits = [];
+  /**
+   * One slot per occurrence, in the order `occurrences` numbers them.
+   *
+   * A slot holds the `<mark>` wrapped for a textual hit — or, for a hit the
+   * highlight leaves as authored (a code block, a diagram source), the block
+   * element containing it, which is what the preview can still scroll to.
+   * Exactly one of the two is set, and the slot's index is the very ordinal
+   * the result list gave the occurrence, so the row a reader picks and the
+   * place the preview lands on stay the same place however many hits the
+   * code blocks hold.
+   */
+  var slots = [];
 
   function view() {
     return globalThis;
@@ -852,7 +862,7 @@ export function createSearchView(options) {
       // signature for "nothing" would only ever skip one of those.
       drawn = null;
       drawnHit = null;
-      hits = [];
+      slots = [];
       preview.textContent = "";
       preview.scrollTop = 0;
       renderIdle();
@@ -872,7 +882,7 @@ export function createSearchView(options) {
     }
     drawn = signature;
     drawnHit = entry.hit;
-    hits = [];
+    slots = [];
 
     preview.textContent = "";
     preview.scrollTop = 0;
@@ -982,7 +992,22 @@ export function createSearchView(options) {
     var node = walker.nextNode();
 
     while (node) {
-      if (!skippable(node)) {
+      // Every text node is measured, wrapped or not: the list numbers the
+      // document's occurrences over its whole text — a code block's text
+      // included — so a subtree the highlight leaves as authored still
+      // fills the slots its hits own. Skipping the count would leave every
+      // ordinal after the skip naming the place before it.
+      //
+      // A live walker revisits the text a fresh mark holds — the mark was
+      // created after the walk passed — and that text is the very hit the
+      // walk just counted, so it fills no slot of its own.
+      if (insideOwnMark(node)) {
+        // Already counted where the mark was wrapped.
+      } else if (skippable(node)) {
+        if (textOfNode(node).trim()) {
+          recordSkipped(node, matchRanges(textOfNode(node), value));
+        }
+      } else {
         var ranges = matchRanges(textOfNode(node), value);
         if (ranges.length) {
           node = wrapHits(node, ranges);
@@ -990,6 +1015,24 @@ export function createSearchView(options) {
       }
       node = walker.nextNode();
     }
+  }
+
+  /** Whether a text node sits in one of the marks the highlight wrapped. */
+  function insideOwnMark(node) {
+    var parent = node.parentNode;
+
+    while (parent && parent !== preview) {
+      if (
+        parent.tagName &&
+        String(parent.tagName).toUpperCase() === "MARK" &&
+        String(parent.className).split(" ").indexOf(HIT_CLASS) !== -1
+      ) {
+        return true;
+      }
+      parent = parent.parentNode;
+    }
+
+    return false;
   }
 
   /** The text a node carries, read the way both a browser and a DOM stand-in allow. */
@@ -1031,25 +1074,65 @@ export function createSearchView(options) {
   }
 
   /**
+   * The outermost skipped ancestor of a text node, or `null`.
+   *
+   * A hit the highlight leaves as authored still has to be scrolled to, and
+   * the block that holds it — the `<pre>` around the code, say — is the
+   * largest element the skip covers: it is the one place the reader can be
+   * brought that still says "the hit is in here".
+   */
+  function skippedBlock(node) {
+    var block = null;
+    var parent = node.parentNode;
+
+    while (parent && parent !== preview) {
+      if (
+        parent.tagName &&
+        UNHIGHLIGHTED_TAGS.indexOf(String(parent.tagName).toUpperCase()) !== -1
+      ) {
+        block = parent;
+      }
+      parent = parent.parentNode;
+    }
+
+    return block;
+  }
+
+  /** Fill the slots a skipped subtree's hits own with its block element. */
+  function recordSkipped(node, ranges) {
+    var block = skippedBlock(node);
+
+    ranges.forEach(function () {
+      slots.push({ mark: null, block: block });
+    });
+  }
+
+  /**
    * Split `node` at `ranges` and wrap each piece in a `<mark>`.
    *
-   * The pieces are taken from the right so every split happens on the part
-   * that has not been cut yet: `splitText` leaves the new node in place, after
-   * the piece before it, so the original node ends up holding only the text up
-   * to the first hit and the rest of the chain is built backwards from there.
-   * Each `<mark>` then replaces the piece that is exactly its own text.
+   * The cuts are made from the right, and always out of the node itself:
+   * `splitText` leaves the fresh half *after* the node, so cutting a piece
+   * out of a piece cut before would address it by an offset that no longer
+   * means anything — while the node, holding everything left of the last
+   * cut, keeps every earlier range's start the offset it had in the node's
+   * own text. Each `<mark>` replaces the piece that is exactly its own text.
    *
-   * Returns the first hit, which is where the walk resumes — a tree walker
-   * enters a `<mark>` and would otherwise offer the highlighted text again.
+   * The marks are handed back in reading order — the walk runs rightmost
+   * first, and both the slots the caller fills and the mark the walk resumes
+   * from have to number the hits the way the reader reads them.
+   *
+   * Returns the first hit's mark, which is where the walk resumes — a tree
+   * walker enters a `<mark>` and would otherwise offer the highlighted text
+   * again.
    */
   function wrapHits(node, ranges) {
     var text = textOfNode(node);
-    var rest = node;
+    var marks = [];
 
     for (var index = ranges.length - 1; index >= 0; index -= 1) {
       var start = ranges[index].start;
       var end = start + ranges[index].length;
-      var tail = splitTail(rest, start);
+      var tail = splitTail(node, start);
       var piece = splitTail(tail, end - start);
 
       if (!piece || !tail.parentNode) {
@@ -1061,11 +1144,14 @@ export function createSearchView(options) {
       hit.textContent = text.slice(start, end);
       tail.parentNode.replaceChild(hit, tail);
 
-      hits.push(hit);
-      rest = piece;
+      marks.unshift(hit);
     }
 
-    return hits.length ? hits[hits.length - 1] : node;
+    marks.forEach(function (hit) {
+      slots.push({ mark: hit, block: null });
+    });
+
+    return marks.length ? marks[0] : node;
   }
 
   /**
@@ -1103,22 +1189,21 @@ export function createSearchView(options) {
    * selection: the reader's eye lands here, so this and only this hit may
    * stand out.
    *
-   * The list counts a document's occurrences in its own text, and the marks
-   * were wrapped in the walk's order, which is that order — except where a
-   * hit sits in code or a diagram source, which the search finds but the
-   * highlight leaves as authored. There the marks fall short of the count,
-   * and the nearest one — the last, when the ordinal runs past it — is where
-   * the eye is brought: the same document, the same query, within a step of
-   * the row the reader chose. A `-1`, the mark of a title-only match, names
-   * the first mark, which such a document does not have and so does nothing.
+   * The slots are one per occurrence, in the order the list numbers them —
+   * the marks the highlight wrapped, and, for a hit that sits in code or a
+   * diagram source and is left as authored, the block holding it. The
+   * ordinal therefore names its own place whatever the document holds: a
+   * code hit scrolls to its block without a standout, and no textual hit
+   * after it is displaced. A `-1`, the mark of a title-only match, names the
+   * first slot, which such a document does not have and so does nothing.
    */
   function scrollToHit(ordinal) {
-    if (!hits.length) {
+    if (!slots.length) {
       return;
     }
 
-    var index = ordinal >= 0 ? Math.min(ordinal, hits.length - 1) : 0;
-    var target = hits[index];
+    var index = ordinal >= 0 ? Math.min(ordinal, slots.length - 1) : 0;
+    var target = slots[index];
     if (!target) {
       return;
     }
@@ -1126,13 +1211,22 @@ export function createSearchView(options) {
     // String assignment rather than `classList`: the marks are created here
     // and carry no other class, and a plain string is what every DOM stand-in
     // the tests drive can read back.
-    hits.forEach(function (hit) {
-      hit.className =
-        hit === target ? HIT_CLASS + " " + HIT_ACTIVE_CLASS : HIT_CLASS;
+    slots.forEach(function (slot) {
+      if (slot.mark) {
+        slot.mark.className = HIT_CLASS;
+      }
     });
 
-    if (typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "center" });
+    // A hit the highlight wrapped takes the standout; one left as authored
+    // has no mark to raise, and the block that holds it is where the eye is
+    // brought instead.
+    if (target.mark) {
+      target.mark.className = HIT_CLASS + " " + HIT_ACTIVE_CLASS;
+    }
+
+    var node = target.mark || target.block;
+    if (node && typeof node.scrollIntoView === "function") {
+      node.scrollIntoView({ block: "center" });
     }
   }
 
@@ -1227,7 +1321,7 @@ export function createSearchView(options) {
     rows = [];
     entries = [];
     selected = null;
-    hits = [];
+    slots = [];
     drawn = null;
     drawnHit = null;
     mode = DEFAULT_MODE;
