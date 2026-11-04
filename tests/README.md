@@ -14,9 +14,19 @@ headless Chrome session before it is considered done.
 
 ## How to run
 
+Two commands are the whole procedure, and they mirror what CI runs:
+
 ```sh
 npm ci                                    # once, and whenever package-lock.json changes
 cargo test                                # everything, including the front-end suite
+```
+
+`cargo test` is the only bar a change has to clear: it runs the in-module unit
+tests, every integration file, and the front-end suite bridged in by
+`tests/js_suite.rs`. The slices below can be run on their own while iterating,
+but a slice passing never substitutes for the full run:
+
+```sh
 cargo test --test links                   # one Rust integration file
 cargo test --lib                          # the in-module unit tests only
 node --test "tests/js/*.test.js"          # the front-end suite on its own
@@ -41,9 +51,10 @@ Three failure modes are worth knowing about, because they look alike and are not
 | `cannot bundle the front-end sources: no esbuild executable was found` | `node_modules` exists but the bundler does not: the `@esbuild/*` package and the launcher are both absent, usually because `npm ci` ran with `--omit=optional`. |
 
 `node --test` does not expand a directory argument on every platform, so the
-front-end suite is always given files rather than a folder: the glob above for
-the `node` command, and the explicit sorted list of `*.test.js` files that
-`tests/js_suite.rs` builds when it runs the suite from inside `cargo test`.
+front-end suite is always given files rather than a folder: the quoted glob for
+the standalone `node` command, and the explicit sorted list of `*.test.js`
+files that `tests/js_suite.rs` builds when it runs the suite from inside
+`cargo test`.
 
 ## The four layers
 
@@ -199,8 +210,10 @@ a later reader knows why the assertion is shaped the way it is.
 
 ## Quality gates
 
-Every change has to leave all four green; the first three are what
-`.github/workflows/lint.yml` runs in CI:
+Every change has to leave all four green, run in full; in CI the first three
+are what `.github/workflows/lint.yml` owns, and `cargo test` is what the build
+workflows (`.github/workflows/ubuntu.yml`, `.github/workflows/windows.yml`)
+run on both platforms in both profiles:
 
 ```sh
 cargo fmt --check                          # Rust formatting

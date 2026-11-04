@@ -245,7 +245,8 @@ input; no test touches the network. The front-end dependencies are installed
 once with `npm ci` and the tests only read `node_modules`.
 
 Quality gates for any change: `cargo fmt --check`,
-`cargo clippy --all-targets -- -D warnings` and `cargo test` must all pass.
+`cargo clippy --all-targets -- -D warnings`, `npm run check` and `cargo test`
+must all pass.
 
 ## 9. Constraints and risks
 

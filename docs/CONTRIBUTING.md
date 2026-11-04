@@ -8,16 +8,15 @@ and the obligations a change has to meet live in this document.
 
 ## Quality gates
 
-Every commit is expected to leave the quality gates green — run them locally
-before committing, and again in CI, where
-[`../.github/workflows/lint.yml`](../.github/workflows/lint.yml) runs them on
-every push and pull request:
+Every commit is expected to leave the quality gates green, and every one of the
+four has to run locally before committing: a subset — one integration file,
+only the unit tests, only the front-end suite — does not clear the bar.
 
 ```sh
 cargo fmt --check                          # Rust formatting
 cargo clippy --all-targets -- -D warnings  # Rust lint
 npm run check                              # JS formatting and lint (Biome)
-cargo test                                 # the whole suite
+cargo test                                 # everything, including the front-end suite
 ```
 
 `npm run check` covers the reader's own JavaScript — the modules in
