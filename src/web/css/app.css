@@ -1622,12 +1622,14 @@ a {
      nearly touches the edge before the breakpoints take over. */
   width: min(1920px, 98vw);
   height: min(1155px, 97vh);
-  /* The field spans the dialog's first row; the list and the document share
-     the second, a third of the width and two thirds of it. Reading is a
-     column, not a caption under a list. */
+  /* One reading line, top to bottom: the question the reader typed, the
+    places it is answered, and the document one of those places opens. The
+    field takes its own height and the other two split the rest a third to
+    two thirds — the same proportion the list and the document held side by
+    side, now one above the other. */
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 2fr);
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   background: var(--bg-elevated);
@@ -1685,7 +1687,6 @@ a {
 
 .search-field {
   position: relative;
-  grid-column: 1 / -1;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1805,33 +1806,42 @@ a {
 
 .search-results {
   /* The list is the navigation, the preview is the page: the reader spends
-     their time reading, so the list gets a third of the dialog's width and
-     the preview the rest. Each scrolls on its own, so a long list never
-     shortens the document beside it. */
+    their time reading, so the list gets a third of the height left by the
+    field and the preview two thirds. Each scrolls on its own, so a long list
+    never shortens the document below it. */
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   /* Results arrive in one breath: holding the gutter open keeps the rows from
-     shifting sideways the moment a scrollbar appears under them. */
+    shifting sideways the moment a scrollbar appears under them. */
   scrollbar-gutter: stable;
 }
 
-/* A result is two lines — where it is, and why it is here — and the accent bar
-   on the left is what marks the one the preview describes. */
+/* A result is one row of a table of findings: the passage on the left, the
+   document it was found in on the right. The accent bar at the row's left
+   edge is what marks the one the preview describes. */
 .search-result {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 16px 10px 18px;
+  display: grid;
+  /* The passage takes whatever is left; the document column is wide enough
+     for a title to be recognised — around a third of the dialog — and never
+     so wide that it crowds the words the reader came to compare. */
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  align-items: start;
+  column-gap: 14px;
+  padding: 9px 16px 9px 18px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   /* The row is a button: a double click that opens the document must not
      also select the words it landed on. */
   user-select: none;
   transition: background-color 120ms ease;
+}
+
+.search-result:hover {
+  background: var(--bg-hover);
 }
 
 .search-result::before {
@@ -1854,37 +1864,58 @@ a {
   background: var(--accent);
 }
 
-.search-result-title {
-  color: var(--text);
-  font-size: 13.5px;
-  font-weight: 600;
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .search-result-context {
+  /* A title-only match has no passage to quote; the cell keeps its place in
+     the grid — and so the document column its alignment — by being empty
+     rather than absent. */
+  grid-column: 1;
+  min-width: 0;
   color: var(--text-dim);
   font-size: 12.5px;
   line-height: 1.45;
-  /* The wide dialog can afford two lines of context, which is closer to how
-     the passage actually reads than one cut-off line. */
+  /* Two lines of context, which is closer to how the passage actually reads
+     than one cut-off line, and a row whose height never depends on the
+     document beside it. */
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
 
+/* The file column: the path, which already ends in the file's name. It is one
+   line, dimmer than the passage beside it, because it says where the row leads
+   rather than what the row found. No rule divides it from the passage: the
+   two columns are told apart by their own type and spacing, which is quieter
+   than a table's graph paper. */
+.search-result-path {
+  grid-column: 2;
+  min-width: 0;
+  /* Truncation follows the writing direction, so a right-to-left box loses its
+     words from the left: `…guide/setup.md` keeps the file name and gives up
+     the directories above it, where the usual trail of dots at the right would
+     have thrown away exactly the part being looked for. A path of latin letters
+     and slashes is one left-to-right run either way, so the characters keep the
+     order they were written in and only the overflow is taken from the front. */
+  direction: rtl;
+  text-align: left;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .search-preview {
-  /* Two thirds of the dialog's width, whatever the list holds: this is the
-     document the reader came to read, so it is given twice the room of the
-     rows it was picked from. It scrolls on its own — the article behind the
-     dialog keeps the place the reader left it. */
+  /* Two thirds of the dialog's height, whatever the list holds: this is the
+    document the reader came to read, so it is given twice the room of the
+    rows it was picked from, and the horizontal rule above it is where the
+    list stops being a list. It scrolls on its own — the article behind the
+    dialog keeps the place the reader left it. */
   min-width: 0;
   min-height: 0;
   padding: 0;
-  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -2282,19 +2313,19 @@ a {
 
   /* The dialog follows the screen down: a fixed margin rather than a share of
    the viewport, so the smaller the window the closer the dialog is to
-   filling it. Two columns would leave the document a stripe here, so the
-   list and the preview stack — list on top, document below, each scrolling
-   on its own — and the split becomes one of height instead of width. */
+   filling it. The reading line is already one column with the list a third
+   of it and the document two, so nothing here has to restack — only the
+   width the columns of a result row are given tightens below. */
   .search-panel {
     width: calc(100vw - 16px);
     height: calc(100vh - 16px);
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) minmax(0, 2fr);
   }
 
-  .search-preview {
-    border-left: 0;
-    border-top: 1px solid var(--border);
+  /* The passage is what the row is for, so the document column gives way
+     first: it keeps enough width for a title to be readable at a glance and
+     the ellipsis does the rest. */
+  .search-result {
+    grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
   }
 }
 
@@ -2365,15 +2396,23 @@ a {
 
   /* The dialog keeps one margin step on each side and sheds the corners the
    desktop panel rounds. The two halves keep their 1:2 split here too: a phone
-   reads the same document, so the page still gets twice the room of the list. */
+   reads the same document, so the page still gets twice the height of the
+   list above it. */
   .search-panel {
     width: calc(100vw - 12px);
     height: calc(100dvh - 12px);
     border-radius: 12px;
   }
 
+  /* A phone's row has no width to spare: the margin comes in and the document
+    column with it, leaving the passage the line it needs. */
+  .search-result {
+    column-gap: 10px;
+    padding: 8px 12px 8px 16px;
+  }
+
   /* The narrowest screen gives the reading column back its margin, in both
-     the banner and the document below it. */
+    the banner and the document below it. */
   .search-doc-head {
     padding: 10px 14px 8px;
   }

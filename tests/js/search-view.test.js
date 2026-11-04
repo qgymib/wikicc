@@ -667,7 +667,7 @@ test("typing asks one question per pause, not one per keystroke", () => {
   });
 });
 
-test("the list shows the title and the context of every match", () => {
+test("every match is a row of the context it was found in and the file holding it", () => {
   withPage(function (page) {
     var built = build({
       container: page.container,
@@ -683,13 +683,31 @@ test("the list shows the title and the context of every match", () => {
     assert.equal(rows[0].getAttribute("role"), "option");
     assert.equal(rows[0].getAttribute("aria-selected"), "true");
     assert.equal(rows[1].getAttribute("aria-selected"), "false");
+
+    // The passage leads the row and the file closes it, which is the order
+    // the two columns are drawn in.
+    var cells = rows[0].children;
+    assert.equal(cells.length, 2);
+    assert.equal(cells[0].className, "search-result-context");
+    assert.equal(cells[1].className, "search-result-path");
+
+    assert.equal(textOf(cells[0]), "\u2026or alpha and more\u2026");
     assert.equal(
-      page.container.findAll("search-result-title")[0].textContent,
-      "Alpha",
+      cells[1].textContent,
+      "a.md",
+      "the trailing column names the file, and nothing else",
+    );
+    assert.equal(
+      cells[1].children.length,
+      0,
+      "the file cell holds its text and no title above it",
+    );
+    assert.equal(
+      cells[1].getAttribute("title"),
+      "a.md",
+      "the whole path is offered on hover, for a cell too narrow to show it",
     );
 
-    var context = page.container.findAll("search-result-context")[0];
-    assert.equal(textOf(context), "\u2026or alpha and more\u2026");
     assert.equal(
       page.container
         .findAll("search-result-context")[1]
@@ -701,23 +719,23 @@ test("the list shows the title and the context of every match", () => {
 
 test("the context of a match never arrives as markup", () => {
   withPage(function (page) {
-    // The title is the document's own name and the context is its own text;
-    // both are printed as written, so a document containing markup cannot
-    // become markup on this page.
-    var title = "<img src=x onerror=alert(1)>";
+    // The file's path is plain data, and the passage is the document's own
+    // text; both are printed as written, so a document containing markup
+    // cannot become markup on this page.
+    var path = "<img src=x onerror=alert(1)>";
     var hit = "<b>bold</b>";
     var built = build({
       container: page.container,
       answer() {
-        return [entry("a.md", title, hit)];
+        return [entry(path, "Alpha", hit)];
       },
     });
     built.view.open();
     type(built.view, page, "bold");
 
     assert.equal(
-      page.container.findAll("search-result-title")[0].textContent,
-      title,
+      page.container.findAll("search-result-path")[0].textContent,
+      path,
     );
 
     var marks = page.container.findAllByTag("mark");
@@ -1696,8 +1714,13 @@ test("a document matched on its title alone has no passage to preview", () => {
 
     assert.equal(
       page.container.findAll("search-result-context")[0].textContent,
+      "",
+      "there is no passage to quote, so the leading column stays empty",
+    );
+    assert.equal(
+      page.container.findAll("search-result-path")[0].textContent,
       "a.md",
-      "the path stands in for the passage the document does not have",
+      "the path names the document in the trailing column",
     );
     assert.equal(
       page.container.findAll(EMPTY_CLASS)[0].textContent,

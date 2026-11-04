@@ -528,11 +528,12 @@ fn the_search_panel_opens_as_a_centered_dialog() {
 }
 
 #[test]
-fn the_search_panel_gives_the_document_twice_the_room_of_the_list() {
+fn the_search_panel_stacks_the_list_over_the_document_it_opens() {
     // The list is how the reader navigates; the preview is what they came to
-    // read, and it now holds the whole document rather than a paragraph cut
-    // out of one. So the dialog is two columns — the list a third of the
-    // width, the document the rest — with the field spanning both above them.
+    // read, and it holds the whole document rather than a paragraph cut out
+    // of one. They sit on one reading line — field, list, document, top to
+    // bottom — and the two below the field keep the 1:2 proportion they held
+    // side by side, now as a split of height instead of width.
     let css = SHELL_CSS;
     let panel = rule_of(css, ".search-panel {");
     let field = rule_of(css, ".search-field {");
@@ -540,36 +541,43 @@ fn the_search_panel_gives_the_document_twice_the_room_of_the_list() {
     assert_eq!(declaration(panel, "display"), Some("grid"));
     assert_eq!(
         declaration(panel, "grid-template-columns"),
-        Some("minmax(240px, 1fr) minmax(0, 2fr)"),
-        "one column for the list, twice that for the document"
+        Some("minmax(0, 1fr)"),
+        "one column, so every part of the panel is on the same line of sight"
     );
-    assert_eq!(
-        declaration(panel, "grid-template-rows"),
-        Some("auto minmax(0, 1fr)"),
-        "the field takes its own height and the columns share the rest"
-    );
-    assert_eq!(
-        declaration(field, "grid-column"),
-        Some("1 / -1"),
-        "the query spans the dialog above both columns"
-    );
-
-    // Narrow screens cannot afford two columns: the halves stack, and the
-    // document keeps twice the height of the list it sits under.
-    let narrow = media_block(css, "max-width: 900px");
-    let panel = rule_of(narrow, ".search-panel {");
     assert_eq!(
         declaration(panel, "grid-template-rows"),
         Some("auto minmax(0, 1fr) minmax(0, 2fr)"),
-        "stacked, the split is one of height instead of width"
+        "the field takes its own height, the list a third of the rest and the document two"
+    );
+    assert!(
+        !panel.contains("grid-template-areas"),
+        "the order is the markup's: field, then list, then document"
+    );
+    assert_eq!(
+        declaration(field, "border-bottom"),
+        Some("1px solid var(--border)"),
+        "a rule under the field is where the query stops and the answers start"
     );
 
+    // The two halves of the split are separated by a horizontal rule, because
+    // they are now one above the other.
     let preview = rule_of(css, ".search-preview {");
+    assert_eq!(
+        declaration(preview, "border-top"),
+        Some("1px solid var(--border)")
+    );
+    assert_eq!(declaration(preview, "border-left"), None);
     assert_eq!(
         declaration(preview, "max-height"),
         None,
         "no share of the dialog is reserved for the list"
     );
+
+    // The list scrolls inside its own third: a hundred hits never squeeze the
+    // document, and a scrollbar never shifts the rows sideways.
+    let results = rule_of(css, ".search-results {");
+    assert_eq!(declaration(results, "overflow-y"), Some("auto"));
+    assert_eq!(declaration(results, "scrollbar-gutter"), Some("stable"));
 
     // An empty half names itself in its own middle, and that label leaves as
     // soon as the half holds something.
@@ -580,6 +588,101 @@ fn the_search_panel_gives_the_document_twice_the_room_of_the_list() {
         declaration(empty, "justify-content"),
         Some("center"),
         "the label is centred across the half it describes"
+    );
+}
+
+#[test]
+fn a_search_result_reads_as_a_row_of_a_table_of_findings() {
+    // The passage leads every line and the file it came from closes it, so the
+    // words the reader typed can be compared down one column and the files
+    // line up in another.
+    let css = SHELL_CSS;
+    let row = rule_of(css, ".search-result {");
+
+    assert_eq!(declaration(row, "display"), Some("grid"));
+    assert_eq!(
+        declaration(row, "grid-template-columns"),
+        Some("minmax(0, 1fr) minmax(180px, 260px)"),
+        "the passage takes the room left over, the file a fixed share of it"
+    );
+    assert_eq!(declaration(row, "align-items"), Some("start"));
+    assert_eq!(
+        declaration(rule_of(css, ".search-result:hover {"), "background"),
+        Some("var(--bg-hover)"),
+        "the row under the pointer answers before it is picked"
+    );
+
+    let context = rule_of(css, ".search-result-context {");
+    assert_eq!(
+        declaration(context, "grid-column"),
+        Some("1"),
+        "the passage is the leading column"
+    );
+    assert_eq!(declaration(context, "-webkit-line-clamp"), Some("2"));
+
+    // The trailing cell is the file itself, one line and one value: it names
+    // where the row leads rather than what the document calls itself, because
+    // its path already ends in the file's name.
+    let path = rule_of(css, ".search-result-path {");
+    assert_eq!(
+        declaration(path, "grid-column"),
+        Some("2"),
+        "the file is the trailing column"
+    );
+    // No rule divides the two columns: they are told apart by their own type
+    // and spacing rather than by a drawn line.
+    assert_eq!(
+        declaration(path, "border-left"),
+        None,
+        "the row carries no divider between its columns"
+    );
+    assert_eq!(
+        declaration(row, "border-bottom"),
+        Some("1px solid var(--border)")
+    );
+    assert_eq!(declaration(path, "font-size"), Some("11.5px"));
+    assert_eq!(
+        declaration(path, "color"),
+        Some("var(--text-dim)"),
+        "the file is a caption, not a title"
+    );
+    assert_eq!(
+        declaration(path, "white-space"),
+        Some("nowrap"),
+        "path and name stay on one line"
+    );
+    assert_eq!(declaration(path, "text-overflow"), Some("ellipsis"));
+
+    // A long path gives up its directories, not its file name: truncation
+    // follows the writing direction, so the box is right-to-left and the
+    // ellipsis lands at the start of the path. No bidi override on top of it:
+    // a first-strong-character resolution would turn the paragraph back into
+    // a left-to-right one and put the dots at the wrong end.
+    assert_eq!(
+        declaration(path, "direction"),
+        Some("rtl"),
+        "the overflow is taken from the front of the path"
+    );
+    assert_eq!(
+        declaration(path, "unicode-bidi"),
+        None,
+        "the paragraph direction is the box's own, not the text's first strong character"
+    );
+    assert_eq!(declaration(path, "text-align"), Some("left"));
+
+    // The title of a document is not part of its row at all.
+    assert!(
+        !css.contains(".search-result-title"),
+        "a row names the file, never the document's title"
+    );
+
+    // Narrow screens keep the two columns and give the document column up
+    // first: the passage is what the row is for.
+    let narrow = media_block(css, "max-width: 900px");
+    let row = rule_of(narrow, ".search-result {");
+    assert_eq!(
+        declaration(row, "grid-template-columns"),
+        Some("minmax(0, 1fr) minmax(120px, 160px)")
     );
 }
 

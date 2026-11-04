@@ -763,11 +763,11 @@ test("the search panel starts local, reading the document in view", async () => 
       "the scope starts at the document in view",
     );
     assert.deepEqual(
-      searchParts(session.shell, "search-result-title").map(function (node) {
+      searchParts(session.shell, "search-result-path").map(function (node) {
         return node.textContent;
       }),
-      ["Index"],
-      "the current document's hits are the list",
+      ["index.md"],
+      "the current document's hits are the list, each naming its file",
     );
   });
 });
@@ -784,7 +784,7 @@ test("the scope switch widens the search to every document", async () => {
     session.runTimers();
 
     assert.deepEqual(
-      searchParts(session.shell, "search-result-title").map(function (node) {
+      searchParts(session.shell, "search-result-path").map(function (node) {
         return node.textContent;
       }),
       [],
@@ -794,10 +794,10 @@ test("the scope switch widens the search to every document", async () => {
     searchParts(session.shell, "search-mode")[0].fire("click");
 
     assert.deepEqual(
-      searchParts(session.shell, "search-result-title").map(function (node) {
+      searchParts(session.shell, "search-result-path").map(function (node) {
         return node.textContent;
       }),
-      ["Intro"],
+      ["guide/intro.md"],
       "global asks the engine about every document again",
     );
   });

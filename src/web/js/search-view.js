@@ -4,8 +4,11 @@
  *
  * The panel is one column in three parts, top to bottom, and each part is a
  * different answer to the same question: what the reader typed, where it is
- * matched, and how it reads there. `search.js` supplies every piece of that
- * content; this module only decides when to ask, and draws what comes back.
+ * matched, and how it reads there. The field takes its own height and the
+ * other two split the rest — the list a third, the document two thirds —
+ * which is one reading line rather than two columns to sweep across.
+ * `search.js` supplies every piece of that content; this module only decides
+ * when to ask, and draws what comes back.
  *
  * **The panel is opened, not present.** The reader asks for it — a toolbar
  * button or `Ctrl`/`Cmd`+`F` — and it goes away on `Escape` or on a click
@@ -21,9 +24,11 @@
  * **A result is one place, and one action.** Every place the query occurs is
  * its own row — ten hits in a document are ten rows — so the list reads as a
  * set of passages rather than a set of files, and the row the reader picks is
- * the place the preview opens at. The title says which document, the context
- * says why the row is there, and the order is the engine's ranking, which the
- * list never re-sorts. The one selected result is what the preview shows, and
+ * the place the preview opens at. A row is laid out as a table of findings:
+ * the passage on the left, the file it was found in on the right, so the words
+ * the reader typed lead every line and the files line up in one column the
+ * eye can run down. The order is the engine's ranking, which the list never
+ * re-sorts. The one selected result is what the preview shows, and
  * the selection moves only when the reader asks it to — a click on a row, an
  * arrow key, never a pointer merely crossing the list — so the list and the
  * preview always describe the same row. Opening the document is a firmer
@@ -84,11 +89,11 @@ export var RESULTS_CLASS = "search-results";
 /** Class of one matching document. */
 export var RESULT_CLASS = "search-result";
 
-/** Class of the document title inside a result. */
-export var TITLE_CLASS = "search-result-title";
-
-/** Class of the context line inside a result. */
+/** Class of the context line inside a result: the passage it was found in. */
 export var CONTEXT_CLASS = "search-result-context";
+
+/** Class of the trailing cell of a result: the file the passage was found in. */
+export var PATH_CLASS = "search-result-path";
 
 /** Class of the preview area at the bottom of the panel. */
 export var PREVIEW_CLASS = "search-preview";
@@ -160,7 +165,7 @@ export var MODE_GLOBAL_TITLE = "Search only this document";
 /**
  * Shown in the middle of the list while it has no rows to show.
  *
- * The two halves of the panel name themselves when they are empty and say
+ * The two halves below the field name themselves when they are empty and say
  * nothing once they hold something: an empty area labelled "Results" tells the
  * reader which half they are looking at, and the label leaves with the first
  * row, so no per-empty-state sentence has to be invented — a search that found
@@ -708,18 +713,30 @@ export function createSearchView(options) {
     }
   }
 
-  /** One result: the title, then the context it was found in. */
+  /**
+   * One result, as one row of a table: the passage it was found in on the
+   * left, and the file it was found in on the right.
+   *
+   * The row used to lead with the title, which made the list a list of
+   * documents with a quotation under each. Leading with the passage turns it
+   * into a list of places instead — what the reader typed is the leftmost
+   * thing on every line, so the eye compares one hit with the next without
+   * reading past a document name first — and the name moves to the column it
+   * would occupy in any table of findings: the trailing one.
+   *
+   * The trailing cell gives the file's path, which already ends in its name:
+   * a result names where to go, not what the document calls itself. Two files
+   * that share a title are told apart by it, where a title would have read the
+   * same twice and said nothing. A title-only match — a document whose name
+   * matches where its text does not — has no passage to quote, so the left
+   * cell stays empty rather than repeating the path the right cell carries.
+   */
   function renderRow(entry, index) {
     var row = document.createElement("div");
     row.className = RESULT_CLASS;
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", "false");
     row.setAttribute("data-index", String(index));
-
-    var title = document.createElement("span");
-    title.className = TITLE_CLASS;
-    title.textContent = String(entry.title || entry.id || "");
-    row.appendChild(title);
 
     var context = document.createElement("span");
     context.className = CONTEXT_CLASS;
@@ -734,12 +751,21 @@ export function createSearchView(options) {
       context.appendChild(
         document.createTextNode(cut.after + (cut.trimmedEnd ? ELLIPSIS : "")),
       );
-    } else {
-      // A document matched on its title alone has no passage to quote; its own
-      // path is the next most useful thing to put beside the title.
-      context.textContent = String(entry.path || entry.id || "");
     }
     row.appendChild(context);
+
+    // The file cell truncates from the left, keeping the file name and giving
+    // up the directories above it — the ellipsis trails behind whatever the
+    // reader is actually looking for, instead of throwing it away. The whole
+    // path is also the cell's `title`, so a reader whose cell is too narrow
+    // can hover it and read all of it.
+    var file = String(entry.path || entry.id || "");
+
+    var path = document.createElement("span");
+    path.className = PATH_CLASS;
+    path.setAttribute("title", file);
+    path.textContent = file;
+    row.appendChild(path);
 
     // The selection follows the reader's decision, not the pointer's path:
     // crossing a row on the way somewhere else must not rewrite the preview
