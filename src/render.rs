@@ -36,7 +36,10 @@ use crate::markdown::highlight::theme_css;
 use crate::site::SiteBundle;
 
 /// Page skeleton, with the four template variables below.
-pub const SHELL_TEMPLATE: &str = include_str!("web/index.html.tmpl");
+///
+/// Staged by `build.rs` with LF line endings, so the embedded bytes are the
+/// same on every platform no matter how Git checked the sources out.
+pub const SHELL_TEMPLATE: &str = include_str!(concat!(env!("OUT_DIR"), "/vendor/index.html.tmpl"));
 
 /// Name the skeleton is registered under.
 ///
@@ -46,7 +49,11 @@ pub const SHELL_TEMPLATE: &str = include_str!("web/index.html.tmpl");
 const TEMPLATE_NAME: &str = "index.html";
 
 /// Reader styles, without the highlighting theme.
-pub const SHELL_CSS: &str = include_str!("web/css/app.css");
+///
+/// Staged by `build.rs` with LF line endings: a CRLF checkout must not leak a
+/// carriage return into the sheet, whose textual contracts the tests read
+/// verbatim.
+pub const SHELL_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/vendor/app.css"));
 
 /// Reader bundle, produced by `build.rs`.
 ///
@@ -232,6 +239,17 @@ mod tests {
         assert!(css.contains(".doc-body"));
         assert!(css.contains(theme_css()));
         assert!(!css.contains("</style"));
+    }
+
+    #[test]
+    fn the_staged_shell_resources_carry_unix_line_endings() {
+        // The template and the sheet are embedded from the copies `build.rs`
+        // stages, and those copies are written with LF endings whatever the
+        // checkout carries: the page, and every textual contract read from
+        // these constants, must not depend on the platform's line endings.
+        for (name, text) in [("template", SHELL_TEMPLATE), ("styles", SHELL_CSS)] {
+            assert!(!text.contains('\r'), "{name} carries a carriage return");
+        }
     }
 
     #[test]

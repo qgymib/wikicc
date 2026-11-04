@@ -7,6 +7,12 @@
 //! script runs the npm-installed esbuild once and stages the resulting IIFE
 //! bundle in `OUT_DIR`, which is the only place `src/render.rs` reads it from.
 //!
+//! The hand-written shell resources — the page skeleton and the reader
+//! stylesheet — are staged the same way: the build script writes LF-normalized
+//! copies into `OUT_DIR`, so the embedded bytes never depend on how Git checked
+//! the sources out (a CRLF checkout must not leak carriage returns into the
+//! template, the sheet or the page built from them).
+//!
 //! The script has a second, independent job: Windows executables show an icon
 //! in the file explorer, and that icon lives in the PE resource section. The
 //! icon is a *derived* asset — `docs/logo.svg` is the design source, and
@@ -101,6 +107,17 @@ const ESBUILD_MANIFEST: &str = "node_modules/esbuild/package.json";
 /// Staged bundle inside `OUT_DIR`, consumed by `src/render.rs`.
 const BUNDLE_STAGED: &str = "vendor/app.js";
 
+/// Hand-written text resources staged into `OUT_DIR` with normalized line
+/// endings, consumed by `src/render.rs`.
+///
+/// Both are embedded with `include_str!`, which copies the working-tree bytes
+/// verbatim; a checkout that Git smudges to CRLF must not leak carriage returns
+/// into the page, so the staged copies are the only bytes the compile sees.
+const STAGED_TEXT_ASSETS: [(&str, &str); 2] = [
+    ("src/web/index.html.tmpl", "vendor/index.html.tmpl"),
+    ("src/web/css/app.css", "vendor/app.css"),
+];
+
 /// Marker of a diagram chunk that esbuild failed to inline.
 ///
 /// `mermaid` loads its diagram implementations through `import()` with static
@@ -129,6 +146,8 @@ fn main() {
     // re-runs exactly when a front-end source or a declaration changes.
     for watched in [
         "src/web/js",
+        "src/web/css",
+        "src/web/index.html.tmpl",
         "package.json",
         "package-lock.json",
         ICON_ASSET,
@@ -142,6 +161,11 @@ fn main() {
 
     if let Err(message) = embed_windows_icon(root) {
         eprintln!("error: cannot embed the Windows executable icon: {message}");
+        exit(1);
+    }
+
+    if let Err(message) = stage_text_assets(root) {
+        eprintln!("error: cannot stage the shell resources: {message}");
         exit(1);
     }
 
@@ -219,6 +243,36 @@ fn embed_windows_icon(root: &Path) -> Result<(), String> {
             Err(format!("the resource compiler rejected the icon: {reason}"))
         }
     }
+}
+
+/// Stage the hand-written shell resources with LF line endings.
+///
+/// `SHELL_TEMPLATE` and `SHELL_CSS` are embedded with `include_str!`, which
+/// copies the working-tree bytes verbatim: on a checkout that Git converts to
+/// CRLF the embedded constants — and every page built from them — would carry
+/// carriage returns, and the sheet's textual contracts would become
+/// platform-dependent. Writing LF-normalized copies into `OUT_DIR` decouples
+/// the embedded bytes from the checkout's line endings entirely.
+fn stage_text_assets(root: &Path) -> Result<(), String> {
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").map_err(|error| format!("OUT_DIR is not set: {error}"))?);
+
+    for (source, staged) in STAGED_TEXT_ASSETS {
+        let source_path = root.join(source);
+        let text = fs::read_to_string(&source_path)
+            .map_err(|error| format!("cannot read {}: {error}", source_path.display()))?;
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let path = out_dir.join(staged);
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+        }
+        fs::write(&path, normalized)
+            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    }
+
+    Ok(())
 }
 
 /// Target triple esbuild ships a native executable for.
