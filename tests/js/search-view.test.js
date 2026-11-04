@@ -1139,6 +1139,107 @@ test("a code block's occurrence is brought to its block, not a textual stand-in"
   });
 });
 
+test("a hit inside inline code is marked like any other text", () => {
+  withPage(function (page) {
+    var html = "<p>plain <code>alpha</code> tail</p>\n";
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", html) },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 1, "the inline code's hit is marked");
+    assert.equal(
+      marks[0].parentNode.tagName,
+      "CODE",
+      "the mark sits inside the code element it highlights",
+    );
+    assert.equal(textOf(marks[0]), "alpha");
+  });
+});
+
+test("the inline-code hit takes the standout when picked", () => {
+  withPage(function (page) {
+    var html = "<p>alpha first</p>\n<p>see <code>alpha</code> code</p>\n";
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", html) },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha", 1)];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 2);
+    assert.equal(marks[1].parentNode.tagName, "CODE");
+    assert.equal(
+      marks[1].className,
+      HIT_CLASS + " " + HIT_ACTIVE_CLASS,
+      "the picked inline-code hit raises its voice like a textual one",
+    );
+  });
+});
+
+test("inline code and code blocks keep their own places in the slot order", () => {
+  var scrolled = [];
+
+  withPage(function (page) {
+    page.decorate(function (element) {
+      element.scrollIntoView = function (options) {
+        scrolled.push({ element: element, options: options });
+      };
+    });
+
+    var built = build({
+      container: page.container,
+      documents: {
+        "a.md": documentModel(
+          "a.md",
+          "Alpha",
+          "<p>alpha one</p>\n<p>see <code>alpha</code> code</p>\n<pre><code>alpha</code></pre>\n<p>alpha two</p>\n",
+        ),
+      },
+      answer() {
+        return [entry("a.md", "Alpha", "alpha", 2)];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(marks.length, 3, "inline code is marked, the block is not");
+    assert.equal(marks[1].parentNode.tagName, "CODE");
+    assert.equal(
+      marks[2].className,
+      HIT_CLASS,
+      "no textual hit stands in for the block's own occurrence",
+    );
+
+    // Only the preview's asks are read here; the list's `nearest` reveal of
+    // its own row is the row navigation's business.
+    var revealed = scrolled
+      .filter(function (call) {
+        return call.options && call.options.block === "center";
+      })
+      .map(function (call) {
+        return call.element;
+      });
+
+    assert.deepEqual(
+      revealed,
+      [previewOf(page).findAllByTag("PRE")[0]],
+      "the block's occurrence still scrolls to its block",
+    );
+  });
+});
+
 test("picking another occurrence of one document scrolls, and does not redraw", () => {
   var scrolled = [];
 

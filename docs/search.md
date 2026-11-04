@@ -73,9 +73,11 @@ The rules behind the table:
 - It does not search code blocks or diagram sources for highlighting: a hit
   inside one is still a real result in the list, and selecting it scrolls the
   preview to the block that holds it, but the preview leaves those subtrees
-  as authored so a rendered diagram is never turned back into source. Rows
-  after such a hit still land on their own places — the block holds the
-  hit's place in the order, whether or not it is marked.
+  as authored so a rendered diagram is never turned back into source. Inline
+  code — a `code` span inside a line of prose — is ordinary text to the
+  highlight, and its hits are marked like any other. Rows after an unmarked
+  hit still land on their own places — the block holds the hit's place in
+  the order, whether or not it is marked.
 - It does not hold on to your query: clearing the field (the clear button at
   the left of the scope button, or deleting the text) empties the list and the
   preview, and closing the panel forgets the query.

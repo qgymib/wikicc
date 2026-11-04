@@ -118,10 +118,13 @@ export var HIT_ACTIVE_CLASS = "search-hit-active";
  *
  * A hit inside a code block or a diagram source is real, but marking it would
  * restart the diagram engine's placeholder text and turn a rendered picture
- * back into source, so those subtrees are left as authored. `mark` is skipped
- * too, which is what keeps a second pass from wrapping a hit it already knows.
+ * back into source, so those subtrees are left as authored. Only the block
+ * carriers are listed — the `pre` around fenced code or a diagram's source —
+ * while inline `code` is ordinary text set in a different face, and its hits
+ * are marked like any other. `mark` is skipped too, which is what keeps a
+ * second pass from wrapping a hit it already knows.
  */
-var UNHIGHLIGHTED_TAGS = ["PRE", "CODE", "SCRIPT", "STYLE", "MARK"];
+var UNHIGHLIGHTED_TAGS = ["PRE", "SCRIPT", "STYLE", "MARK"];
 
 /** Attribute marking the panel as open, which is what the stylesheet animates. */
 export var OPEN_ATTRIBUTE = "data-open";
@@ -1190,8 +1193,8 @@ export function createSearchView(options) {
    * stand out.
    *
    * The slots are one per occurrence, in the order the list numbers them —
-   * the marks the highlight wrapped, and, for a hit that sits in code or a
-   * diagram source and is left as authored, the block holding it. The
+   * the marks the highlight wrapped, and, for a hit that sits in a code
+   * block or a diagram source and is left as authored, the block holding it. The
    * ordinal therefore names its own place whatever the document holds: a
    * code hit scrolls to its block without a standout, and no textual hit
    * after it is displaced. A `-1`, the mark of a title-only match, names the
