@@ -443,6 +443,10 @@ export function start() {
     // SVGs replace their source blocks.
     DocBody.drawDiagrams(body, currentTheme());
 
+    // Formulas are typeset in the same insertion-time contract; the call is
+    // synchronous and swallows its own failures.
+    DocBody.drawMath(body);
+
     // The links this document carries are the ones the hover preview watches.
     preview.tag(body);
   }

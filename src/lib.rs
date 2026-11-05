@@ -39,8 +39,8 @@ pub use markdown::{
 pub use options::{Options, OutputFormat};
 pub use pipeline::BuildOutcome;
 pub use render::{
-    APP_BUNDLE, RenderedSite, SHELL_CSS, SHELL_TEMPLATE, escape_json_for_script, render_site,
-    shell_css, shell_js,
+    APP_BUNDLE, KATEX_CSS, RenderedSite, SHELL_CSS, SHELL_TEMPLATE, escape_json_for_script,
+    render_site, shell_css, shell_js,
 };
 pub use scan::{Diagnostic, ScanReport, Severity, SourceDoc};
 pub use site::{DocModel, Edge, SiteBuild, SiteBundle, Stats, build_edges, build_site};

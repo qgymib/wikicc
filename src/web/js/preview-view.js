@@ -740,6 +740,7 @@ export function createPreviewView(options) {
     // the theme in effect, the step that measures against the layout.
     DocBody.fillDocBody(body, preview.html, { enhanceTables: true });
     DocBody.drawDiagrams(body, theme());
+    DocBody.drawMath(body);
 
     show(link);
   }

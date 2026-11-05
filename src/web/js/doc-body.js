@@ -12,7 +12,9 @@
  *   paint already carries them;
  * - the diagrams are drawn only *after* the element is in the document,
  *   because the engine measures its labels with the layout, which a detached
- *   subtree does not have.
+ *   subtree does not have. The math is typeset in the same step: its engine
+ *   needs no layout, but one shared insertion-time contract keeps the three
+ *   callers symmetrical.
  *
  * Which enhancements a body gets is the caller's declaration, not this
  * module's guess: the article enhances both, the hover preview enhances the
@@ -30,6 +32,7 @@
  */
 import * as TableView from "./table-view.js";
 import * as DiagramView from "./diagram-view.js";
+import * as MathView from "./math-view.js";
 
 /** Class every document body carries; the stylesheet keys the typography off it. */
 export var BODY_CLASS = "doc-body";
@@ -404,4 +407,17 @@ export function createDocBody(html, options) {
  */
 export function drawDiagrams(body, theme) {
   return DiagramView.renderDiagrams(body, theme);
+}
+
+/**
+ * Typeset the math of a body that is already in the document.
+ *
+ * The engine needs no layout — KaTeX derives everything from the formula
+ * itself — but the call keeps the insertion-time contract of `drawDiagrams`
+ * so every caller does the same dance in the same order. The call is
+ * synchronous and swallows its own failures, so a formula that cannot be
+ * typeset leaves its source text behind and the document stays readable.
+ */
+export function drawMath(body) {
+  return MathView.renderMath(body);
 }

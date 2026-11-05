@@ -56,6 +56,7 @@ fn require_front_end_dependencies(root: &Path) {
         "node_modules/d3-zoom/package.json",
         "node_modules/d3-drag/package.json",
         "node_modules/mermaid/package.json",
+        "node_modules/katex/package.json",
         "node_modules/esbuild/package.json",
     ] {
         let installed = root.join(relative);

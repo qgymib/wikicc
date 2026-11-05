@@ -211,11 +211,19 @@ one is stated as a contract rather than left to the implementation.
   rebuilt for another document opens whole; a navigation into a folded chapter
   reopens the chapters that hold it before scrolling, because nothing scrolls to
   a hidden element.
+- **Math is typeset by the bundled KaTeX.** The build emits the LaTeX source of
+  `$$…$$` blocks and `$…$` spans as placeholder elements (`pre.math`,
+  `code.math-inline`), and the reader typesets them with the engine after
+  insertion — the same insertion-time contract as the diagrams, though the
+  math engine needs no layout. The engine's stylesheet is staged by `build.rs`
+  with every font embedded as a data URL, so the offline guarantee holds.
+  Colours are inherited from the text, so a theme switch needs no re-render,
+  and a formula that fails to typeset keeps its source text.
 - **Layering rule.** Pure logic and DOM access live in separate modules
   (`router.js`, `links.js`, `asset-links.js`, `search.js`, `table.js`,
-  `graph.js`, `preview.js`, `toc.js`, `anchor.js` versus `table-view.js`,
-  `graph-view.js`, `diagram-view.js`, `preview-view.js`, `banner.js`,
-  `doc-list.js`), because the
+  `graph.js`, `preview.js`, `toc.js`, `anchor.js`, `diagrams.js`, `math.js`
+  versus `table-view.js`, `graph-view.js`, `diagram-view.js`, `math-view.js`,
+  `preview-view.js`, `banner.js`, `doc-list.js`), because the
   JS test suite runs under `node --test` with no DOM. Anything that touches
   `document` belongs to a view module; a view is a projection of the pure
   functions beneath it, and the controller (`app.js`) is the only module that
@@ -240,7 +248,7 @@ one is stated as a contract rather than left to the implementation.
 | --- | --- | --- | --- |
 | Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline |
 | Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, markdown, writers, end to end, the esbuild launcher `build.rs` picks |
-| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search, table model, graph layout, outline, preview, banner, inlined links |
+| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search, table model, graph layout, outline, preview, banner, inlined links, math policy |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the JS suite inside `cargo test` |
 
 Fixtures under `tests/fixtures` are committed sites, each pinned to one class of

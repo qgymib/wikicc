@@ -45,6 +45,7 @@ tempfile = "3"
 # fail to compile. The library itself is a no-op on non-Windows targets, and
 # `build.rs` only calls it for a Windows target.
 [build-dependencies]
+base64 = "0.23"
 embed-resource = "3"
 
 # Highlighting is regex-bound: compiling the engine with optimisations keeps the

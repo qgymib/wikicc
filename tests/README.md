@@ -33,8 +33,8 @@ node --test "tests/js/*.test.js"          # the front-end suite on its own
 ```
 
 `npm ci` is a prerequisite for anything that builds or runs the reader: the
-front-end modules import `minisearch`, `d3-*` and `mermaid` by bare specifier,
-and `build.rs` bundles them with esbuild.
+front-end modules import `minisearch`, `d3-*`, `mermaid` and `katex` by bare
+specifier, and `build.rs` bundles them with esbuild.
 
 `npm ci` also decides which esbuild `build.rs` runs, and it does so differently
 per platform: a Windows install leaves the JavaScript launcher at
@@ -69,7 +69,7 @@ The layers exist because of where the logic lives. Every Rust stage except
 `write` is a pure transformation over immutable data, so it is tested without a
 filesystem. The reader is split the same way: pure functions in `router.js`,
 `links.js`, `search.js`, `table.js`, `graph.js`, `preview.js`, `toc.js`,
-`anchor.js`, `diagrams.js`, and DOM access confined to the `*-view.js` modules,
+`anchor.js`, `diagrams.js`, `math.js`, and DOM access confined to the `*-view.js` modules,
 `banner.js` and `app.js`. That split is what keeps the front-end suite runnable
 under Node, which has no DOM.
 
@@ -109,6 +109,7 @@ neither replaces the other.
 | `toc.test.js` | `toc.js` | which section the reading line is in, including headings far outside the viewport |
 | `graph.test.js` | `graph.js` | the seeded layout: stable seeds, a replayable generator, edge deduplication, degree-based radii, the same graph laid out identically twice, every node inside the normalised box, isolated documents |
 | `diagrams.test.js` | `diagrams.js` | selecting diagram markup, initialising only when a diagram exists, theme mapping, a fresh config per call |
+| `math.test.js` | `math.js` | selecting math markup, the engine options per call, running only when math exists |
 | `banner.test.js` | `banner.js` (fake DOM) | the banner taking no layout space, closing itself after the timeout, a second message restarting the countdown, a close button reachable and labelled, falling back to the document when the anchor is missing |
 | `preview-view.test.js` | `preview-view.js` (fake DOM) | the popover opening for an existing chapter and turning into a notice for a missing one, the banner reserved for the click that navigates, pinning, dragging, and the close/dismiss contract |
 | `graph-view.test.js` | `graph-view.js` (fake DOM, real `d3-drag`/`d3-zoom`/`d3-selection`) | one plain left click opening a node's document, a drag only moving it, a modified click staying with the browser, highlighting following the pointer |

@@ -12,8 +12,9 @@
 //! The skeleton in `web/index.html.tmpl` is rendered with `minijinja`, so the
 //! page markup stays in HTML and escaping is the engine's job:
 //!
-//! - `{{ css|safe }}` is `web/css/app.css` followed by the theme CSS the
-//!   build-time highlighter generates;
+//! - `{{ css|safe }}` is `web/css/app.css`, followed by the theme CSS the
+//!   build-time highlighter generates and the math renderer's sheet with its
+//!   fonts embedded;
 //! - `{{ js|safe }}` is the single IIFE bundle that `build.rs` produces with
 //!   esbuild from `web/js/main.js` (the reader modules plus the npm-installed
 //!   engine), so the page needs no module loader and resolves nothing at
@@ -55,6 +56,14 @@ const TEMPLATE_NAME: &str = "index.html";
 /// verbatim.
 pub const SHELL_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/vendor/app.css"));
 
+/// Math renderer stylesheet, staged by `build.rs` with the fonts embedded.
+///
+/// KaTeX's sheet points at sibling font files, which a single-file page can
+/// never load; the staging step rewrote every reference into an inline data
+/// URL (woff2 only, the woff and ttf fallbacks dropped) and normalized the
+/// line endings like the other staged text assets.
+pub const KATEX_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/vendor/katex.css"));
+
 /// Reader bundle, produced by `build.rs`.
 ///
 /// It is the IIFE output of esbuild over `web/js/main.js`, which imports the
@@ -87,17 +96,21 @@ impl RenderedSite {
     }
 }
 
-/// Reader stylesheet: the hand-written rules plus the highlighting theme.
+/// Reader stylesheet: the hand-written rules, the highlighting theme and the
+/// math renderer's sheet with its fonts embedded.
 ///
-/// Both are static, so the concatenation is built once and shared.
+/// All three are static, so the concatenation is built once and shared.
 pub fn shell_css() -> &'static str {
     static CSS: OnceLock<String> = OnceLock::new();
 
     CSS.get_or_init(|| {
-        let mut css = String::with_capacity(SHELL_CSS.len() + theme_css().len() + 1);
+        let mut css =
+            String::with_capacity(SHELL_CSS.len() + theme_css().len() + KATEX_CSS.len() + 2);
         css.push_str(SHELL_CSS);
         css.push('\n');
         css.push_str(theme_css());
+        css.push('\n');
+        css.push_str(KATEX_CSS);
         css
     })
 }
@@ -238,6 +251,18 @@ mod tests {
         assert!(css.contains("--sidebar-width"));
         assert!(css.contains(".doc-body"));
         assert!(css.contains(theme_css()));
+        assert!(
+            css.contains(".katex"),
+            "the math renderer's sheet is appended"
+        );
+        assert!(
+            css.contains("@font-face"),
+            "its fonts travel inside the sheet"
+        );
+        assert!(
+            !css.contains('\r'),
+            "the math sheet carries a carriage return"
+        );
         assert!(!css.contains("</style"));
     }
 
@@ -302,6 +327,10 @@ mod tests {
         assert!(
             APP_BUNDLE.contains("src/web/js/main.js") || APP_BUNDLE.contains("DOMContentLoaded"),
             "the bundle must contain the reader entry point"
+        );
+        assert!(
+            APP_BUNDLE.contains("katex"),
+            "the bundle must contain the math engine"
         );
         assert!(!APP_BUNDLE.contains("</script"));
     }

@@ -581,7 +581,9 @@ a {
 }
 
 /* Obsidian tags (`#tag`) and Typora math, both own-layer constructs. The tag
-   reads as a small chip; math stays escaped text until a renderer exists. */
+   reads as a small chip; the math elements are placeholders the reader's
+   bundled math engine typesets in the browser — until it has (or when it
+   fails on a formula) they read as code, which is the documented fallback. */
 .doc-body .doc-tag {
   color: var(--accent-alt);
   font-weight: 500;
@@ -599,6 +601,20 @@ a {
   border-radius: 10px;
   background: var(--bg-code);
   overflow-x: auto;
+}
+
+/* A typeset formula sheds the code look of its placeholder element: the
+   engine's own fonts and sizes take over, and the display block sits flush
+   inside the box the placeholder keeps. */
+.doc-body code.math-inline:has(.katex) {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 1em;
+}
+
+.doc-body pre.math .katex-display {
+  margin: 0;
 }
 
 .doc-body code {

@@ -43,6 +43,7 @@
 //! resolves the launcher the way esbuild's own install script does and reports
 //! how it has to be started; only a script goes through `node`.
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -92,13 +93,16 @@ const IGNORED_OVERRIDE: &str = "/usr/bin/esbuild";
 /// `d3-selection`/`d3-zoom`/`d3-drag` provide its interaction. `mermaid`
 /// renders diagram fences; it is the only dependency whose own manifest also
 /// pulls a large tree (its diagram chunks plus `elkjs`, `cytoscape`, `katex`).
-const REQUIRED_MANIFESTS: [&str; 6] = [
+/// `katex` typesets math in the browser, which the source-text placeholder in
+/// the document only works with once the engine is bundled.
+const REQUIRED_MANIFESTS: [&str; 7] = [
     "node_modules/minisearch/package.json",
     "node_modules/d3-force/package.json",
     "node_modules/d3-selection/package.json",
     "node_modules/d3-zoom/package.json",
     "node_modules/d3-drag/package.json",
     "node_modules/mermaid/package.json",
+    "node_modules/katex/package.json",
 ];
 
 /// Bundler manifest, watched so an upgrade triggers a rebuild.
@@ -106,6 +110,27 @@ const ESBUILD_MANIFEST: &str = "node_modules/esbuild/package.json";
 
 /// Staged bundle inside `OUT_DIR`, consumed by `src/render.rs`.
 const BUNDLE_STAGED: &str = "vendor/app.js";
+
+/// Source of the math renderer's stylesheet, relative to the crate root.
+///
+/// KaTeX ships one minified sheet whose `@font-face` rules point at sibling
+/// font files. The page carries a single inline `<style>` and must never
+/// fetch anything, so the fonts have to travel inside that sheet; the staging
+/// step below embeds them.
+const KATEX_CSS_SOURCE: &str = "node_modules/katex/dist/katex.min.css";
+
+/// Directory of the woff2 files referenced by [`KATEX_CSS_SOURCE`], relative
+/// to the crate root.
+const KATEX_FONTS_DIR: &str = "node_modules/katex/dist/fonts";
+
+/// Staged KaTeX stylesheet inside `OUT_DIR`, consumed by `src/render.rs`.
+///
+/// Every font reference is rewritten to an inline data URL and the woff and
+/// ttf fallbacks are dropped, so the sheet works inside the single-file page.
+const KATEX_CSS_STAGED: &str = "vendor/katex.css";
+
+/// Marker that starts every font reference in the KaTeX stylesheet.
+const FONT_URL_MARKER: &str = "url(fonts/";
 
 /// Hand-written text resources staged into `OUT_DIR` with normalized line
 /// endings, consumed by `src/render.rs`.
@@ -151,6 +176,8 @@ fn main() {
         "package.json",
         "package-lock.json",
         ICON_ASSET,
+        KATEX_CSS_SOURCE,
+        KATEX_FONTS_DIR,
     ]
     .into_iter()
     .chain(REQUIRED_MANIFESTS)
@@ -166,6 +193,11 @@ fn main() {
 
     if let Err(message) = stage_text_assets(root) {
         eprintln!("error: cannot stage the shell resources: {message}");
+        exit(1);
+    }
+
+    if let Err(message) = stage_katex_css(root) {
+        eprintln!("error: cannot stage the math stylesheet: {message}");
         exit(1);
     }
 
@@ -273,6 +305,111 @@ fn stage_text_assets(root: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Stage the math renderer's stylesheet with inline fonts.
+///
+/// KaTeX's sheet points at sibling font files, which a single-file page
+/// cannot load: the reader inlines one `<style>` and must never fetch
+/// anything. Every `url(fonts/…) format(…)` list is therefore rewritten in
+/// place — the woff2 file is embedded as a base64 data URL and the woff and
+/// ttf fallbacks are dropped, because every browser the reader targets
+/// decodes woff2. The result is LF-normalized like the other staged text
+/// assets, and the build fails if any font reference survives, so a KaTeX
+/// upgrade that reshapes the sheet cannot silently break the offline
+/// guarantee.
+fn stage_katex_css(root: &Path) -> Result<(), String> {
+    let source = root.join(KATEX_CSS_SOURCE);
+    let css = fs::read_to_string(&source)
+        .map_err(|error| format!("cannot read {}: {error}", source.display()))?;
+    let fonts = root.join(KATEX_FONTS_DIR);
+    let rewritten = inline_font_urls(&css, &fonts)?;
+
+    if rewritten.contains(FONT_URL_MARKER) {
+        return Err(format!(
+            "{} still contains `{FONT_URL_MARKER}` references after rewriting",
+            source.display()
+        ));
+    }
+
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").map_err(|error| format!("OUT_DIR is not set: {error}"))?);
+    let path = out_dir.join(KATEX_CSS_STAGED);
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    let normalized = rewritten.replace("\r\n", "\n").replace('\r', "\n");
+    fs::write(&path, normalized)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+
+    Ok(())
+}
+
+/// Rewrite every `url(fonts/…)` list in `css` into inline data URLs.
+///
+/// A reference is `url(fonts/NAME)` optionally followed by a ` format("…")`
+/// hint, and KaTeX groups three of them per font (woff2, woff, ttf). The
+/// woff2 member is replaced by a data URL of the file's bytes; the woff and
+/// ttf members are removed together with the commas that joined them. A name
+/// without a known font extension, a missing file or an unterminated `url(`
+/// is an error, so the sheet's shape is verified on every build instead of
+/// trusted.
+fn inline_font_urls(css: &str, fonts: &Path) -> Result<String, String> {
+    let mut out = String::with_capacity(css.len() * 2);
+    let mut rest = css;
+
+    while let Some(start) = rest.find(FONT_URL_MARKER) {
+        out.push_str(&rest[..start]);
+        rest = &rest[start + FONT_URL_MARKER.len()..];
+
+        let close = rest
+            .find(')')
+            .ok_or_else(|| "a `url(fonts/` reference is never closed".to_string())?;
+        let name = &rest[..close];
+        rest = &rest[close + 1..];
+
+        let (hint, rest_after_hint) = take_format_hint(rest);
+        rest = rest_after_hint;
+
+        if name.len() > 6 && name.ends_with(".woff2") {
+            let file = fonts.join(name);
+            let bytes = fs::read(&file)
+                .map_err(|error| format!("cannot read {}: {error}", file.display()))?;
+            out.push_str("url(data:font/woff2;base64,");
+            out.push_str(&BASE64_STANDARD.encode(bytes));
+            out.push_str(hint);
+            out.push(')');
+        } else if name.ends_with(".woff") || name.ends_with(".ttf") {
+            // Dropping a fallback leaves the comma that joined it to the
+            // previous member dangling; remove it.
+            if out.ends_with(',') {
+                out.pop();
+            }
+        } else {
+            return Err(format!(
+                "`{name}` is not a font file name the rewriter knows"
+            ));
+        }
+    }
+
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Split off a ` format("…")` hint, if the text starts with one.
+///
+/// Returns the hint, leading space included, and the text after it. An empty
+/// hint means the URL had none, which the rewriter tolerates.
+fn take_format_hint(text: &str) -> (&str, &str) {
+    if let Some(after_prefix) = text.strip_prefix(" format(\"")
+        && let Some(end) = after_prefix.find('"')
+    {
+        let len = end + " format(\"".len() + 2;
+        return text.split_at(len);
+    }
+    ("", text)
 }
 
 /// Target triple esbuild ships a native executable for.
