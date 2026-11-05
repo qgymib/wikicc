@@ -92,6 +92,14 @@ pub struct Stats {
 pub struct SiteBundle {
     /// Site title from `--title`.
     pub title: String,
+    /// Document the reader opens at an empty or unknown address, from the
+    /// `home` key of `.wikicc.json`.
+    ///
+    /// Absent from the JSON when no configuration set it, so a site without
+    /// the file serialises byte-identically to a build that never heard of
+    /// the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
     /// Documents in scan order, i.e. sorted by id in byte order.
     pub docs: Vec<DocModel>,
     /// Link graph, sorted by `(from, to)`.
@@ -239,6 +247,9 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
     SiteBuild {
         bundle: SiteBundle {
             title: title.to_string(),
+            // Set by the pipeline from the configuration file; the assembly
+            // stage itself only knows the documents it was handed.
+            home: None,
             docs: models,
             edges,
             stats,
@@ -545,6 +556,24 @@ mod tests {
             value["stats"].as_object().map(keys),
             Some(vec!["asset_bytes", "assets", "documents"])
         );
+    }
+
+    #[test]
+    fn a_configured_home_travels_in_the_payload_right_after_the_title() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source("a.md", "A", "# A\n")];
+
+        let mut build = build_site("Site", dir.path(), &docs);
+        build.bundle.home = Some("a.md".to_string());
+
+        let json = build.bundle.to_json();
+        assert!(
+            json.starts_with(r#"{"title":"Site","home":"a.md","docs":"#),
+            "the home lands between the title and the documents: {json}"
+        );
+
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["home"], "a.md");
     }
 
     #[test]

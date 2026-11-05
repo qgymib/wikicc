@@ -76,17 +76,23 @@ export function formatHash(id, anchor) {
 /**
  * Resolve a hash against the known document ids.
  *
- * An unknown id falls back to the first document, as does an empty hash; the
- * `known` flag lets the caller decide whether the address bar should be
- * rewritten without guessing.
+ * An unknown id falls back to the configured home document (`home`, the
+ * `home` key of `.wikicc.json`, only honoured when it names a known document),
+ * then to the first document, as does an empty hash; the `known` flag lets
+ * the caller decide whether the address bar should be rewritten without
+ * guessing.
  */
-export function resolveRoute(hash, ids) {
+export function resolveRoute(hash, ids, home) {
   var route = parseHash(hash);
   var list = Array.isArray(ids) ? ids : [];
   var known = route.id !== null && list.indexOf(route.id) !== -1;
 
   if (known) {
     return { id: route.id, anchor: route.anchor, known: true };
+  }
+
+  if (typeof home === "string" && list.indexOf(home) !== -1) {
+    return { id: home, anchor: null, known: false };
   }
 
   return { id: list.length ? list[0] : null, anchor: null, known: false };

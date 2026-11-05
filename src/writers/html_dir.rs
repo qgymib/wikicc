@@ -126,6 +126,7 @@ mod tests {
         let build = SiteBuild {
             bundle: SiteBundle {
                 title: "Site".to_string(),
+                home: None,
                 docs: Vec::new(),
                 edges: Vec::new(),
                 stats: Stats::default(),

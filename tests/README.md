@@ -60,7 +60,7 @@ files that `tests/js_suite.rs` builds when it runs the suite from inside
 
 | Layer | Location | Tooling | Scope |
 | --- | --- | --- | --- |
-| Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | one module's own rules: slugs, TOC, links, assets, highlighting, render, writers, options, pipeline, error mapping |
+| Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | one module's own rules: slugs, TOC, links, assets, highlighting, render, writers, options, pipeline, config, error mapping |
 | Rust integration | `tests/*.rs` | `assert_cmd`, `predicates`, `tempfile` | one stage or one contract each, plus the binary end to end |
 | Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert/strict` | pure reader logic, and the view modules through a fake DOM |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the front-end suite inside `cargo test` |
@@ -81,7 +81,8 @@ anything that asserts on a directory works in a `tempfile` of its own.
 | File | SUT | What it asserts |
 | --- | --- | --- |
 | `cli.rs` | the compiled binary: `src/cli.rs`, `src/options.rs`, `src/pipeline.rs` | `--help` lists every documented option, `--version`, the default `dist` output directory, `--out`, rebuilding over a previous build, `--force` for a foreign directory, the retired format as a usage error, `--quiet`, the summary counts, warning and `--strict` behaviour |
-| `scan.rs` | `src/scan.rs` | recursive discovery and the document order, the output directory never entering the document list, an empty folder warning without failing, non-UTF-8 files skipped with a warning, case-insensitive extensions, one note for non-Markdown files, dot directories and `node_modules` excluded, `SourceDoc` fields, diagnostic severities |
+| `scan.rs` | `src/scan.rs` | recursive discovery and the document order, the output directory never entering the document list, an empty folder warning without failing, non-UTF-8 files skipped with a warning, case-insensitive extensions, one note for non-Markdown files (the root `.wikicc.json` excepted), dot directories and `node_modules` excluded, `SourceDoc` fields, diagnostic severities |
+| `config.rs` | `src/config.rs`, `src/pipeline.rs` | the optional `.wikicc.json` reaching every format's artifact, the `home` id resolving verbatim then with a completed `.md`/`.markdown` suffix, a site without a config keeping its payload shape, an unknown home warning without failing and refusing under `--strict`, a malformed file failing before anything is written, the configuration file never reported as an ignored non-Markdown file |
 | `markdown.rs` | `src/markdown/` | the supported GFM subset, ASCII/CJK/repeated-heading anchors, outline order and nesting (including level jumps), fences never producing headings, `[[n]]` citations and their reference list, author HTML passed through, fence highlighting, the Mermaid fence becoming a diagram, the highlighting theme |
 | `links.rs` | `src/markdown/links.rs`, `src/markdown/sections.rs`, `src/assets.rs` | every destination shape of the link matrix, unresolvable targets keeping their destination, duplicate references sharing one asset, warnings naming document and line, a missing chapter still opening its document and being marked for the reader, chapter anchors rewritten to the emitted slug, relative directories, definition links, binary assets, CJK paths |
 | `site.rs` | `src/site.rs` | payload order and uniqueness, edges deduplicated and free of self-loops, external and anchor links never becoming edges, JSON keys and counts, assets addressed by placeholder, `text` as searchable content, the outline tree, lookup by id, assembly never touching the source tree |
@@ -100,7 +101,7 @@ neither replaces the other.
 
 | File | SUT | What it asserts |
 | --- | --- | --- |
-| `router.test.js` | `router.js` | hash parsing and formatting, percent decoding, non-document hashes, malformed encoding kept verbatim |
+| `router.test.js` | `router.js` | hash parsing and formatting, percent decoding, non-document hashes, malformed encoding kept verbatim, the route fallback chain (known id, then the configured home, then the first document) |
 | `doc-store.test.js` | `doc-store.js` | the embedded payload answering without a request, the pages manifest fetching `pages/<encoded id>.json?v=<hash>`, one shared request per in-flight document, loaded documents cached, failures answering `null` and allowing a retry, the corpus fetched once |
 | `links.test.js` | `links.js` | recognising the reader's own links: route parsing, block references, plain left clicks, route identity, the missing-anchor attribute |
 | `anchor.test.js` | `anchor.js`, cross-checked against `preview.js` | which chapter a route anchor addresses; the emitted slug and the author's spelling resolving to the same chapter; navigation and the hover preview never disagreeing |

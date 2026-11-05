@@ -106,3 +106,59 @@ test("resolves to nothing when the site has no documents", () => {
     known: false,
   });
 });
+
+test("falls back to the configured home for an empty hash", () => {
+  assert.deepEqual(router.resolveRoute("", ["a.md", "b.md"], "b.md"), {
+    id: "b.md",
+    anchor: null,
+    known: false,
+  });
+});
+
+test("falls back to the configured home for unknown ids", () => {
+  assert.deepEqual(
+    router.resolveRoute("#/doc/gone.md#part", ["a.md", "b.md"], "b.md"),
+    {
+      id: "b.md",
+      anchor: null,
+      known: false,
+    },
+  );
+});
+
+test("a known route still wins over the configured home", () => {
+  assert.deepEqual(
+    router.resolveRoute("#/doc/a.md", ["a.md", "b.md"], "b.md"),
+    {
+      id: "a.md",
+      anchor: null,
+      known: true,
+    },
+  );
+});
+
+test("a home outside the id list is ignored", () => {
+  assert.deepEqual(router.resolveRoute("", ["a.md", "b.md"], "gone.md"), {
+    id: "a.md",
+    anchor: null,
+    known: false,
+  });
+});
+
+test("a non-string home is ignored", () => {
+  for (const home of [undefined, null, 3]) {
+    assert.deepEqual(router.resolveRoute("", ["a.md", "b.md"], home), {
+      id: "a.md",
+      anchor: null,
+      known: false,
+    });
+  }
+});
+
+test("resolves to nothing when only a home exists and the list is empty", () => {
+  assert.deepEqual(router.resolveRoute("", [], "b.md"), {
+    id: null,
+    anchor: null,
+    known: false,
+  });
+});

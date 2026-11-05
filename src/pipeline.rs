@@ -5,12 +5,13 @@
 //!
 //! 1. validate the options (input tree and output-directory guards),
 //! 2. scan the input directory,
-//! 3. assemble the payload and resolve links and assets,
-//! 4. report every diagnostic on stderr,
-//! 5. apply the `--strict` gate,
-//! 6. summarise the warnings,
-//! 7. render the page and write the artifact,
-//! 8. print the summary line (unless `--quiet`).
+//! 3. read the optional `.wikicc.json` configuration from the input root,
+//! 4. assemble the payload and resolve links and assets,
+//! 5. report every diagnostic on stderr (scan, then config, then build),
+//! 6. apply the `--strict` gate,
+//! 7. summarise the warnings,
+//! 8. render the page and write the artifact,
+//! 9. print the summary line (unless `--quiet`).
 //!
 //! The gate comes before rendering and writing on purpose: a build that fails
 //! on warnings must neither create an artifact nor empty a previous one.
@@ -25,10 +26,11 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
+use crate::config;
 use crate::error::{Error, Result};
 use crate::options::{Options, OutputFormat};
 use crate::render::{RenderedOutput, render_pages, render_site};
-use crate::scan;
+use crate::scan::{self, Severity};
 use crate::site::{self, Stats};
 use crate::writers::{self, WriteReport};
 
@@ -93,19 +95,40 @@ pub fn run(options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     options.validate()?;
 
     let report = scan::scan(&options.input, &options.out)?;
-    let build = site::build_site(&options.title, &options.input, &report.docs);
+
+    // The configuration is an explicit instruction, so a file that cannot be
+    // read or understood aborts the build here, before anything is reported
+    // or written; a `home` that matches no document only warns. The file is
+    // read after the scan because resolving `home` needs the document ids.
+    let site_config = config::load(&options.input)?;
+    let ids: Vec<String> = report.docs.iter().map(|doc| doc.id.clone()).collect();
+    let (home, resolved_diagnostics) = site_config.resolve_home(&ids);
+    let mut config_diagnostics = site_config.diagnostics;
+    config_diagnostics.extend(resolved_diagnostics);
+
+    let mut build = site::build_site(&options.title, &options.input, &report.docs);
+    build.bundle.home = home;
 
     // Diagnostics always reach stderr; `--quiet` only silences the summary
-    // line. Scan messages come first, then the link and asset problems, each
-    // in the order they were found, so two runs report identically.
+    // line. Scan messages come first, then the configuration problems, then
+    // the link and asset problems, each in the order they were found, so two
+    // runs report identically.
     for diagnostic in &report.diagnostics {
+        writeln!(err, "{diagnostic}")?;
+    }
+    for diagnostic in &config_diagnostics {
         writeln!(err, "{diagnostic}")?;
     }
     for diagnostic in &build.diagnostics {
         writeln!(err, "{diagnostic}")?;
     }
 
-    let warnings = report.warning_count() + build.warning_count();
+    let warnings = report.warning_count()
+        + config_diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Warning)
+            .count()
+        + build.warning_count();
     if options.strict && warnings > 0 {
         return Err(Error::Warnings(strict_message(warnings)));
     }
@@ -463,5 +486,121 @@ mod tests {
 
         assert!(outcome.is_err());
         assert!(!out.exists());
+    }
+
+    #[test]
+    fn the_configuration_sets_the_home_document() {
+        let dir = fixture();
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"home": "intro.md"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+
+        let (outcome, _, stderr) = execute(&options);
+        outcome.expect("the build succeeds");
+
+        assert!(
+            !stderr.contains("config:"),
+            "a resolvable home is silent: {stderr}"
+        );
+        let artifact =
+            std::fs::read_to_string(out.join(writers::HTML_FILE_NAME)).expect("read artifact");
+        assert!(
+            artifact.contains(r#""home":"intro.md""#),
+            "the payload carries the configured home"
+        );
+    }
+
+    #[test]
+    fn an_unknown_home_warns_and_strict_fails_before_writing() {
+        let dir = fixture();
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"home": "gone.md"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let mut options = options(dir.path(), &out, OutputFormat::SingleHtml);
+        options.strict = true;
+
+        let (outcome, stdout, stderr) = execute(&options);
+
+        let error = outcome.expect_err("an unknown home is a warning, strict turns it fatal");
+        assert_eq!(
+            error.to_string(),
+            "1 warning treated as an error (--strict)"
+        );
+        assert!(!out.exists(), "a refused build writes nothing");
+        assert_eq!(stdout, "");
+        assert!(
+            stderr.contains("config: home 'gone.md' does not match any document"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_configuration_aborts_the_build() {
+        let dir = fixture();
+        std::fs::write(dir.path().join(crate::config::CONFIG_FILE_NAME), "{oops")
+            .expect("write config");
+        let out = dir.path().join("dist");
+        let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+
+        let (outcome, stdout, stderr) = execute(&options);
+
+        let error = outcome.expect_err("broken JSON is a hard error");
+        assert!(
+            error.to_string().contains("is not valid JSON"),
+            "unexpected message: {error}"
+        );
+        assert!(!out.exists());
+        assert_eq!(stdout, "");
+        assert!(
+            stderr.is_empty(),
+            "the error goes to the process sink: {stderr}"
+        );
+    }
+
+    #[test]
+    fn configuration_problems_are_reported_between_scan_and_build() {
+        let dir = fixture();
+        std::fs::write(dir.path().join("image.png"), "png").expect("write asset");
+        std::fs::write(
+            dir.path().join("intro.md"),
+            "# Intro\n\n[gone](missing.md)\n",
+        )
+        .expect("rewrite doc");
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"typo": true}"#,
+        )
+        .expect("write config");
+        let options = options(
+            dir.path(),
+            &dir.path().join("dist"),
+            OutputFormat::SingleHtml,
+        );
+
+        let (outcome, _, stderr) = execute(&options);
+        outcome.expect("warnings do not fail the build");
+
+        let scan_note = stderr
+            .find("note: ignored 2 non-markdown files")
+            .expect("scan note");
+        let config_note = stderr
+            .find("config: unknown key 'typo' ignored")
+            .expect("config note");
+        let build_note = stderr.find("link target not found").expect("build note");
+        assert!(
+            scan_note < config_note && config_note < build_note,
+            "expected scan, then config, then build: {stderr}"
+        );
+        assert!(
+            stderr.contains("2 warnings (use --strict to fail)"),
+            "config warnings join the count: {stderr}"
+        );
     }
 }

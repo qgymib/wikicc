@@ -41,6 +41,7 @@ scan ──▶ parse ──▶ resolve ──▶ assemble ──▶ render ─�
 | --- | --- | --- |
 | validate | raw arguments → `Options` | `cli`, `options` |
 | scan | directory → `ScanReport` | `scan` |
+| config | input root → optional `.wikicc.json` → `SiteConfig` | `config` |
 | parse | `SourceDoc` → HTML, TOC, plain text | `markdown` |
 | resolve | destinations → final addressing, `AssetTable`, diagnostics | `markdown::links`, `assets` |
 | assemble | everything → `SiteBundle` + `SiteBuild` | `site` |
@@ -63,6 +64,7 @@ src/options.rs              defaults, lexical path normalization, output-path gu
 src/error.rs                error type and exit-code mapping
 src/pipeline.rs             stage order, strict gate, summary lines
 src/scan.rs                 discovery, ordering, ids, titles, diagnostics
+src/config.rs               the optional `.wikicc.json` site configuration
 src/markdown/               render orchestration, heading text, slugs, TOC, chapter blocks,
                             highlighting, link resolution, reference definitions
 src/assets.rs               read, MIME, hashing, dedupe
@@ -157,6 +159,14 @@ hard requirement, not an aspiration, and it constrains every stage:
 These are the boundaries where an internal change becomes observable, so each
 one is stated as a contract rather than left to the implementation.
 
+- **The configuration file.** `.wikicc.json` sits in the input folder root and
+  is optional. It is read once, after the scan (resolving `home` needs the
+  document ids), and parsing is strict: an unreadable or unparseable file is
+  a runtime failure, while a `home` that matches no document and an unknown
+  key are warnings the `--strict` gate counts. The resolved id travels in the
+  payload as `home` and in the pages manifest under the same key, omitted
+  when unset, so a site without the file serialises byte-identically to a
+  build that never heard of it.
 - **CLI surface.** `cli` defines the arguments; `options` turns them into
   `Options` and owns the output-directory guards (missing and empty are used,
   a previous artifact is emptied, anything else needs `--force`, and the output
@@ -243,6 +253,11 @@ one is stated as a contract rather than left to the implementation.
   The search corpus of the split format is fetched once, on the first global
   search; the local scope reads the document in view, which is already in
   hand, so the default scope costs nothing.
+- **The opening document.** `router.js` resolves the address with one
+  fallback chain: a known id, then the site's configured `home` (the
+  payload's `home` key, honoured only when it names a known document), then
+  the first document. Explicit links are never redirected; the setting only
+  decides what an empty or unknown address opens.
 - **Layering rule.** Pure logic and DOM access live in separate modules
   (`router.js`, `links.js`, `asset-links.js`, `search.js`, `doc-store.js`,
   `table.js`, `graph.js`, `preview.js`, `toc.js`, `anchor.js`, `diagrams.js`,
@@ -271,8 +286,8 @@ one is stated as a contract rather than left to the implementation.
 
 | Layer | Location | Tooling | Covers |
 | --- | --- | --- | --- |
-| Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline |
-| Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, markdown, writers, end to end, the esbuild launcher `build.rs` picks |
+| Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline, config, error mapping |
+| Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, config, markdown, writers, end to end, the esbuild launcher `build.rs` picks |
 | Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search, table model, graph layout, outline, preview, banner, inlined links, math policy |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the JS suite inside `cargo test` |
 

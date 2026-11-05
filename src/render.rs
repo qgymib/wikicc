@@ -232,6 +232,9 @@ struct ManifestDoc<'a> {
 #[derive(serde::Serialize)]
 struct Manifest<'a> {
     title: &'a str,
+    /// The configured home document, absent when `.wikicc.json` set none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    home: Option<&'a str>,
     mode: &'static str,
     docs: Vec<ManifestDoc<'a>>,
     edges: &'a [Edge],
@@ -361,6 +364,7 @@ pub fn render_pages(bundle: &SiteBundle) -> Result<RenderedPages> {
 
     let manifest = Manifest {
         title: &bundle.title,
+        home: bundle.home.as_deref(),
         mode: MANIFEST_MODE,
         docs: bundle
             .docs
@@ -874,5 +878,42 @@ mod tests {
         );
         let manifest: serde_json::Value = serde_json::from_str(payload).expect("manifest JSON");
         assert_eq!(manifest["title"], "Site <One>");
+    }
+
+    #[test]
+    fn the_manifest_carries_the_configured_home() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site(
+            "Site",
+            dir.path(),
+            &[source("a.md", "A", "# A\n"), source("b.md", "B", "# B\n")],
+        );
+        let mut bundle = build.bundle;
+        bundle.home = Some("b.md".to_string());
+
+        let rendered = render_pages(&bundle).expect("render");
+        let manifest: serde_json::Value =
+            serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
+
+        assert_eq!(manifest["home"], "b.md");
+    }
+
+    #[test]
+    fn a_manifest_without_a_configured_home_stays_without_the_key() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
+
+        let rendered = render_pages(&build.bundle).expect("render");
+        let manifest: serde_json::Value =
+            serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
+
+        assert!(
+            manifest
+                .as_object()
+                .expect("an object")
+                .get("home")
+                .is_none(),
+            "no configuration means no home key: {manifest}"
+        );
     }
 }

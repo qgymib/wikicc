@@ -164,6 +164,36 @@ A successful build prints a summary line and reports diagnostics on stderr;
   current working directory, and it is excluded from scanning.
 - Symlinks inside the output directory are removed as links, never followed.
 
+### Configuration file
+
+A site can carry an optional `.wikicc.json` in the **input folder root**. The
+file is JSON and currently knows one key:
+
+| Key | Meaning |
+| --- | --- |
+| `home` | Document the reader opens at an empty or unknown address [default: the first document] |
+
+The value is a document id — the path relative to the input folder, `/`
+separated, extension included — and a missing `.md` (or `.markdown`) suffix is
+completed, so `"home": "intro"` addresses `intro.md`. Explicit links are never
+redirected: the setting only decides what the opening page shows, and the
+sidebar, graph and search see the same document they always did.
+
+```json
+{
+  "home": "guide/getting-started.md"
+}
+```
+
+- A `home` that matches no document is a warning — the build still succeeds
+  and the reader falls back to the first document; `--strict` turns it into a
+  failure.
+- An unreadable or invalid file fails the build: a broken instruction must
+  not be silently ignored.
+- Unknown keys warn, so a typo never silently changes nothing.
+- Every output format honours the setting, and a site without a
+  `.wikicc.json` builds exactly the artifact it always did.
+
 ### Warnings and `--strict`
 
 Broken links, missing assets, chapter anchors a document does not have and links

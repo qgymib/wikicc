@@ -140,6 +140,9 @@ export function start() {
   var ids = docs.map(function (doc) {
     return doc.id;
   });
+  // The document the reader opens at an empty or unknown address, from the
+  // `home` key of .wikicc.json; anything else falls back to the first one.
+  var home = typeof bundle.home === "string" ? bundle.home : null;
   var store = DocStore.createDocStore(bundle);
 
   var content = document.getElementById("doc-content");
@@ -412,7 +415,7 @@ export function start() {
     if (Links.isSameRoute(globalThis.location.hash, hash)) {
       // The address already says this: setting it again would fire nothing, so
       // the chapter is walked to directly instead of through a render.
-      scrollToAnchorOnly(Router.resolveRoute(hash, ids));
+      scrollToAnchorOnly(Router.resolveRoute(hash, ids, home));
       return;
     }
 
@@ -641,7 +644,7 @@ export function start() {
   }
 
   function render() {
-    var route = Router.resolveRoute(globalThis.location.hash, ids);
+    var route = Router.resolveRoute(globalThis.location.hash, ids, home);
 
     // A message queued by a click is only valid for the render it triggered:
     // take it now, so a later navigation can never replay it.

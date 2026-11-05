@@ -171,7 +171,16 @@ pub fn scan(input: &Path, out: &Path) -> Result<ScanReport> {
             continue;
         }
         if !is_markdown_path(entry.path()) {
-            ignored_files += 1;
+            // The configuration file is a build instruction, not an ignored
+            // leftover; only the root-level one is skipped, a copy in a
+            // subfolder is still counted.
+            let is_config = entry.depth() == 1
+                && entry
+                    .file_name()
+                    .eq_ignore_ascii_case(crate::config::CONFIG_FILE_NAME);
+            if !is_config {
+                ignored_files += 1;
+            }
             continue;
         }
 
@@ -613,6 +622,26 @@ mod tests {
             ["note: ignored 2 non-markdown files".to_string()]
         );
         assert!(!report.has_warnings(), "ignored files are not warnings");
+    }
+
+    #[test]
+    fn the_root_configuration_file_is_not_an_ignored_file() {
+        let dir = site(&[
+            ("keep.md", "# Keep\n"),
+            (".wikicc.json", "{}"),
+            ("nested/.wikicc.json", "{}"),
+        ]);
+        let report = scan(dir.path(), &dir.path().join("dist")).expect("scan");
+
+        assert_eq!(ids(&report), ["keep.md"]);
+        assert_eq!(
+            report.ignored_files, 1,
+            "only the copy in a subfolder counts"
+        );
+        assert_eq!(
+            messages(&report),
+            ["note: ignored 1 non-markdown file".to_string()]
+        );
     }
 
     #[test]
