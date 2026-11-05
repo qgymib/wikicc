@@ -84,10 +84,10 @@ Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` �
 1. **Rewrite the tree, not the HTML.** Every document is parsed once with
    markdown-rs into mdast, converted to the own-layer tree, and passed
    through the own-layer transforms (citation fold, wikilinks, inline sugar,
-   callouts) before the serialiser runs. Link and image destinations are
-   rewritten structurally while that serialiser emits elements. Regex
-   post-processing of HTML is rejected because attribute quoting and nesting
-   make it unsound.
+   lenient spaced destinations, callouts) before the serialiser runs. Link
+   and image destinations are rewritten structurally while that serialiser
+   emits elements. Regex post-processing of HTML is rejected because
+   attribute quoting and nesting make it unsound.
 2. **One page, two addressing schemes.** The document HTML is rendered once
    and carries an opaque placeholder (`wikicc-asset:<hash>`) wherever a local
    resource is referenced. Writers expand the placeholder into the addressing

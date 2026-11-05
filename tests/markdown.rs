@@ -591,3 +591,44 @@ fn dense_citations_resolve_every_reference_in_the_reader() {
         doc.html.matches("[[").count()
     );
 }
+
+/// Reader-reported defect, desensitised: a destination written with spaces
+/// (`家常菜谱 图解：红烧肉篇.assets/步骤图.png` — an attachment-folder idiom
+/// with spaces, CJK and a fullwidth colon) is not valid CommonMark, so the
+/// engine used to keep the whole `![...](...)` run as literal text and the
+/// reader showed the raw markup instead of the image, with no build warning.
+/// The lenient transform claims those runs; this pins the rendered shape,
+/// while `tests/links.rs` pins the resolve-stage side and the unit tests of
+/// `src/markdown/transform/lenient.rs` pin the claim boundaries.
+#[test]
+fn a_destination_with_spaces_renders_as_its_element() {
+    let doc = render_document(
+        "# 示例\n\n\
+         ![示例](家常菜谱 图解：红烧肉篇.assets/步骤图.png)\n\n\
+         see [说明](说明 文档.md) and ![缺失](家常菜谱 图解：红烧肉篇.assets/不存在的图.png)\n",
+    );
+
+    assert!(
+        doc.html
+            .contains("<img src=\"家常菜谱 图解：红烧肉篇.assets/步骤图.png\" alt=\"示例\" />"),
+        "html: {}",
+        doc.html
+    );
+    assert!(
+        doc.html.contains("<a href=\"说明 文档.md\">说明</a>"),
+        "html: {}",
+        doc.html
+    );
+    assert!(
+        doc.html
+            .contains("<img src=\"家常菜谱 图解：红烧肉篇.assets/不存在的图.png\" alt=\"缺失\" />"),
+        "an unresolvable destination still renders as an image element\nhtml: {}",
+        doc.html
+    );
+    assert!(
+        !doc.html.contains("!["),
+        "no raw markup may survive into the body: {}",
+        doc.html
+    );
+    assert_eq!(doc.text, "示例 示例 see 说明 and 缺失");
+}

@@ -458,3 +458,89 @@ fn a_document_without_links_produces_no_diagnostics() {
         "<h1 id=\"plain\">Plain</h1>\n<p>No links here.</p>\n"
     );
 }
+
+/// Regression for a reader-reported defect: a destination carrying a space is
+/// not valid CommonMark, so the engine used to leave the whole
+/// `![...](...)` run as literal text — no image node, no asset registration
+/// and no warning, and the reader showed the raw markup. The lenient
+/// transform now claims those runs; these tests pin the resolve-stage side
+/// of the scenario (the tree side lives in
+/// `src/markdown/transform/lenient.rs`). The wording is unrelated to the
+/// report on purpose.
+#[test]
+fn a_spaced_image_destination_registers_its_asset() {
+    let png = [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    let dir = tempfile::tempdir().expect("temp dir");
+    write(dir.path(), "家常菜谱 图解：红烧肉篇.assets/步骤图.png", png);
+    write(
+        dir.path(),
+        "示例笔记.md",
+        "# 示例\n\n![示例](家常菜谱 图解：红烧肉篇.assets/步骤图.png)\n",
+    );
+
+    let site = build(dir.path());
+    let html = &site.html["示例笔记.md"];
+
+    assert!(
+        html.contains(&format!("src=\"{ASSET_PLACEHOLDER_PREFIX}")),
+        "the spaced destination must become a content-addressed asset\nhtml: {html}"
+    );
+    assert!(
+        !html.contains("![示例]"),
+        "the raw markup must not survive into the body\nhtml: {html}"
+    );
+    assert_eq!(site.context.assets().len(), 1);
+    let (_, asset) = site.context.assets().iter().next().expect("one asset");
+    assert_eq!(asset.mime, "image/png");
+    assert_eq!(asset.bytes, png);
+    assert!(
+        warnings(&site.context).is_empty(),
+        "{:?}",
+        warnings(&site.context)
+    );
+}
+
+#[test]
+fn a_spaced_link_destination_reaches_its_document() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write(dir.path(), "说明 文档.md", "# 说明\n\n被引用的正文。\n");
+    write(dir.path(), "示例笔记.md", "[说明](说明 文档.md)\n");
+
+    let site = build(dir.path());
+    let html = &site.html["示例笔记.md"];
+
+    assert!(
+        html.contains("href=\"#/doc/%E8%AF%B4%E6%98%8E%20%E6%96%87%E6%A1%A3.md\""),
+        "the spaced document route must be percent-encoded\nhtml: {html}"
+    );
+    assert!(
+        !html.contains("[说明]("),
+        "the raw markup must not survive into the body\nhtml: {html}"
+    );
+    assert!(warnings(&site.context).is_empty());
+}
+
+#[test]
+fn a_missing_spaced_asset_still_warns_and_keeps_the_path() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write(
+        dir.path(),
+        "示例笔记.md",
+        "![示例](家常菜谱 图解：红烧肉篇.assets/不存在的图.png)\n",
+    );
+
+    let site = build(dir.path());
+    let html = &site.html["示例笔记.md"];
+
+    assert!(
+        html.contains("src=\"家常菜谱 图解：红烧肉篇.assets/不存在的图.png\""),
+        "an unresolvable spaced destination stays as written\nhtml: {html}"
+    );
+    assert_eq!(site.context.assets().len(), 0);
+    assert_eq!(
+        warnings(&site.context),
+        ["示例笔记.md:1: asset not found: \
+          '家常菜谱 图解：红烧肉篇.assets/不存在的图.png'"
+            .to_string()]
+    );
+}

@@ -11,7 +11,9 @@
 //! 3. [`transform::inline`] claims the Typora sugar (`==highlight==`,
 //!    `~subscript~`, `^superscript^`, `%%comments%%`, `#tags`,
 //!    `:shortcodes:`),
-//! 4. [`transform::callout`] rewrites Obsidian callout block quotes.
+//! 4. [`transform::lenient`] claims the spaced inline destinations
+//!    (`![alt](a b.png)`) CommonMark declines,
+//! 5. [`transform::callout`] rewrites Obsidian callout block quotes.
 //!
 //! Everything after that is one serialisation pass ([`html`]): the body
 //! HTML, the plain text the front end searches, the heading anchors and the
@@ -312,6 +314,7 @@ fn prepare(source: &str) -> OwnNode {
     transform::fold::run(&mut tree, &table);
     transform::wikilink::run(&mut tree, &table);
     transform::inline::run(&mut tree);
+    transform::lenient::run(&mut tree);
     transform::callout::run(&mut tree);
 
     tree

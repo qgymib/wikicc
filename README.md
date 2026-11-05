@@ -35,6 +35,8 @@ their chapter outline.
   keep their text.
 - Chapter links: `[label](path/to/doc.md#chapter)` addresses one chapter of
   another document, `[label](path/to/doc.md)` addresses the document as a whole.
+- Images and other local assets: `![alt](path/to/image.png)` is embedded
+  content-addressed, and a destination containing spaces is accepted too.
 - Fenced code highlighting, done at build time.
 - Mermaid diagrams from a fence tagged `mermaid`.
 - Raw HTML inside Markdown, passed through unchanged. **The input is trusted:
