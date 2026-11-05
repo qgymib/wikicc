@@ -163,6 +163,29 @@ pub fn build_edges(links: &[(String, String)]) -> Vec<Edge> {
         .collect()
 }
 
+/// Heading texts of `toc`, depth first, joined with single spaces.
+///
+/// This is the build-side twin of the reader's `headingsText` in
+/// `web/js/search.js`. The pages format pre-flattens the outline into the
+/// search corpus file, so the browser can index the text it fetched without
+/// needing the outline structure itself; the two halves must agree exactly
+/// because the weights a query earns depend on the field the text lands in.
+/// An entry without text contributes nothing, so no double space can appear.
+pub fn flatten_headings(toc: &[TocEntry]) -> String {
+    fn walk<'a>(entries: &'a [TocEntry], parts: &mut Vec<&'a str>) {
+        for entry in entries {
+            if !entry.text.is_empty() {
+                parts.push(&entry.text);
+            }
+            walk(&entry.children, parts);
+        }
+    }
+
+    let mut parts = Vec::new();
+    walk(toc, &mut parts);
+    parts.join(" ")
+}
+
 /// Run the parse and resolve stages over `docs` and assemble the payload.
 ///
 /// `root` is the input directory every relative asset path is resolved
@@ -289,6 +312,46 @@ mod tests {
     fn no_links_means_no_edges() {
         assert!(build_edges(&[]).is_empty());
         assert!(build_edges(&pairs(&[("a.md", "a.md")])).is_empty());
+    }
+
+    #[test]
+    fn flatten_headings_joins_the_outline_depth_first() {
+        let toc = vec![TocEntry {
+            id: "a".to_string(),
+            text: "A".to_string(),
+            level: 1,
+            children: vec![TocEntry {
+                id: "a1".to_string(),
+                text: "A1".to_string(),
+                level: 2,
+                children: vec![TocEntry {
+                    id: "a1a".to_string(),
+                    text: "A1a".to_string(),
+                    level: 3,
+                    children: Vec::new(),
+                }],
+            }],
+        }];
+
+        assert_eq!(flatten_headings(&toc), "A A1 A1a");
+        assert_eq!(flatten_headings(&[]), "");
+    }
+
+    #[test]
+    fn flatten_headings_skips_empty_texts_without_double_spaces() {
+        let toc = vec![TocEntry {
+            id: "a".to_string(),
+            text: String::new(),
+            level: 1,
+            children: vec![TocEntry {
+                id: "b".to_string(),
+                text: "B".to_string(),
+                level: 2,
+                children: Vec::new(),
+            }],
+        }];
+
+        assert_eq!(flatten_headings(&toc), "B");
     }
 
     #[test]

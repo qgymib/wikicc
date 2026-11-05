@@ -27,9 +27,9 @@
 
 use std::path::Path;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::options::OutputFormat;
-use crate::render::RenderedSite;
+use crate::render::RenderedOutput;
 use crate::site::SiteBuild;
 
 use super::{
@@ -46,10 +46,24 @@ impl SiteWriter for HtmlDirWriter {
         OutputFormat::HtmlDir
     }
 
-    fn write(&self, build: &SiteBuild, rendered: &RenderedSite, out: &Path) -> Result<WriteReport> {
+    fn write(
+        &self,
+        build: &SiteBuild,
+        rendered: &RenderedOutput,
+        out: &Path,
+    ) -> Result<WriteReport> {
+        let page = match rendered {
+            RenderedOutput::Page(page) => page,
+            _ => {
+                return Err(Error::Render(
+                    "the html-dir writer received a pages render".to_string(),
+                ));
+            }
+        };
+
         // Expanding first keeps the "fail before writing" guarantee: a page
         // that references an unregistered resource produces no directory.
-        let (html, _) = expand_placeholders(&rendered.html, &build.assets, |asset, sink| {
+        let (html, _) = expand_placeholders(&page.html, &build.assets, |asset, sink| {
             sink.push_str(&asset_relative_path(asset));
             Ok(())
         })?;
@@ -92,7 +106,13 @@ mod tests {
 
     use super::*;
     use crate::assets::AssetTable;
+    use crate::render::RenderedSite;
     use crate::site::{SiteBundle, Stats};
+
+    /// Wrap a rendered page the way the pipeline hands it over.
+    fn page(html: impl Into<String>) -> RenderedOutput {
+        RenderedOutput::Page(RenderedSite { html: html.into() })
+    }
 
     /// Build whose assets are the given `(file name, content)` pairs.
     fn build_with(assets: &[(&str, &[u8])]) -> (SiteBuild, Vec<String>) {
@@ -135,20 +155,44 @@ mod tests {
     }
 
     /// Rendered page that references every hash in `hashes` once.
-    fn page_with(hashes: &[String]) -> RenderedSite {
+    fn page_with(hashes: &[String]) -> RenderedOutput {
         let images: String = hashes
             .iter()
             .map(|hash| format!("<img src=\"wikicc-asset:{hash}\">"))
             .collect();
 
-        RenderedSite {
-            html: format!("<html><body>{images}</body></html>"),
-        }
+        page(format!("<html><body>{images}</body></html>"))
     }
 
     #[test]
     fn the_writer_declares_its_format() {
         assert_eq!(HtmlDirWriter.format(), OutputFormat::HtmlDir);
+    }
+
+    #[test]
+    fn a_pages_render_is_refused_instead_of_written() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (build, _) = build_with(&[]);
+        let rendered = RenderedOutput::Pages(crate::render::RenderedPages {
+            shell: RenderedSite {
+                html: "<html></html>".to_string(),
+            },
+            chunks: Vec::new(),
+            search_json: "{}".to_string(),
+        });
+
+        let error = HtmlDirWriter
+            .write(&build, &rendered, dir.path())
+            .expect_err("mismatched render");
+
+        assert!(
+            error.to_string().contains("pages render"),
+            "unexpected message: {error}"
+        );
+        assert!(
+            !dir.path().join(HTML_FILE_NAME).exists(),
+            "a mismatched render must not leave an artifact"
+        );
     }
 
     #[test]
@@ -198,12 +242,10 @@ mod tests {
     fn placeholders_become_relative_asset_addresses() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, hashes) = build_with(&[("logo.svg", b"<svg/>")]);
-        let rendered = RenderedSite {
-            html: format!(
-                "<img src=\"wikicc-asset:{hash}\"><img src=\"wikicc-asset:{hash}\">",
-                hash = hashes[0]
-            ),
-        };
+        let rendered = page(format!(
+            "<img src=\"wikicc-asset:{hash}\"><img src=\"wikicc-asset:{hash}\">",
+            hash = hashes[0]
+        ));
 
         HtmlDirWriter
             .write(&build, &rendered, dir.path())
@@ -219,9 +261,7 @@ mod tests {
     fn a_site_without_assets_writes_only_the_page() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, _) = build_with(&[]);
-        let rendered = RenderedSite {
-            html: "<html></html>".to_string(),
-        };
+        let rendered = page("<html></html>");
 
         let report = HtmlDirWriter
             .write(&build, &rendered, dir.path())
@@ -284,9 +324,7 @@ mod tests {
     fn an_unknown_placeholder_fails_before_anything_is_written() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, _) = build_with(&[("logo.svg", b"<svg/>")]);
-        let rendered = RenderedSite {
-            html: "<img src=\"wikicc-asset:0000000000000000\">".to_string(),
-        };
+        let rendered = page("<img src=\"wikicc-asset:0000000000000000\">");
 
         let error = HtmlDirWriter
             .write(&build, &rendered, dir.path())
@@ -307,9 +345,7 @@ mod tests {
     fn the_page_is_written_as_utf8_without_a_bom() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, _) = build_with(&[]);
-        let rendered = RenderedSite {
-            html: "<p>说明</p>".to_string(),
-        };
+        let rendered = page("<p>说明</p>");
 
         HtmlDirWriter
             .write(&build, &rendered, dir.path())

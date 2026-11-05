@@ -376,6 +376,18 @@ function payload() {
   ]);
 }
 
+/** A store over `byId`, shaped the way the reader hands its views the documents. */
+function asStore(byId) {
+  return {
+    peek(id) {
+      return byId.get(id) || null;
+    },
+    get(id) {
+      return Promise.resolve(byId.get(id) || null);
+    },
+  };
+}
+
 /** The one popover the view builds, or `null` before it is built. */
 function panelOf(doc) {
   return (
@@ -454,7 +466,7 @@ function textOf(root) {
 }
 
 /** Run `body` with a view whose content is `content` and record every message. */
-function setup(body) {
+function setup(body, options) {
   withFakeWindow(function (window) {
     const doc = fakeDocument();
     const previousDocument = globalThis.document;
@@ -466,7 +478,7 @@ function setup(body) {
       const navigations = [];
       const view = createPreviewView({
         content,
-        byId: payload(),
+        documents: (options && options.documents) || asStore(payload()),
         onNavigate(id, anchor) {
           navigations.push({ id, anchor });
         },
@@ -518,6 +530,86 @@ test("hovering a chapter that exists opens the preview", () => {
     assert.equal(panel.getAttribute("aria-label"), PREVIEW_LABEL);
     assert.match(textOf(panel), /Getting Started/);
   });
+});
+
+test("hovering a chapter whose document travels in opens once it arrives", () => {
+  let deliver = null;
+  const travelling = {
+    peek() {
+      return null;
+    },
+    get() {
+      return {
+        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
+        then(callback) {
+          deliver = callback;
+        },
+      };
+    },
+  };
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      assert.equal(
+        view.isOpen(),
+        false,
+        "nothing shows while the document is on its way",
+      );
+
+      deliver(payload().get("guide/intro.md"));
+
+      assert.equal(view.isOpen(), true, "the answer opens the panel");
+      const panel = panelOf(doc);
+      assert.match(textOf(panel), /Getting Started/);
+    },
+    { documents: travelling },
+  );
+});
+
+test("an answer for a hover the reader left behind opens nothing", () => {
+  let deliver = null;
+  const travelling = {
+    peek() {
+      return null;
+    },
+    get() {
+      return {
+        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
+        then(callback) {
+          deliver = callback;
+        },
+      };
+    },
+  };
+
+  setup(
+    function ({ view, content, clock }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      content.fire("pointerout", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      deliver(payload().get("guide/intro.md"));
+
+      assert.equal(
+        view.isOpen(),
+        false,
+        "a panel for a link nobody points at any more would be a surprise",
+      );
+    },
+    { documents: travelling },
+  );
 });
 
 test("hovering a broken reference opens a notice and reports nothing", () => {

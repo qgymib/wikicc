@@ -1,9 +1,8 @@
 //! Shell assembly: the template, the styles, the scripts and the payload.
 //!
 //! This is the `render` stage described in `docs/design.md`. It turns a
-//! [`SiteBundle`] into the single HTML document every writer starts from, so the
-//! two output formats differ only in how asset placeholders are addressed and
-//! never in the page itself.
+//! [`SiteBundle`] into what the writers consume, so the output formats differ
+//! only in how asset placeholders are addressed and never in the page itself.
 //!
 //! Everything the page needs is inlined, because the product has to work from
 //! `file://`, where `fetch` of a sibling JSON file is blocked by CORS and a
@@ -19,22 +18,35 @@
 //!   esbuild from `web/js/main.js` (the reader modules plus the npm-installed
 //!   engine), so the page needs no module loader and resolves nothing at
 //!   runtime;
-//! - `{{ payload|safe }}` is the bundle JSON, escaped so a document that
-//!   contains `</script>` cannot terminate the script element;
+//! - `{{ payload|safe }}` is the bundle JSON — the whole site for the two
+//!   shell formats, and the document manifest for [`OutputFormat::Pages`] —
+//!   escaped so a document that contains `</script>` cannot terminate the
+//!   script element;
 //! - `{{ title }}` is the site title, escaped by the engine's HTML auto-escaper.
+//!
+//! The pages format ([`render_pages`]) additionally projects the
+//! bundle into one JSON chunk per document and the search corpus file. Those
+//! are standalone `application/json` files fetched over HTTP, so they need no
+//! script-element escaping — only what `serde_json` already guarantees — and
+//! their chunk JSON still carries the opaque asset placeholders, which the
+//! pages writer expands exactly like the shell writers do.
 //!
 //! Determinism: the template is compiled from a constant, the concatenation
 //! order is fixed, nothing is sorted at render time, and no value depends on
 //! the clock, the host or the file system order. Two builds of the same input
-//! therefore produce byte-identical HTML.
+//! therefore produce byte-identical output.
 
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 use minijinja::{Environment, UndefinedBehavior, context};
 
+use crate::assets::asset_hash;
 use crate::error::{Error, Result};
 use crate::markdown::highlight::theme_css;
-use crate::site::SiteBundle;
+use crate::markdown::sections::Block;
+use crate::markdown::toc::TocEntry;
+use crate::site::{Edge, SiteBundle, Stats, flatten_headings};
 
 /// Page skeleton, with the four template variables below.
 ///
@@ -143,6 +155,251 @@ pub fn render_site(bundle: &SiteBundle) -> Result<RenderedSite> {
     let html = render_template(&bundle.title, css, js, &payload)?;
 
     Ok(RenderedSite { html })
+}
+
+/// Directory the per-document chunks live in, relative to `index.html`.
+pub const PAGES_DIR_NAME: &str = "pages";
+
+/// File name of the search corpus, relative to `index.html`.
+pub const SEARCH_FILE_NAME: &str = "search.json";
+
+/// Value of the manifest's `mode` field, which tells the reader the documents
+/// are separate files rather than embedded in the payload.
+pub const MANIFEST_MODE: &str = "pages";
+
+/// Suffix of every chunk file name.
+const CHUNK_SUFFIX: &str = ".json";
+
+/// What the render stage hands the writers for one output format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenderedOutput {
+    /// One self-contained shell page: what `single-html` and `html-dir` write.
+    Page(RenderedSite),
+    /// The shell page plus the per-document chunks and the search corpus: what
+    /// `pages` writes.
+    Pages(RenderedPages),
+}
+
+/// One per-document chunk of the pages format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkArtifact {
+    /// File name relative to the output root: `pages/<encoded-id>.json`.
+    ///
+    /// The separators are literal `'/'` on purpose: this is a URL, not a file
+    /// system path, and `Path::display` would emit `\` on Windows.
+    pub name: String,
+    /// Content hash of [`ChunkArtifact::json`] (the asset hash: the first 16
+    /// hex characters of the SHA-256 digest). The reader appends it as a
+    /// `?v=` query so a browser that holds a cached chunk under a static host
+    /// still refetches after a redeploy.
+    pub hash: String,
+    /// Chunk JSON, with asset placeholders still unexpanded.
+    pub json: String,
+}
+
+/// The pages projection of a site bundle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedPages {
+    /// The shell page. Its payload is the manifest: the site title, the mode
+    /// marker, one `{id, title, hash}` reference per document, the link graph
+    /// and the counters — everything the reader needs before any document is
+    /// open, and nothing else.
+    pub shell: RenderedSite,
+    /// One chunk per document, in scan order.
+    pub chunks: Vec<ChunkArtifact>,
+    /// The search corpus JSON: `{docs: [{id, title, headings, text}]}`.
+    pub search_json: String,
+}
+
+impl RenderedPages {
+    /// Chunk of the document with the given id.
+    pub fn chunk(&self, id: &str) -> Option<&ChunkArtifact> {
+        self.chunks
+            .iter()
+            .find(|chunk| chunk.name == chunk_file_name(id))
+    }
+}
+
+/// `{id, title, hash}` reference to one document chunk, as the manifest lists it.
+#[derive(serde::Serialize)]
+struct ManifestDoc<'a> {
+    id: &'a str,
+    title: &'a str,
+    hash: &'a str,
+}
+
+/// The manifest: the payload the pages shell embeds.
+#[derive(serde::Serialize)]
+struct Manifest<'a> {
+    title: &'a str,
+    mode: &'static str,
+    docs: Vec<ManifestDoc<'a>>,
+    edges: &'a [Edge],
+    stats: &'a Stats,
+}
+
+/// One document as the chunk file carries it.
+#[derive(serde::Serialize)]
+struct ChunkPayload<'a> {
+    id: &'a str,
+    title: &'a str,
+    html: &'a str,
+    toc: &'a [TocEntry],
+    blocks: &'a [Block],
+    text: &'a str,
+}
+
+/// One document's record in the search corpus file.
+#[derive(serde::Serialize)]
+struct SearchRecord<'a> {
+    id: &'a str,
+    title: &'a str,
+    headings: String,
+    text: &'a str,
+}
+
+/// The search corpus file: the text every document contributes to search.
+#[derive(serde::Serialize)]
+struct SearchCorpus<'a> {
+    docs: Vec<SearchRecord<'a>>,
+}
+
+/// Percent-encode a document id for a chunk file name, keeping `/`.
+///
+/// This mirrors the reader's `router.encodeId` exactly (one
+/// `encodeURIComponent` per `/`-separated segment), because the file the build
+/// writes must be the URL the browser fetches. The unreserved set is the one
+/// JavaScript's encoder keeps literal — `A-Z a-z 0-9 - _ . ! ~ * ' ( )` — and
+/// everything else becomes an uppercase `%XX` over the UTF-8 bytes, so names
+/// never carry a character a URL, a filesystem or a static host could mangle.
+/// A real path component can never be `.` or `..`, so the encoding cannot
+/// smuggle a traversal either.
+pub fn encode_chunk_id(id: &str) -> String {
+    let mut encoded = String::with_capacity(id.len());
+
+    for (index, segment) in id.split('/').enumerate() {
+        if index > 0 {
+            encoded.push('/');
+        }
+        for byte in segment.bytes() {
+            match byte {
+                b'A'..=b'Z'
+                | b'a'..=b'z'
+                | b'0'..=b'9'
+                | b'-'
+                | b'_'
+                | b'.'
+                | b'!'
+                | b'~'
+                | b'*'
+                | b'\''
+                | b'('
+                | b')' => encoded.push(byte as char),
+                other => {
+                    // Writing into a `String` cannot fail.
+                    let _ = write!(encoded, "%{other:02X}");
+                }
+            }
+        }
+    }
+
+    encoded
+}
+
+/// File name of the chunk of the document with the given id.
+///
+/// The name is stable across builds: it derives from the document id alone, so
+/// a static host that still serves a cached shell never points at a chunk file
+/// the redeploy removed. Freshness comes from the `?v=` query instead.
+pub fn chunk_file_name(id: &str) -> String {
+    format!("{PAGES_DIR_NAME}/{}{CHUNK_SUFFIX}", encode_chunk_id(id))
+}
+
+/// Render `bundle` into the pages projection: the shell page carrying the
+/// manifest, one JSON chunk per document and the search corpus file.
+///
+/// Fails only on a broken build: a skeleton that does not compile or render,
+/// or an embedded resource that could close its own element. Document chunks
+/// follow scan order and the corpus follows the same order, so two builds of
+/// the same input are byte-identical.
+pub fn render_pages(bundle: &SiteBundle) -> Result<RenderedPages> {
+    let css = shell_css();
+    let js = shell_js();
+
+    if css.contains("</style") {
+        return Err(Error::Render(
+            "the stylesheet contains a '</style' sequence".to_string(),
+        ));
+    }
+    if js.contains("</script") {
+        return Err(Error::Render(
+            "the script bundle contains a '</script' sequence".to_string(),
+        ));
+    }
+
+    let mut chunks = Vec::with_capacity(bundle.docs.len());
+    for doc in &bundle.docs {
+        let payload = ChunkPayload {
+            id: &doc.id,
+            title: &doc.title,
+            html: &doc.html,
+            toc: &doc.toc,
+            blocks: &doc.blocks,
+            text: &doc.text,
+        };
+        let json =
+            serde_json::to_string(&payload).expect("a document chunk always serialises to JSON");
+
+        chunks.push(ChunkArtifact {
+            name: chunk_file_name(&doc.id),
+            // The hash addresses the chunk content, so a redeploy that changed
+            // a document changes the query the shell asks for.
+            hash: asset_hash(json.as_bytes()),
+            json,
+        });
+    }
+
+    let manifest = Manifest {
+        title: &bundle.title,
+        mode: MANIFEST_MODE,
+        docs: bundle
+            .docs
+            .iter()
+            .zip(chunks.iter())
+            .map(|(doc, chunk)| ManifestDoc {
+                id: &doc.id,
+                title: &doc.title,
+                hash: &chunk.hash,
+            })
+            .collect(),
+        edges: &bundle.edges,
+        stats: &bundle.stats,
+    };
+    let payload = escape_json_for_script(
+        &serde_json::to_string(&manifest).expect("a manifest always serialises to JSON"),
+    );
+    let html = render_template(&bundle.title, css, js, &payload)?;
+
+    let corpus = SearchCorpus {
+        docs: bundle
+            .docs
+            .iter()
+            .map(|doc| SearchRecord {
+                id: &doc.id,
+                title: &doc.title,
+                headings: flatten_headings(&doc.toc),
+                text: &doc.text,
+            })
+            .collect(),
+    };
+    let search_json =
+        serde_json::to_string(&corpus).expect("a search corpus always serialises to JSON");
+
+    Ok(RenderedPages {
+        shell: RenderedSite { html },
+        chunks,
+        search_json,
+    })
 }
 
 /// Render the compiled-in skeleton with `minijinja`.
@@ -438,5 +695,184 @@ mod tests {
             render_site(&build.bundle).expect("render"),
             render_site(&build.bundle).expect("render")
         );
+    }
+
+    #[test]
+    fn chunk_ids_encode_like_the_reader_routes() {
+        assert_eq!(encode_chunk_id("a.md"), "a.md");
+        assert_eq!(encode_chunk_id("guide/intro.md"), "guide/intro.md");
+        assert_eq!(encode_chunk_id("a b.md"), "a%20b.md");
+        assert_eq!(encode_chunk_id("a#b.md"), "a%23b.md");
+        assert_eq!(
+            encode_chunk_id("中文/说明.md"),
+            "%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E.md"
+        );
+        assert_eq!(chunk_file_name("a.md"), "pages/a.md.json");
+        assert_eq!(
+            chunk_file_name("guide/intro.md"),
+            "pages/guide/intro.md.json"
+        );
+        assert_eq!(
+            chunk_file_name("中文/说明.md"),
+            "pages/%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E.md.json"
+        );
+    }
+
+    #[test]
+    fn the_pages_render_carries_manifest_chunks_and_corpus() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site(
+            "Site",
+            dir.path(),
+            &[
+                source("a.md", "A", "# A\n\n[to b](b.md)\n"),
+                source("b.md", "B", "# B\n"),
+            ],
+        );
+        let rendered = render_pages(&build.bundle).expect("render");
+
+        // The manifest is the shell's payload and names every document.
+        let manifest: serde_json::Value =
+            serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
+        assert_eq!(manifest["mode"], "pages");
+        assert_eq!(manifest["title"], "Site");
+        assert_eq!(manifest["docs"][0]["id"], "a.md");
+        assert_eq!(manifest["docs"][0]["title"], "A");
+        assert_eq!(
+            manifest["docs"][0].as_object().map(|object| object.len()),
+            Some(3),
+            "a manifest entry carries id, title and hash only"
+        );
+        assert_eq!(
+            manifest["edges"][0]["to"], "b.md",
+            "the graph travels in the manifest"
+        );
+        assert_eq!(manifest["stats"]["documents"], 2);
+
+        // One chunk per document, carrying everything the reader needs to open it.
+        assert_eq!(rendered.chunks.len(), 2);
+        let chunk = &rendered.chunks[0];
+        assert_eq!(chunk.name, "pages/a.md.json");
+        assert_eq!(chunk.hash.len(), 16, "the hash is the asset hash width");
+        assert_eq!(chunk.hash, crate::assets::asset_hash(chunk.json.as_bytes()));
+        let value: serde_json::Value = serde_json::from_str(&chunk.json).expect("chunk JSON");
+        assert_eq!(
+            value
+                .as_object()
+                .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+            Some(vec!["blocks", "html", "id", "text", "title", "toc"])
+        );
+        assert_eq!(value["id"], "a.md");
+        assert_eq!(
+            value["text"], "A to b",
+            "the chunk carries the text for local search"
+        );
+
+        // The corpus lists the same document with the pre-flattened headings.
+        let corpus: serde_json::Value =
+            serde_json::from_str(&rendered.search_json).expect("corpus JSON");
+        assert_eq!(
+            corpus["docs"][0]
+                .as_object()
+                .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+            Some(vec!["headings", "id", "text", "title"])
+        );
+        assert_eq!(corpus["docs"][0]["headings"], "A");
+
+        // The manifest hash addresses the chunk, so the reader can bust caches.
+        assert_eq!(manifest["docs"][0]["hash"], chunk.hash.as_str());
+    }
+
+    #[test]
+    fn the_pages_render_keeps_asset_placeholders_for_the_writer() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("logo.svg"), "<svg/>").expect("write fixture");
+        std::fs::write(dir.path().join("a.md"), "![logo](logo.svg)\n").expect("write fixture");
+        let report = crate::scan::scan(dir.path(), &dir.path().join("dist")).expect("scan");
+        let build = build_site("Site", dir.path(), &report.docs);
+        let rendered = render_pages(&build.bundle).expect("render");
+
+        assert!(
+            rendered.chunks[0]
+                .json
+                .contains(crate::ASSET_PLACEHOLDER_PREFIX),
+            "the writer expands placeholders, not the render stage: {}",
+            rendered.chunks[0].json
+        );
+    }
+
+    #[test]
+    fn a_document_cannot_terminate_the_shell_payload_element() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site(
+            "Site",
+            dir.path(),
+            &[source(
+                "a.md",
+                "A",
+                "# A\n\n</script><script>alert('x')</script>\n",
+            )],
+        );
+        let rendered = render_pages(&build.bundle).expect("render");
+
+        let payload = payload_of(&rendered.shell.html);
+        assert!(!payload.contains("</script"));
+        assert_eq!(
+            rendered.shell.html.matches("</script>").count(),
+            2,
+            "only the payload element and the script bundle may close"
+        );
+    }
+
+    #[test]
+    fn the_pages_render_is_deterministic_and_lookup_finds_chunks() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site(
+            "Site",
+            dir.path(),
+            &[source("a.md", "A", "# A\n"), source("b.md", "B", "# B\n")],
+        );
+
+        let first = render_pages(&build.bundle).expect("render");
+        let second = render_pages(&build.bundle).expect("render");
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first.chunk("a.md").map(|chunk| chunk.name.as_str()),
+            Some("pages/a.md.json")
+        );
+        assert!(first.chunk("missing.md").is_none());
+    }
+
+    #[test]
+    fn an_empty_site_renders_an_empty_manifest_and_corpus() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Empty", dir.path(), &[]);
+
+        let rendered = render_pages(&build.bundle).expect("render");
+
+        assert!(rendered.chunks.is_empty());
+        let manifest: serde_json::Value =
+            serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
+        assert_eq!(manifest["docs"], serde_json::json!([]));
+        let corpus: serde_json::Value =
+            serde_json::from_str(&rendered.search_json).expect("corpus JSON");
+        assert_eq!(corpus["docs"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn a_site_title_is_escaped_in_the_manifest() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Site <One>", dir.path(), &[source("a.md", "A", "# A\n")]);
+
+        let rendered = render_pages(&build.bundle).expect("render");
+
+        let payload = payload_of(&rendered.shell.html);
+        assert!(
+            !payload.contains('<'),
+            "the manifest never carries a raw angle bracket: {payload}"
+        );
+        let manifest: serde_json::Value = serde_json::from_str(payload).expect("manifest JSON");
+        assert_eq!(manifest["title"], "Site <One>");
     }
 }

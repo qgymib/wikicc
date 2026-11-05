@@ -49,6 +49,19 @@ test("flattens a nested outline into one searchable string", () => {
   assert.equal(search.headingsText(null), "");
 });
 
+test("the heading text of a corpus record is the pre-flattened field", () => {
+  assert.equal(search.headingsOf({ headings: "One Two" }), "One Two");
+  assert.equal(
+    search.headingsOf({
+      toc: [{ text: "One", children: [{ text: "Two", children: [] }] }],
+    }),
+    "One Two",
+    "a document of the embedded payload is flattened from its outline",
+  );
+  assert.equal(search.headingsOf(null), "");
+  assert.equal(search.headingsOf({}), "");
+});
+
 test("an empty query means no filter", () => {
   assert.equal(search.search(index, ""), null);
   assert.equal(search.search(index, "   "), null);
@@ -474,6 +487,39 @@ test("an id the payload does not hold is dropped rather than rendered as a blank
   assert.equal(
     search.occurrences(docs, ["a.md", "missing.md", "b.md"], "the").length,
     2,
+  );
+});
+
+test("occurrences read the corpus records the pages format ships", () => {
+  // The records of `search.json` carry the same fields the embedded payload
+  // does, except that the outline arrives pre-flattened under `headings`.
+  const records = [
+    { id: "a.md", title: "A", headings: "Getting Started", text: "plain body" },
+    {
+      id: "b.md",
+      title: "B",
+      headings: "Other",
+      text: "started here and started again",
+    },
+  ];
+
+  const entries = search.occurrences(records, ["b.md", "a.md"], "started");
+
+  assert.deepEqual(
+    entries.map((entry) => entry.id),
+    ["b.md", "b.md", "a.md"],
+    "the ranking is the engine's, the hits of one document together",
+  );
+  assert.deepEqual(
+    entries.slice(0, 2).map((entry) => entry.hit),
+    [0, 1],
+    "the body hits of the record are enumerated in order",
+  );
+  assert.equal(entries[2].hit, -1, "the record matched on its headings only");
+  assert.equal(
+    entries[2].snippet.hit,
+    "Started",
+    "the outline context is cut from the flattened headings, not from a structure the record does not carry",
   );
 });
 

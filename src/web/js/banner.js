@@ -65,6 +65,11 @@ export function createBanner(options) {
   var timer = 0;
   var root = null;
   var text = null;
+  // The two text nodes around the facts, so a message can be rewritten in
+  // place: the chapter message uses both, a plain message replaces the lead
+  // and blanks the rest.
+  var lead = null;
+  var separator = null;
   var path = null;
   var chapter = null;
   var close = null;
@@ -98,7 +103,8 @@ export function createBanner(options) {
 
     text = doc.createElement("p");
     text.className = "doc-alert-text";
-    text.appendChild(doc.createTextNode(MESSAGE_LEAD));
+    lead = doc.createTextNode(MESSAGE_LEAD);
+    text.appendChild(lead);
 
     // The two facts are their own elements, filled with `textContent`: a
     // document path and a heading may both contain markup characters.
@@ -108,7 +114,8 @@ export function createBanner(options) {
     chapter.className = "doc-alert-code";
 
     text.appendChild(path);
-    text.appendChild(doc.createTextNode(MESSAGE_SEPARATOR));
+    separator = doc.createTextNode(MESSAGE_SEPARATOR);
+    text.appendChild(separator);
     text.appendChild(chapter);
 
     close = doc.createElement("button");
@@ -198,15 +205,46 @@ export function createBanner(options) {
     ensure();
     clearTimer();
 
+    lead.textContent = MESSAGE_LEAD;
+    separator.textContent = MESSAGE_SEPARATOR;
     path.textContent = details.docId ? String(details.docId) : "";
     chapter.textContent = details.anchor ? String(details.anchor) : "";
+    reveal();
 
+    return root;
+  }
+
+  /**
+   * Show one plain sentence and start its countdown.
+   *
+   * The pages format adds failures the chapter message cannot describe —
+   * a document whose file never arrived, a site opened where no request can
+   * succeed — and those need their own words, not a chapter that does not
+   * exist. The message takes the lead's place and the two facts are blanked,
+   * so the sentence is written through a text node and whatever it carries
+   * stays text.
+   */
+  function showMessage(value) {
+    ensure();
+    clearTimer();
+
+    lead.textContent = String(
+      value === null || value === undefined ? "" : value,
+    );
+    separator.textContent = "";
+    path.textContent = "";
+    chapter.textContent = "";
+    reveal();
+
+    return root;
+  }
+
+  /** Put the banner on screen and start its countdown. */
+  function reveal() {
     root.hidden = false;
     root.removeAttribute("aria-hidden");
     root.setAttribute(OPEN_ATTRIBUTE, "true");
     timer = timers.setTimeout(onTimeout, timeoutMs);
-
-    return root;
   }
 
   function onTimeout() {
@@ -244,6 +282,8 @@ export function createBanner(options) {
 
     root = null;
     text = null;
+    lead = null;
+    separator = null;
     path = null;
     chapter = null;
     close = null;
@@ -257,6 +297,7 @@ export function createBanner(options) {
 
   return {
     show: show,
+    showMessage: showMessage,
     hide: hide,
     dispose: dispose,
     /** The banner element, so the reader can leave it in place while it swaps documents. */

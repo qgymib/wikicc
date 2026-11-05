@@ -8,7 +8,9 @@
 use std::path::{Path, PathBuf};
 
 use wikicc::options::OutputFormat;
-use wikicc::render::{RenderedSite, render_site};
+use wikicc::render::{
+    PAGES_DIR_NAME, RenderedOutput, SEARCH_FILE_NAME, chunk_file_name, render_pages, render_site,
+};
 use wikicc::scan::scan;
 use wikicc::site::{SiteBuild, build_site};
 use wikicc::writers::{self, ASSETS_DIR_NAME, HTML_FILE_NAME, WriteReport};
@@ -43,14 +45,24 @@ fn fixture_build() -> SiteBuild {
     build_site("Fixture", &root, &report.docs)
 }
 
-fn render(build: &SiteBuild) -> RenderedSite {
-    render_site(&build.bundle).expect("the shell renders")
+fn render(build: &SiteBuild) -> RenderedOutput {
+    RenderedOutput::Page(render_site(&build.bundle).expect("the shell renders"))
+}
+
+/// Render the fixture the way `format` consumes it.
+fn render_for(format: OutputFormat, build: &SiteBuild) -> RenderedOutput {
+    match format {
+        OutputFormat::Pages => {
+            RenderedOutput::Pages(render_pages(&build.bundle).expect("the pages output renders"))
+        }
+        _ => render(build),
+    }
 }
 
 /// Write the fixture into `out` in `format`.
 fn write_fixture_in(format: OutputFormat, out: &Path) -> WriteReport {
     let build = fixture_build();
-    let rendered = render(&build);
+    let rendered = render_for(format, &build);
 
     writers::write_site(format, &build, &rendered, out, false).expect("write")
 }
@@ -451,4 +463,187 @@ fn html_dir_builds_are_byte_identical() {
     write_fixture_in(OutputFormat::HtmlDir, second.path());
 
     assert_eq!(tree(first.path()), tree(second.path()));
+}
+
+/// Reference prefixes a `pages` chunk may contain.
+///
+/// Identical to the `html-dir` list: the chunks address assets as sibling
+/// files and everything else stays a route or an author URL.
+const PAGES_REFERENCE_PREFIXES: [&str; 7] = [
+    "assets/", "#", "http://", "https://", "mailto:", "tel:", "//",
+];
+
+#[test]
+fn pages_writes_the_shell_chunks_corpus_and_assets() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let report = write_fixture_in(OutputFormat::Pages, dir.path());
+
+    assert_eq!(
+        entry_names(dir.path()),
+        [
+            ASSETS_DIR_NAME,
+            HTML_FILE_NAME,
+            PAGES_DIR_NAME,
+            SEARCH_FILE_NAME
+        ]
+    );
+    assert_eq!(report.assets, 1);
+    assert_eq!(
+        report.files,
+        2 + report.assets + 3,
+        "the shell, the corpus, three chunks and one asset"
+    );
+    assert_eq!(
+        report.bytes,
+        tree(dir.path())
+            .iter()
+            .map(|(_, bytes)| bytes.len() as u64)
+            .sum::<u64>(),
+        "the report counts exactly the bytes on disk"
+    );
+
+    // Chunks mirror the source tree, one file per document.
+    assert_eq!(
+        entry_names(&dir.path().join(PAGES_DIR_NAME)),
+        ["README.md.json", "guide"]
+    );
+    assert_eq!(
+        entry_names(&dir.path().join(PAGES_DIR_NAME).join("guide")),
+        ["intro.md.json", "setup.md.json"]
+    );
+}
+
+#[test]
+fn pages_chunks_parse_and_reference_on_disk_assets() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write_fixture_in(OutputFormat::Pages, dir.path());
+    let build = fixture_build();
+
+    for doc in &build.bundle.docs {
+        let name = chunk_file_name(&doc.id);
+        let raw = std::fs::read_to_string(dir.path().join(&name)).expect("chunk is readable");
+        let value: serde_json::Value = serde_json::from_str(&raw).expect("chunk JSON");
+
+        assert_eq!(value["id"], doc.id.as_str());
+        assert_eq!(value["title"], doc.title.as_str());
+        assert!(value["toc"].is_array(), "the chunk carries the outline");
+        assert!(value["blocks"].is_array(), "the chunk carries the chapters");
+        assert!(
+            value["text"].is_string(),
+            "the chunk carries the search text"
+        );
+        assert!(
+            !raw.contains("wikicc-asset:"),
+            "every placeholder must be replaced in {name}"
+        );
+
+        for attribute in ["src", "href"] {
+            for target in attribute_values(value["html"].as_str().expect("chunk html"), attribute) {
+                assert!(
+                    PAGES_REFERENCE_PREFIXES
+                        .iter()
+                        .any(|prefix| target.starts_with(prefix)),
+                    "{attribute}=\"{target}\" in {name} is not a sibling asset, a route or an author URL"
+                );
+                if target.starts_with("assets/") {
+                    assert!(
+                        dir.path().join(&target).is_file(),
+                        "{attribute}=\"{target}\" does not exist in the output directory"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn pages_manifest_names_every_document_with_its_chunk_hash() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write_fixture_in(OutputFormat::Pages, dir.path());
+    let build = fixture_build();
+    let rendered = render_pages(&build.bundle).expect("the pages output renders");
+    let value: serde_json::Value =
+        serde_json::from_str(payload_of(&read_page(dir.path()))).expect("manifest JSON");
+
+    assert_eq!(value["mode"], "pages");
+    assert_eq!(value["title"], "Fixture");
+    assert_eq!(value["docs"].as_array().map(Vec::len), Some(3));
+    assert_eq!(value["edges"].as_array().map(Vec::len), Some(3));
+    assert_eq!(value["stats"]["documents"], 3);
+
+    for (doc, manifest) in build
+        .bundle
+        .docs
+        .iter()
+        .zip(value["docs"].as_array().expect("docs"))
+    {
+        assert_eq!(manifest["id"], doc.id.as_str());
+        assert_eq!(manifest["title"], doc.title.as_str());
+
+        // The hash addresses the chunk as rendered — placeholders still
+        // unexpanded — which is what the reader appends as its `?v=` cache
+        // buster: any change to the document or its assets changes it.
+        let chunk = rendered
+            .chunks
+            .iter()
+            .find(|chunk| chunk.name == chunk_file_name(&doc.id))
+            .expect("the chunk of the document");
+        assert_eq!(manifest["hash"].as_str(), Some(chunk.hash.as_str()));
+    }
+}
+
+#[test]
+fn pages_search_corpus_covers_every_document() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write_fixture_in(OutputFormat::Pages, dir.path());
+    let build = fixture_build();
+
+    let raw = std::fs::read_to_string(dir.path().join(SEARCH_FILE_NAME)).expect("corpus");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("corpus JSON");
+    let docs = value["docs"].as_array().expect("corpus docs");
+
+    assert_eq!(docs.len(), build.bundle.docs.len());
+    for (record, doc) in docs.iter().zip(&build.bundle.docs) {
+        assert_eq!(record["id"], doc.id.as_str());
+        assert_eq!(record["title"], doc.title.as_str());
+        assert!(
+            record["headings"].is_string(),
+            "the corpus pre-flattens the outline"
+        );
+        assert_eq!(record["text"], doc.text.as_str());
+    }
+}
+
+#[test]
+fn pages_builds_are_byte_identical() {
+    let first = tempfile::tempdir().expect("temp dir");
+    let second = tempfile::tempdir().expect("temp dir");
+
+    write_fixture_in(OutputFormat::Pages, first.path());
+    write_fixture_in(OutputFormat::Pages, second.path());
+
+    assert_eq!(tree(first.path()), tree(second.path()));
+}
+
+#[test]
+fn pages_rebuild_leaves_no_orphan_files() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write_fixture_in(OutputFormat::Pages, dir.path());
+    let first = tree(dir.path());
+
+    // A previous build of a different site: an extra chunk, an extra root file.
+    std::fs::write(
+        dir.path().join(PAGES_DIR_NAME).join("stale.md.json"),
+        b"old",
+    )
+    .expect("write stale chunk");
+    std::fs::write(dir.path().join("stale.txt"), "old").expect("write stale file");
+
+    write_fixture_in(OutputFormat::Pages, dir.path());
+
+    assert_eq!(
+        tree(dir.path()),
+        first,
+        "rebuilding must leave exactly the files of the new build"
+    );
 }

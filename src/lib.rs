@@ -12,10 +12,12 @@
 //! final addressing form and registers the referenced local resources by
 //! content hash, the assembly stage that folds all of it into one
 //! deterministic, serialisable [`SiteBundle`], the render stage that turns that
-//! bundle into the self-contained reader page (template, styles, scripts and
-//! payload), the two writers that address the referenced resources in their
-//! own way (one page with `data:` URIs, one page next to an `assets/` folder),
-//! and [`pipeline`], which runs the stages in order and owns the summary.
+//! bundle into the reader page (template, styles, scripts and payload) — or,
+//! for the pages format, into the shell page plus one JSON chunk per
+//! document and the search corpus file — the three writers that address the
+//! referenced resources in their own way (one page with `data:` URIs, one page
+//! next to an `assets/` folder, one shell next to lazily fetched chunks), and
+//! [`pipeline`], which runs the stages in order and owns the summary.
 
 pub mod assets;
 pub mod cli;
@@ -39,12 +41,16 @@ pub use markdown::{
 pub use options::{Options, OutputFormat};
 pub use pipeline::BuildOutcome;
 pub use render::{
-    APP_BUNDLE, KATEX_CSS, RenderedSite, SHELL_CSS, SHELL_TEMPLATE, escape_json_for_script,
-    render_site, shell_css, shell_js,
+    APP_BUNDLE, KATEX_CSS, PAGES_DIR_NAME, RenderedOutput, RenderedPages, RenderedSite,
+    SEARCH_FILE_NAME, SHELL_CSS, SHELL_TEMPLATE, chunk_file_name, encode_chunk_id,
+    escape_json_for_script, render_pages, render_site, shell_css, shell_js,
 };
 pub use scan::{Diagnostic, ScanReport, Severity, SourceDoc};
-pub use site::{DocModel, Edge, SiteBuild, SiteBundle, Stats, build_edges, build_site};
+pub use site::{
+    DocModel, Edge, SiteBuild, SiteBundle, Stats, build_edges, build_site, flatten_headings,
+};
 pub use writers::html_dir::HtmlDirWriter;
+pub use writers::pages::PagesWriter;
 pub use writers::single_html::{SingleHtmlWriter, data_uri};
 pub use writers::{
     ASSETS_DIR_NAME, BUILD_MARKERS, HTML_FILE_NAME, SiteWriter, WriteReport, asset_file_name,

@@ -1,11 +1,17 @@
 /**
  * Reader controller: payload, theme, hash routing, search and layout controls.
  *
- * The payload is embedded by the build as `<script type="application/json">`, so
- * no request is ever made and the page works from `file://`. Document HTML is
- * inserted with `innerHTML` because the Markdown source is trusted build input
- * (raw HTML passthrough is documented behaviour, see `docs/design.md`); every
- * other string goes through `textContent`.
+ * The payload is embedded by the build as `<script type="application/json">`.
+ * In the shell formats it carries every document, so reading is a lookup and
+ * no request is ever made. In the pages format it carries only the
+ * manifest, and the documents arrive from `pages/` when the reader navigates
+ * to them (see `doc-store.js`) — which is why a document render is a promise
+ * the controller guards against a newer navigation, and why the whole-site
+ * search asks for its corpus the first time the reader widens the scope.
+ *
+ * Document HTML is inserted with `innerHTML` because the Markdown source is
+ * trusted build input (raw HTML passthrough is documented behaviour, see
+ * `docs/design.md`); every other string goes through `textContent`.
  *
  * `main.js` is the bundle entry point and calls `start()`; this module only
  * exports the controller so the same functions stay testable in isolation.
@@ -15,6 +21,7 @@ import * as Links from "./links.js";
 import * as AssetLinks from "./asset-links.js";
 import * as Search from "./search.js";
 import * as SearchView from "./search-view.js";
+import * as DocStore from "./doc-store.js";
 import * as DocList from "./doc-list.js";
 import * as Toc from "./toc.js";
 import * as DocBody from "./doc-body.js";
@@ -31,6 +38,9 @@ var THEME_KEY = "wikicc.theme";
 /** Class of the banner shown when a chapter anchor does not exist. */
 export var ALERT_CLASS = Banner.BANNER_CLASS;
 
+/** Class of the paragraph shown while a document is being fetched. */
+export var LOADING_CLASS = "doc-loading";
+
 /** Read and parse the embedded payload. */
 function readPayload() {
   var element = document.getElementById("wikicc-payload");
@@ -38,6 +48,15 @@ function readPayload() {
     throw new Error("wikicc payload element is missing");
   }
   return JSON.parse(element.textContent);
+}
+
+/** Whether the page was opened from a `file://` address. */
+function openedFromFile() {
+  return (
+    typeof globalThis.location === "object" &&
+    globalThis.location !== null &&
+    globalThis.location.protocol === "file:"
+  );
 }
 
 /** Theme the operating system asks for. */
@@ -121,11 +140,7 @@ export function start() {
   var ids = docs.map(function (doc) {
     return doc.id;
   });
-  var byId = new Map(
-    docs.map(function (doc) {
-      return [doc.id, doc];
-    }),
-  );
+  var store = DocStore.createDocStore(bundle);
 
   var content = document.getElementById("doc-content");
   var article = document.getElementById("doc-article");
@@ -138,7 +153,39 @@ export function start() {
     document.querySelectorAll(".inspector-tab"),
   );
 
-  var index = Search.createSearch(docs);
+  /**
+   * The index over the whole site, and the records its answers are cut from.
+   *
+   * The embedded formats build both once, at startup, from the payload. The
+   * pages format builds neither: its corpus is a file the reader fetches
+   * the first time the scope widens past the document in view, and while it
+   * travels the global scope answers "loading" instead of pretending there is
+   * nothing to find.
+   */
+  var index = store.isLazy() ? null : Search.createSearch(docs);
+  var corpusDocs = store.isLazy() ? null : docs;
+  var globalIndexPromise = null;
+
+  /** The whole-site index, fetching the corpus first when it is separate. */
+  function ensureGlobalIndex() {
+    if (index) {
+      return Promise.resolve(index);
+    }
+    if (globalIndexPromise) {
+      return globalIndexPromise;
+    }
+
+    globalIndexPromise = store.corpus().then(function (records) {
+      if (records && records.length) {
+        corpusDocs = records;
+        index = Search.createSearch(records);
+      }
+      return index;
+    });
+
+    return globalIndexPromise;
+  }
+
   var currentId = null;
   var firstRender = true;
 
@@ -155,7 +202,7 @@ export function start() {
 
   var preview = PreviewView.createPreviewView({
     content: content,
-    byId: byId,
+    documents: store,
     theme: currentTheme,
     onNavigate: navigate,
     // Only a click reports a broken reference this way. Hovering one opens the
@@ -225,12 +272,32 @@ export function start() {
     // button's own presses alone so the click below decides which.
     toggle: searchButton,
     // The preview shows the whole document behind the selected result, so the
-    // view asks for it by id instead of the list carrying every body along.
-    documentOf: function (id) {
-      return byId.get(id) || null;
-    },
+    // view asks the store for it instead of the list carrying every body
+    // along; a document that has to be fetched first is rendered when it
+    // lands.
+    documents: store,
     theme: currentTheme,
     onQuery: function (query, mode) {
+      var sequence = ++querySequence;
+      if (mode === SearchView.GLOBAL_MODE && !index) {
+        // The corpus is a separate file in the pages format and this is
+        // the first global search: name the wait, then answer when it lands.
+        searchView.setLoading();
+        ensureGlobalIndex().then(function (loaded) {
+          if (sequence !== querySequence) {
+            return; // A newer query owns the list now.
+          }
+          if (!loaded) {
+            // The corpus never arrived: an empty answer is honest, and a
+            // loading note forever is not.
+            searchView.setResults([], 0);
+            return;
+          }
+          searchView.setResults(searchResults(query, mode), 0);
+        });
+        return;
+      }
+
       searchView.setResults(searchResults(query, mode), 0);
     },
     onSelect: function (id, anchor) {
@@ -288,7 +355,7 @@ export function start() {
    * reader stays where they are, exactly as a navigation to nothing would.
    */
   function scrollToAnchorOnly(route) {
-    var doc = route && route.id ? byId.get(route.id) : null;
+    var doc = route && route.id ? store.peek(route.id) : null;
     if (!doc) {
       return;
     }
@@ -358,6 +425,15 @@ export function start() {
     host: document.getElementById("doc-alert"),
   });
 
+  // The pages format fetches its documents and its search corpus, and a
+  // browser refuses every one of those requests from a `file://` page. That is
+  // said once, where the reader is looking, instead of once per navigation.
+  if (store.isLazy() && openedFromFile()) {
+    banner.showMessage(
+      "This site is built in the pages format and needs to be served over HTTP(S); opening it from a file:// page cannot load its documents.",
+    );
+  }
+
   /**
    * Say that the document of `message` has no chapter `message.anchor`.
    *
@@ -410,6 +486,51 @@ export function start() {
     }
   }
 
+  /**
+   * Empty the content column and put the banner and the article back.
+   *
+   * The banner slot sits beside the article for the whole session, so a
+   * document change can neither remove it nor rebuild it; whatever a document
+   * render, a loading note or a failure message writes, it writes into the
+   * article only.
+   */
+  function mountArticle() {
+    content.textContent = "";
+    content.appendChild(banner.element());
+    content.appendChild(article);
+    article.textContent = "";
+  }
+
+  /** Name the wait where the document will appear. */
+  function renderLoading(id) {
+    var loading = document.createElement("p");
+    loading.className = LOADING_CLASS;
+    loading.textContent = "Loading " + id + " \u2026";
+
+    mountArticle();
+    article.appendChild(loading);
+    // The previous document's outline would be a lie about what is open.
+    toc.render([], id);
+    document.title = bundle.title;
+  }
+
+  /** Say that the document never arrived, and why that can happen. */
+  function renderLoadError(route) {
+    var failed = document.createElement("p");
+    failed.className = "doc-empty";
+    failed.textContent = "This document could not be loaded.";
+
+    mountArticle();
+    article.appendChild(failed);
+    toc.render([], route.id);
+    document.title = bundle.title;
+    banner.showMessage(
+      "Could not load " +
+        route.id +
+        " \u2014 the file is missing, or the site is not being served over HTTP.",
+    );
+  }
+
   function renderDocument(doc) {
     var path = document.createElement("p");
     path.className = "doc-path";
@@ -426,13 +547,7 @@ export function start() {
       collapsible: true,
     });
 
-    // Only the article is replaced: the banner slot sits beside it in `content`
-    // for the whole session, so a document change can neither remove it nor
-    // rebuild it, and the article's width never depends on whether it is shown.
-    content.textContent = "";
-    content.appendChild(banner.element());
-    content.appendChild(article);
-    article.textContent = "";
+    mountArticle();
     article.appendChild(path);
     article.appendChild(body);
 
@@ -453,7 +568,7 @@ export function start() {
 
   /** Re-render the current document's diagrams for the theme now in effect. */
   function refreshDiagrams() {
-    var doc = currentId ? byId.get(currentId) : null;
+    var doc = currentId ? store.peek(currentId) : null;
     if (!doc || !Diagrams.hasDiagramSource(doc.html)) {
       return;
     }
@@ -470,29 +585,16 @@ export function start() {
     DiagramView.renderDiagrams(body, currentTheme());
   }
 
-  function render() {
-    var route = Router.resolveRoute(globalThis.location.hash, ids);
-
-    // A message queued by a click is only valid for the render it triggered:
-    // take it now, so a later navigation can never replay it.
-    var queued = pendingMissing;
-    pendingMissing = null;
-
-    if (!route.id) {
-      banner.hide();
-      article.textContent = "";
-      var empty = document.createElement("p");
-      empty.className = "doc-empty";
-      empty.textContent = "This site has no documents.";
-      article.appendChild(empty);
-      docList.render(null, null);
-      return;
-    }
-
-    var doc = byId.get(route.id);
-    var changed = route.id !== currentId;
-    currentId = route.id;
-
+  /**
+   * Place the document `route` names, already fetched, and walk to its chapter.
+   *
+   * Everything a navigation ends with happens here: the body, the outline, the
+   * title, the anchor scroll, the address canonicalisation and the focus. The
+   * parts that belong to a document change are guarded by `changed`, so a
+   * re-anchor of the document on screen keeps its scroll position, its table
+   * sorts and its fold states.
+   */
+  function place(route, doc, wanted, changed) {
     if (changed) {
       renderDocument(doc);
       toc.render(doc.toc, doc.id);
@@ -501,20 +603,10 @@ export function start() {
         : bundle.title;
     }
 
-    docList.render(null, route.id);
-    graph.setActive(route.id);
-
-    // A banner explains the *previous* navigation, so it never outlives it.
-    banner.hide();
-
     // A block reference whose chapter the document does not have still opens
     // the document, at the top, and says what was asked for. A click on such a
     // reference leaves no anchor in the route — the build cannot address a
     // chapter that has no element — so the queued message stands in for it.
-    var wanted = route.anchor
-      ? { docId: doc.id, anchor: route.anchor }
-      : queued;
-
     var found = findAnchor(doc, route.anchor);
     if (found) {
       scrollToAnchor(found);
@@ -548,6 +640,66 @@ export function start() {
     firstRender = false;
   }
 
+  function render() {
+    var route = Router.resolveRoute(globalThis.location.hash, ids);
+
+    // A message queued by a click is only valid for the render it triggered:
+    // take it now, so a later navigation can never replay it.
+    var queued = pendingMissing;
+    pendingMissing = null;
+
+    if (!route.id) {
+      banner.hide();
+      article.textContent = "";
+      var empty = document.createElement("p");
+      empty.className = "doc-empty";
+      empty.textContent = "This site has no documents.";
+      article.appendChild(empty);
+      docList.render(null, null);
+      return;
+    }
+
+    docList.render(null, route.id);
+    graph.setActive(route.id);
+
+    // A banner explains the *previous* navigation, so it never outlives it.
+    banner.hide();
+
+    var wanted = route.anchor
+      ? { docId: route.id, anchor: route.anchor }
+      : queued;
+    var changed = route.id !== currentId;
+    currentId = route.id;
+
+    // The document on hand is placed at once — every navigation in the
+    // embedded formats, and any revisit in the split one. A document that has
+    // to travel first shows the wait, and the answer is dropped when a newer
+    // navigation has taken the article over by the time it lands.
+    var doc = store.peek(route.id);
+    if (doc) {
+      place(route, doc, wanted, changed);
+      return;
+    }
+
+    if (changed) {
+      renderLoading(route.id);
+    }
+
+    store.get(route.id).then(function (loaded) {
+      // A navigation that happened while the chunk was in flight owns the
+      // article now; this one is out of date.
+      if (currentId !== route.id) {
+        return;
+      }
+      if (!loaded) {
+        renderLoadError(route);
+        return;
+      }
+
+      place(route, loaded, wanted, changed);
+    });
+  }
+
   /* ---------- theme ---------- */
 
   applyTheme(storedTheme(), themeToggle);
@@ -567,31 +719,75 @@ export function start() {
   /* ---------- search ---------- */
 
   /**
+   * A search over one document, and the index built for it.
+   *
+   * The local scope never needs the whole site: the document in view carries
+   * its own text, so its index is rebuilt only when the reader turns the page.
+   * In the pages format this is what makes the default scope cost
+   * nothing — the document is already in hand, having been fetched to be read.
+   */
+  var localIndex = null;
+  var localIndexId = null;
+
+  function localSearch() {
+    var doc = currentId ? store.peek(currentId) : null;
+    if (!doc || typeof doc.text !== "string") {
+      return null;
+    }
+    if (localIndexId !== doc.id || !localIndex) {
+      localIndex = Search.createSearch([doc]);
+      localIndexId = doc.id;
+    }
+
+    return localIndex;
+  }
+
+  /**
+   * One past the newest query the panel asked for.
+   *
+   * A corpus that travels over the network answers late, and a query typed
+   * while it was in flight must not have its list overwritten by the older
+   * one that triggered the fetch.
+   */
+  var querySequence = 0;
+
+  /**
    * The matches `query` finds in the scope `mode` names, one per place.
    *
    * The ranking is the engine's: `search` decides which documents and in what
    * order, and `occurrences` only enumerates the places inside them, so the
    * list a reader sees is the one the index scored — the hits of one document
    * together, each with the passage it was found in. The local scope is the
-   * same query narrowed to the document being read, which leaves an empty
-   * list when no document is open or it holds no hit.
+   * same query over the document being read, which leaves an empty list when
+   * no document is open or it holds no hit. The global scope is `null` while
+   * the corpus of the pages format is still on its way, which the caller
+   * shows as a wait rather than as an empty answer.
    */
   function searchResults(query, mode) {
-    var ids = Search.search(index, query);
-    if (!ids) {
+    if (mode === SearchView.GLOBAL_MODE) {
+      if (!index) {
+        return null;
+      }
+
+      var everywhere = Search.search(index, query);
+      if (!everywhere) {
+        return [];
+      }
+
+      return Search.occurrences(corpusDocs || docs, everywhere, query);
+    }
+
+    var local = localSearch();
+    if (!local) {
       return [];
     }
 
-    if (mode === SearchView.GLOBAL_MODE) {
-      return Search.occurrences(docs, ids, query);
+    var here = Search.search(local, query);
+    if (!here) {
+      return [];
     }
 
-    var here = currentId
-      ? ids.filter(function (id) {
-          return id === currentId;
-        })
-      : [];
-    return Search.occurrences(docs, here, query);
+    return Search.occurrences([store.peek(currentId)], here, query);
   }
 
   /* ---------- layout controls ---------- */

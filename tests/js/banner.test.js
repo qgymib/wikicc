@@ -354,3 +354,33 @@ test("a banner survives a missing anchor by falling back to the document", () =>
   assert.equal(codes[0].textContent, "a.md");
   assert.equal(codes[1].textContent, "", "an empty chapter rather than a null");
 });
+
+test("a plain message says what the chapter message cannot", () => {
+  const { banner, container } = setup();
+  const root = container.children[0];
+
+  banner.showMessage("Could not load <b>a.md</b> \u2014 serve over HTTP.");
+
+  assert.equal(root.hidden, false);
+  assert.equal(banner.isOpen(), true);
+  const text = messageOf(root);
+  assert.match(text, /Could not load <b>a\.md<\/b>/, "the message stays text");
+  assert.doesNotMatch(text, /Chapter not found/);
+  const codes = codesOf(root);
+  assert.equal(codes[0].textContent, "", "no document is named");
+  assert.equal(codes[1].textContent, "", "no chapter is named");
+});
+
+test("a chapter message after a plain one restores the usual shape", () => {
+  const { banner, container } = setup();
+  const root = container.children[0];
+
+  banner.showMessage("first");
+  banner.show({ docId: "b.md", anchor: "y" });
+
+  const text = messageOf(root);
+  assert.match(text, /Chapter not found/);
+  assert.match(text, /b\.md/);
+  assert.match(text, /y/);
+  assert.doesNotMatch(text, /first/);
+});

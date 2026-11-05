@@ -22,17 +22,22 @@ pub enum OutputFormat {
     SingleHtml,
     /// `index.html` plus a deduplicated `assets/` directory.
     HtmlDir,
+    /// A shell `index.html` plus one lazily fetched JSON chunk per document,
+    /// a search corpus file and the `assets/` directory; a static site whose
+    /// natural home is GitHub Pages, served over HTTP.
+    Pages,
 }
 
 impl OutputFormat {
     /// Every accepted format, in CLI order.
-    pub const ALL: [OutputFormat; 2] = [Self::SingleHtml, Self::HtmlDir];
+    pub const ALL: [OutputFormat; 3] = [Self::SingleHtml, Self::HtmlDir, Self::Pages];
 
     /// CLI spelling of the format.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::SingleHtml => "single-html",
             Self::HtmlDir => "html-dir",
+            Self::Pages => "pages",
         }
     }
 }
@@ -52,7 +57,7 @@ impl FromStr for OutputFormat {
             .find(|format| format.as_str() == value)
             .ok_or_else(|| {
                 Error::InvalidInput(format!(
-                    "invalid format '{value}', expected one of: single-html, html-dir"
+                    "invalid format '{value}', expected one of: single-html, html-dir, pages"
                 ))
             })
     }
@@ -274,6 +279,10 @@ mod tests {
             "html-dir".parse::<OutputFormat>().unwrap(),
             OutputFormat::HtmlDir
         );
+        assert_eq!(
+            "pages".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Pages
+        );
     }
 
     #[test]
@@ -282,7 +291,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "invalid format 'pdf', expected one of: single-html, html-dir"
+            "invalid format 'pdf', expected one of: single-html, html-dir, pages"
         );
         assert_eq!(error.exit_code(), crate::error::EXIT_FAILURE);
     }
@@ -290,10 +299,16 @@ mod tests {
     #[test]
     fn a_removed_format_is_an_unknown_format() {
         let error = "mhtml".parse::<OutputFormat>().unwrap_err();
+        let retired_multi = "multi-html".parse::<OutputFormat>().unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "invalid format 'mhtml', expected one of: single-html, html-dir"
+            "invalid format 'mhtml', expected one of: single-html, html-dir, pages"
+        );
+        assert_eq!(
+            retired_multi.to_string(),
+            "invalid format 'multi-html', expected one of: single-html, html-dir, pages",
+            "the pre-rename spelling is an unknown format, not an alias"
         );
     }
 

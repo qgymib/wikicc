@@ -46,23 +46,51 @@ their chapter outline.
 
 | Format | Artifact | Assets |
 | --- | --- | --- |
-| `single-html` (default) | one `index.html` | inlined into the page |
-| `html-dir` | `index.html` + `assets/` | one file per unique resource |
+| `single-html` (default; one self-contained file) | one `index.html` | inlined into the page |
+| `html-dir` (page plus an assets folder) | `index.html` + `assets/` | one file per unique resource |
+| `pages` (static site for GitHub Pages) | `index.html` + `pages/` + `search.json` + `assets/` | one file per unique resource |
 
-Both formats carry the same page. Assets are content-addressed, so identical
+All three carry the same reader. Assets are content-addressed, so identical
 bytes are stored once no matter how many documents reference them.
 
 - **`single-html`** opens by double click, offline, from any directory, with no
   sibling files.
 - **`html-dir`** is smallest and can be copied, zipped or served statically as it
   is.
+- **`pages`** is a static site for an HTTP host such as GitHub Pages: the
+  page carries the reader and a document manifest only, and each document's
+  content is one JSON file under `pages/` that the reader fetches when it
+  navigates there. The search corpus is a separate `search.json`, fetched the
+  first time the reader searches the whole site. Nothing but the shell and the
+  manifest is downloaded up front, so first paint does not grow with the size
+  of the folder. This format needs to be served over HTTP(S) — a browser
+  refuses the fetches from a `file://` page, and the reader says so when it
+  finds itself there.
+
+#### Publishing to GitHub Pages
+
+`pages` output deploys as it is: hash routes need no server
+configuration, the file names are stable across builds (a cached page never
+points at a file a redeploy removed), and each fetch carries the content hash
+of the chunk it wants, so a browser that still holds a cached page refreshes
+its documents after a redeploy. The artifact works at the root of a domain and
+under a subpath alike:
+
+```sh
+wikicc path/to/docs --format pages -o site
+git -C path/to/docs add site && git -C path/to/docs commit -m "Publish"
+git -C path/to/docs subtree push --prefix site origin gh-pages
+```
 
 ### Offline and reproducibility
 
-- Nothing is fetched at runtime: no CDN, no web font, no remote stylesheet.
+- The shell formats fetch nothing at runtime: no CDN, no web font, no remote
+  stylesheet. `pages` fetches only the files the build wrote next to the
+  page — never a third-party origin.
 - The build itself never touches the network; the only network step is the
   one-time `npm ci` that installs the pinned front-end dependencies.
-- Two builds of the same input produce byte-identical artifacts.
+- Two builds of the same input produce byte-identical artifacts, in every
+  format.
 
 ## Usage
 
@@ -106,7 +134,7 @@ statically, so it does not need the VC++ redistributable.
 wikicc <INPUT_DIR> [OPTIONS]
 
   -o, --out <DIR>        Output directory [default: <INPUT_DIR>/dist]
-      --format <FMT>     single-html | html-dir [default: single-html]
+      --format <FMT>     single-html | html-dir | pages [default: single-html]
       --title <TITLE>    Site title [default: input folder name]
       --strict           Treat warnings (broken links, missing assets) as errors
       --force            Overwrite the output directory without confirmation
@@ -119,6 +147,7 @@ wikicc <INPUT_DIR> [OPTIONS]
 wikicc path/to/docs                       # writes path/to/docs/dist/index.html
 wikicc path/to/docs -o build --title "Handbook"
 wikicc path/to/docs --format html-dir
+wikicc path/to/docs --format pages        # a static site for GitHub Pages
 wikicc path/to/docs --strict              # broken links fail the build
 ```
 

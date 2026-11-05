@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 
 use wikicc::options::OutputFormat;
+use wikicc::render::{PAGES_DIR_NAME, SEARCH_FILE_NAME};
 use wikicc::scan::scan;
 use wikicc::site::build_site;
 use wikicc::writers::{ASSETS_DIR_NAME, HTML_FILE_NAME};
@@ -1587,6 +1588,71 @@ fn every_format_writes_its_documented_artifacts() {
     assert!(
         page.contains(asset),
         "the page must address {asset} by its relative path"
+    );
+
+    let multi_format = tempfile::tempdir().expect("temp dir");
+    let output = build_with(&fixture_root(), multi_format.path(), &["--format", "pages"]);
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let files = tree(multi_format.path());
+    let names: Vec<&str> = files.iter().map(|(path, _)| path.as_str()).collect();
+
+    assert!(names.contains(&HTML_FILE_NAME), "paths: {names:?}");
+    assert!(names.contains(&SEARCH_FILE_NAME), "paths: {names:?}");
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.starts_with(&format!("{PAGES_DIR_NAME}/")))
+            .count(),
+        3,
+        "one chunk per document: {names:?}"
+    );
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.starts_with(&format!("{ASSETS_DIR_NAME}/")))
+            .count(),
+        1,
+        "one deduplicated asset: {names:?}"
+    );
+
+    let page = files
+        .iter()
+        .find(|(path, _)| path == HTML_FILE_NAME)
+        .map(|(_, bytes)| String::from_utf8(bytes.clone()).expect("the page is utf-8"))
+        .expect("the page exists");
+    assert!(
+        page.contains(r#""mode":"pages""#),
+        "the shell payload names the pages mode"
+    );
+    assert!(
+        !page.contains("wikicc-asset:"),
+        "the manifest carries no asset placeholder"
+    );
+
+    let corpus = files
+        .iter()
+        .find(|(path, _)| path == SEARCH_FILE_NAME)
+        .map(|(_, bytes)| String::from_utf8(bytes.clone()).expect("the corpus is utf-8"))
+        .expect("the corpus exists");
+    let value: serde_json::Value = serde_json::from_str(&corpus).expect("corpus JSON");
+    assert_eq!(
+        value["docs"].as_array().map(Vec::len),
+        Some(3),
+        "the corpus covers every document"
+    );
+
+    let chunk = files
+        .iter()
+        .find(|(path, _)| path == &format!("{PAGES_DIR_NAME}/guide/intro.md.json"))
+        .map(|(_, bytes)| String::from_utf8(bytes.clone()).expect("the chunk is utf-8"))
+        .expect("the chunk exists");
+    assert!(
+        !chunk.contains("wikicc-asset:"),
+        "every chunk placeholder must be replaced"
+    );
+    assert!(
+        chunk.contains(r#""blocks""#) && chunk.contains(r#""text""#),
+        "the chunk carries the chapters and the search text"
     );
 }
 

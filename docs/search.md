@@ -24,6 +24,13 @@ the button switches to **Global** scope, which reads every document the site
 holds; the choice lasts as long as the panel does. Switching the scope runs
 the query again at once.
 
+In the pages format the whole-site text lives in one `search.json` next
+to the page, and the first global search fetches it — once; after that the
+answers are as instant as they are in the other formats. Searching the
+document you are reading never waits: that text arrived with the document
+itself. The first global search shows *Loading…* where the results will
+appear, and the answer replaces it when the corpus lands.
+
 ## Reading the results
 
 The list shows **one row per place** the query is found, not one row per

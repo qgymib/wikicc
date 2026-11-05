@@ -18,6 +18,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+/**
+ * The real timer, captured before any session replaces `globalThis.setTimeout`
+ * with its own: settling a fetched document needs a genuine macrotask.
+ */
+const realSetTimeout = globalThis.setTimeout;
+
 /** Shell ids `start()` looks up, in the order the template carries them. */
 const SHELL_IDS = [
   "doc-content",
@@ -240,13 +246,84 @@ function payload() {
 }
 
 /**
+ * The manifest the pages format embeds: one reference per document, no
+ * bodies — the documents themselves travel in `pages/` files.
+ */
+function lazyManifest() {
+  return {
+    title: "Fixture",
+    mode: "pages",
+    docs: [
+      { id: "index.md", title: "Index", hash: "h0" },
+      { id: "guide/intro.md", title: "Intro", hash: "h1" },
+    ],
+    edges: [],
+    stats: { documents: 2, assets: 0 },
+  };
+}
+
+/** The chunks the build wrote next to the shell, keyed by their URLs. */
+function lazyChunks() {
+  return {
+    "pages/index.md.json?v=h0": {
+      id: "index.md",
+      title: "Index",
+      html: "<p>root</p>",
+      toc: [],
+      blocks: [],
+      text: "root",
+    },
+    "pages/guide/intro.md.json?v=h1": {
+      id: "guide/intro.md",
+      title: "Intro",
+      html: '<h2 id="getting-started">Getting Started</h2><p>body</p>',
+      toc: [
+        {
+          id: "getting-started",
+          text: "Getting Started",
+          level: 2,
+          children: [],
+        },
+      ],
+      blocks: [
+        {
+          id: "getting-started",
+          level: 2,
+          parent: null,
+          html: "<p>body</p>",
+          subtree: [0],
+        },
+      ],
+      text: "intro",
+    },
+  };
+}
+
+/** The search corpus the build wrote next to the shell. */
+function lazyCorpus() {
+  return {
+    docs: [
+      { id: "index.md", title: "Index", headings: "", text: "root" },
+      {
+        id: "guide/intro.md",
+        title: "Intro",
+        headings: "Getting Started",
+        text: "intro",
+      },
+    ],
+  };
+}
+
+/**
  * Install a fake page and run `start()`.
  *
- * `options.hash` is where the reader arrives; the object handed to `body`
- * exposes the pieces a test asserts on: the headings the session can find by
- * id, the address bar, and the frame queue.
+ * `options.hash` is where the reader arrives; `options.lazy` swaps the
+ * embedded payload for the pages manifest and serves its chunks through
+ * `options.fetchImpl` (or, with `options.broken`, serves nothing). The object
+ * handed to `body` exposes the pieces a test asserts on: the headings the
+ * session can find by id, the address bar, and the frame queue.
  */
-function withSession(options, body) {
+async function withSession(options, body) {
   const previous = {
     document: globalThis.document,
     location: globalThis.location,
@@ -258,6 +335,7 @@ function withSession(options, body) {
     addEventListener: globalThis.addEventListener,
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
+    fetch: globalThis.fetch,
   };
 
   // The search panel debounces its query, so the timers it schedules are kept
@@ -274,13 +352,35 @@ function withSession(options, body) {
 
   const payloadElement = fakeElement("script");
   payloadElement.id = "wikicc-payload";
-  payloadElement.textContent = JSON.stringify(payload());
+  payloadElement.textContent = JSON.stringify(
+    options.lazy ? lazyManifest() : payload(),
+  );
 
   const shellRoot = fakeElement("body");
   shellRoot.appendChild(payloadElement);
   shell.forEach(function (element) {
     shellRoot.appendChild(element);
   });
+
+  // The pages session fetches its documents; the requests are recorded
+  // so a test can see what the reader asked for.
+  const fetchCalls = [];
+  if (options.lazy) {
+    const chunks = options.broken ? {} : lazyChunks();
+    if (!options.broken) {
+      chunks["search.json"] = lazyCorpus();
+    }
+    globalThis.fetch = function (url) {
+      fetchCalls.push(url);
+      const body = Object.hasOwn(chunks, url) ? chunks[url] : null;
+      return Promise.resolve({
+        ok: body !== null,
+        json() {
+          return Promise.resolve(body);
+        },
+      });
+    };
+  }
 
   // Headings the article "emits", so an anchor resolves to a scroll target. A
   // render assigns `innerHTML`, which is where the ids appear, so the map is
@@ -439,12 +539,13 @@ function withSession(options, body) {
   };
 
   try {
-    return body({
+    return await body({
       doc,
       shell,
       location,
       frames,
       headings,
+      fetchCalls,
       /**
        * Change the address the way the browser does and let the session hear
        * about it, which is what a followed block reference looks like.
@@ -468,6 +569,13 @@ function withSession(options, body) {
           timer.callback();
         });
       },
+      /**
+       * Let every pending promise settle, which is what a fetched document
+       * waits for before it reaches the article.
+       */
+      settle() {
+        return new Promise((resolve) => realSetTimeout(resolve, 0));
+      },
       scrollTop() {
         return scrollTop;
       },
@@ -483,6 +591,7 @@ function withSession(options, body) {
     globalThis.addEventListener = previous.addEventListener;
     globalThis.setTimeout = previous.setTimeout;
     globalThis.clearTimeout = previous.clearTimeout;
+    globalThis.fetch = previous.fetch;
   }
 }
 
@@ -860,5 +969,139 @@ test("a chapter the document does not have opens it from the top", async () => {
       "nothing is scrolled to when there is nothing to reach",
     );
     assert.equal(session.scrollTop(), 0);
+  });
+});
+
+/* ---------- pages session ---------- */
+
+/** Every text node below `node`, joined with spaces. */
+function textOf(node) {
+  const parts = [];
+  (function walk(current) {
+    (current.children || []).forEach(function (child) {
+      if (child.nodeType === 3) {
+        parts.push(String(child.textContent));
+        return;
+      }
+      walk(child);
+    });
+  })(node);
+  return parts.join(" ");
+}
+
+test("a pages session fetches the document it opens", async () => {
+  await withSession({ hash: "#/doc/index.md", lazy: true }, async (session) => {
+    startSession();
+    await session.settle();
+
+    const article = session.shell.get("doc-article");
+    assert.equal(article.children[0].textContent, "index.md");
+    assert.match(
+      article.children[1].innerHTML,
+      /root/,
+      "the fetched chunk is on screen",
+    );
+    assert.deepEqual(
+      session.fetchCalls,
+      ["pages/index.md.json?v=h0"],
+      "only the document the reader opened was requested",
+    );
+
+    session.follow("#/doc/guide/intro.md#getting-started");
+    await session.settle();
+
+    assert.deepEqual(
+      session.headings.get("getting-started").scrollCalls,
+      [{ block: "start" }],
+      "the fetched document is placed and its chapter is reached",
+    );
+    assert.deepEqual(
+      session.fetchCalls,
+      ["pages/index.md.json?v=h0", "pages/guide/intro.md.json?v=h1"],
+      "the chunk is fetched when the reader navigates to it",
+    );
+  });
+});
+
+test("a chunk that never arrives explains itself in the article and the banner", async () => {
+  await withSession(
+    { hash: "#/doc/index.md", lazy: true, broken: true },
+    async (session) => {
+      startSession();
+      await session.settle();
+
+      const article = session.shell.get("doc-article");
+      assert.equal(
+        article.children.length,
+        1,
+        "the article holds the failure note and nothing else",
+      );
+      assert.match(
+        article.children[0].textContent,
+        /could not be loaded/,
+        "the article says the document is not there",
+      );
+      assert.match(
+        textOf(session.shell.get("doc-alert")),
+        /Could not load index\.md/,
+        "the banner names the document and the likely cause",
+      );
+    },
+  );
+});
+
+test("a pages session warns once when opened from a file address", async () => {
+  await withSession({ hash: "#/doc/index.md", lazy: true }, async (session) => {
+    const previousLocation = globalThis.location;
+    globalThis.location = { hash: "#/doc/index.md", protocol: "file:" };
+
+    try {
+      startSession();
+      await session.settle();
+
+      assert.match(
+        textOf(session.shell.get("doc-alert")),
+        /served over HTTP/,
+        "the reader says why no document can appear",
+      );
+    } finally {
+      globalThis.location = previousLocation;
+    }
+  });
+});
+
+test("a pages session fetches the corpus on the first global search", async () => {
+  await withSession({ hash: "#/doc/index.md", lazy: true }, async (session) => {
+    startSession();
+    await session.settle();
+
+    session.shell.get("search-toggle").fire("click");
+    const input = searchInput(session.shell);
+    input.value = "intro";
+    input.fire("input", { target: input });
+    session.runTimers();
+    await session.settle();
+
+    // The local scope answered from the document in view; no corpus was asked
+    // for, because the document the reader opened carries its own text.
+    assert.deepEqual(session.fetchCalls, ["pages/index.md.json?v=h0"]);
+
+    searchParts(session.shell, "search-mode")[0].fire("click");
+    await session.settle();
+
+    // The first global query fetches the corpus, and the answer replaces the
+    // wait the panel showed while it travelled.
+    assert.ok(
+      session.fetchCalls.indexOf("search.json") !== -1,
+      "the corpus arrives with the first global query: " +
+        JSON.stringify(session.fetchCalls),
+    );
+    assert.deepEqual(
+      searchParts(session.shell, "search-result-path").map(function (node) {
+        return node.textContent;
+      }),
+      ["guide/intro.md"],
+      "the corpus answers the query",
+    );
   });
 });

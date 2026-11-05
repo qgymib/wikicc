@@ -22,7 +22,7 @@ use base64::engine::general_purpose::STANDARD;
 use crate::assets::Asset;
 use crate::error::{Error, Result};
 use crate::options::OutputFormat;
-use crate::render::RenderedSite;
+use crate::render::RenderedOutput;
 use crate::site::SiteBuild;
 
 use super::{HTML_FILE_NAME, SiteWriter, WriteReport, expand_placeholders};
@@ -36,9 +36,23 @@ impl SiteWriter for SingleHtmlWriter {
         OutputFormat::SingleHtml
     }
 
-    fn write(&self, build: &SiteBuild, rendered: &RenderedSite, out: &Path) -> Result<WriteReport> {
+    fn write(
+        &self,
+        build: &SiteBuild,
+        rendered: &RenderedOutput,
+        out: &Path,
+    ) -> Result<WriteReport> {
+        let page = match rendered {
+            RenderedOutput::Page(page) => page,
+            _ => {
+                return Err(Error::Render(
+                    "the single-html writer received a pages render".to_string(),
+                ));
+            }
+        };
+
         let mut scratch: Vec<u8> = Vec::new();
-        let (html, _) = expand_placeholders(&rendered.html, &build.assets, |asset, sink| {
+        let (html, _) = expand_placeholders(&page.html, &build.assets, |asset, sink| {
             write_data_uri(asset, sink, &mut scratch)
         })?;
 
@@ -109,7 +123,13 @@ mod tests {
 
     use super::*;
     use crate::assets::AssetTable;
+    use crate::render::RenderedSite;
     use crate::site::{SiteBundle, Stats};
+
+    /// Wrap a rendered page the way the pipeline hands it over.
+    fn page(html: impl Into<String>) -> RenderedOutput {
+        RenderedOutput::Page(RenderedSite { html: html.into() })
+    }
 
     /// Asset with the given MIME type and content.
     fn asset(mime: &str, bytes: &[u8]) -> Asset {
@@ -211,11 +231,9 @@ mod tests {
     fn the_writer_inlines_every_placeholder_into_one_file() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, hash) = build_with("logo.svg", b"<svg/>");
-        let rendered = RenderedSite {
-            html: format!(
-                "<html><body><img src=\"wikicc-asset:{hash}\"><img src=\"wikicc-asset:{hash}\"></body></html>"
-            ),
-        };
+        let rendered = page(format!(
+            "<html><body><img src=\"wikicc-asset:{hash}\"><img src=\"wikicc-asset:{hash}\"></body></html>"
+        ));
 
         let report = SingleHtmlWriter
             .write(&build, &rendered, dir.path())
@@ -237,9 +255,7 @@ mod tests {
     fn a_page_without_assets_is_written_verbatim() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, _) = build_with("logo.svg", b"<svg/>");
-        let rendered = RenderedSite {
-            html: "<html></html>".to_string(),
-        };
+        let rendered = page("<html></html>");
 
         let report = SingleHtmlWriter
             .write(&build, &rendered, dir.path())
@@ -256,9 +272,7 @@ mod tests {
     fn an_unknown_placeholder_fails_before_anything_is_written() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, _) = build_with("logo.svg", b"<svg/>");
-        let rendered = RenderedSite {
-            html: "<img src=\"wikicc-asset:0000000000000000\">".to_string(),
-        };
+        let rendered = page("<img src=\"wikicc-asset:0000000000000000\">");
 
         let error = SingleHtmlWriter
             .write(&build, &rendered, dir.path())
@@ -278,9 +292,7 @@ mod tests {
     fn the_written_file_is_utf8_without_a_bom() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, _) = build_with("logo.svg", b"<svg/>");
-        let rendered = RenderedSite {
-            html: "<p>说明</p>".to_string(),
-        };
+        let rendered = page("<p>说明</p>");
 
         SingleHtmlWriter
             .write(&build, &rendered, dir.path())
@@ -294,5 +306,31 @@ mod tests {
     #[test]
     fn the_writer_declares_its_format() {
         assert_eq!(SingleHtmlWriter.format(), OutputFormat::SingleHtml);
+    }
+
+    #[test]
+    fn a_pages_render_is_refused_instead_of_written() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (build, _) = build_with("logo.svg", b"<svg/>");
+        let rendered = RenderedOutput::Pages(crate::render::RenderedPages {
+            shell: RenderedSite {
+                html: "<html></html>".to_string(),
+            },
+            chunks: Vec::new(),
+            search_json: "{}".to_string(),
+        });
+
+        let error = SingleHtmlWriter
+            .write(&build, &rendered, dir.path())
+            .expect_err("mismatched render");
+
+        assert!(
+            error.to_string().contains("pages render"),
+            "unexpected message: {error}"
+        );
+        assert!(
+            !dir.path().join(HTML_FILE_NAME).exists(),
+            "a mismatched render must not leave an artifact"
+        );
     }
 }

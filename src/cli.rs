@@ -29,7 +29,8 @@ pub struct Cli {
     #[arg(short, long, value_name = "DIR")]
     pub out: Option<PathBuf>,
 
-    /// Output format
+    /// Output format: single-html (one self-contained file), html-dir (page
+    /// plus an assets folder) or pages (static site for GitHub Pages)
     #[arg(
         long,
         value_name = "FMT",
@@ -119,6 +120,7 @@ mod tests {
         for (value, expected) in [
             ("single-html", OutputFormat::SingleHtml),
             ("html-dir", OutputFormat::HtmlDir),
+            ("pages", OutputFormat::Pages),
         ] {
             let cli = parse(&["wikicc", "docs", "--format", value]);
             assert_eq!(cli.format, expected);
@@ -132,7 +134,8 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::ValueValidation);
         let rendered = error.to_string();
         assert!(
-            rendered.contains("invalid format 'pdf', expected one of: single-html, html-dir"),
+            rendered
+                .contains("invalid format 'pdf', expected one of: single-html, html-dir, pages"),
             "unexpected error text: {rendered}"
         );
     }

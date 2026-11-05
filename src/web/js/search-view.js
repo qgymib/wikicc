@@ -173,6 +173,15 @@ export var MODE_GLOBAL_TITLE = "Search only this document";
  */
 export var RESULTS_IDLE_LABEL = "Results";
 
+/**
+ * Shown in the middle of the list while the answer is still on its way.
+ *
+ * The corpus of the pages format travels over the network the first time
+ * a reader searches the whole site; this names that wait where the rows will
+ * appear, and the answer replaces it the moment it lands.
+ */
+export var RESULTS_LOADING_LABEL = "Loading\u2026";
+
 /** Shown in the middle of the preview while it has no passage to show. */
 export var PREVIEW_IDLE_LABEL = "Preview";
 
@@ -224,7 +233,7 @@ export function createSearchView(options) {
   // The whole document behind a result, so the preview can show it. Absent in
   // a shell without a payload and in the aim of an older artifact; the preview
   // then keeps the excerpt it always drew, which is degraded but never broken.
-  var documentOf = (options && options.documentOf) || null;
+  var documents = (options && options.documents) || null;
   // Diagram colours are baked into the SVG, so the preview has to be drawn for
   // the theme in effect — the same callback the article is rendered with.
   var theme =
@@ -891,6 +900,27 @@ export function createSearchView(options) {
     preview.scrollTop = 0;
 
     var doc = documentFor(entry.id);
+    if (doc && typeof doc.then === "function") {
+      // The document travels over the network in the pages format: the
+      // excerpt answers at once, and the whole document takes its place when
+      // it arrives — unless the reader has picked another row or closed the
+      // panel by then, which the drawn signature notices.
+      renderExcerpt(entry);
+      doc.then(function (loaded) {
+        if (drawn !== signature || !loaded) {
+          return;
+        }
+        if (typeof loaded.html !== "string" || !loaded.html) {
+          return;
+        }
+        preview.textContent = "";
+        preview.scrollTop = 0;
+        slots = [];
+        renderDocument(loaded, entry);
+      });
+      return;
+    }
+
     if (doc && typeof doc.html === "string" && doc.html) {
       renderDocument(doc, entry);
       return;
@@ -899,18 +929,29 @@ export function createSearchView(options) {
     renderExcerpt(entry);
   }
 
-  /** The payload's document for `id`, or `null` when the shell cannot say. */
+  /**
+   * The document `id` when it is on hand, its promise when it must travel,
+   * `null` when the reader cannot say.
+   *
+   * A document already fetched — every document of the embedded formats, and
+   * anything the reader has opened in the split one — answers synchronously,
+   * which is what keeps the preview instant; only a first visit waits.
+   */
   function documentFor(id) {
-    if (!documentOf) {
+    if (!documents) {
       return null;
     }
 
     try {
-      return documentOf(id) || null;
+      var onHand = documents.peek ? documents.peek(id) : null;
+      if (onHand) {
+        return onHand;
+      }
+      return documents.get ? documents.get(id) || null : null;
     } catch (_error) {
-      // The preview is built from whatever the page hands over; a payload
-      // that throws is the page's problem to log, not a reason the panel
-      // stops answering.
+      // The preview is built from whatever the page hands over; a store that
+      // throws is the page's problem to log, not a reason the panel stops
+      // answering.
       return null;
     }
   }
@@ -1333,6 +1374,33 @@ export function createSearchView(options) {
 
   ensurePanel();
 
+  /**
+   * Show that the answer is still on its way.
+   *
+   * The corpus of the pages format is fetched on the first global search,
+   * so the query that triggered it cannot be answered yet: the wait is named
+   * where the rows will appear, and the answer replaces it when it lands.
+   * Nothing is selected and the preview holds nothing, because there is
+   * nothing yet to select or show.
+   */
+  function setLoading() {
+    if (!container) {
+      return;
+    }
+
+    ensurePanelIfNeeded();
+    entries = [];
+    rows = [];
+    selected = null;
+    results.textContent = "";
+
+    var loading = document.createElement("p");
+    loading.className = EMPTY_CLASS;
+    loading.textContent = RESULTS_LOADING_LABEL;
+    results.appendChild(loading);
+    renderPreview(null);
+  }
+
   return {
     open: openPanel,
     close: closePanel,
@@ -1340,6 +1408,7 @@ export function createSearchView(options) {
     isOpen: isOpen,
     query: query,
     setResults: setResults,
+    setLoading: setLoading,
     /** The scope in force, for a caller that describes it elsewhere. */
     mode: function () {
       return mode;

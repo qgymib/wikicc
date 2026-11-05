@@ -92,7 +92,7 @@ fn unknown_format_exits_with_2() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains(
-            "invalid format 'pdf', expected one of: single-html, html-dir",
+            "invalid format 'pdf', expected one of: single-html, html-dir, pages",
         ));
 }
 
@@ -211,7 +211,7 @@ fn the_removed_mhtml_format_is_a_usage_error() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains(
-            "invalid format 'mhtml', expected one of: single-html, html-dir",
+            "invalid format 'mhtml', expected one of: single-html, html-dir, pages",
         ));
 }
 
@@ -248,6 +248,45 @@ fn html_dir_format_writes_a_page_and_an_asset_folder() {
     assert!(
         !html.contains("wikicc-asset:"),
         "every asset placeholder must be replaced"
+    );
+}
+
+#[test]
+fn pages_format_writes_shell_chunks_corpus_and_assets() {
+    let dir = fixture();
+    std::fs::create_dir(dir.path().join("assets")).expect("create the asset directory");
+    std::fs::write(dir.path().join("assets").join("logo.svg"), "<svg/>").expect("write asset");
+    std::fs::write(
+        dir.path().join("intro.md"),
+        "# Intro\n\n![Logo](assets/logo.svg)\n",
+    )
+    .expect("write fixture");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--format", "pages"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(pages) in "))
+        .stdout(predicate::str::contains("compiled 1 document, 1 asset"));
+
+    let out = dir.path().join("dist");
+    assert!(out.join("index.html").is_file(), "the shell exists");
+    assert!(out.join("search.json").is_file(), "the corpus exists");
+    assert!(
+        out.join("pages").join("intro.md.json").is_file(),
+        "one chunk per document exists"
+    );
+    assert!(out.join("assets").is_dir(), "the assets directory exists");
+
+    let shell = std::fs::read_to_string(out.join("index.html")).expect("index.html is readable");
+    assert!(
+        shell.contains(r#""mode":"pages""#),
+        "the shell payload names the pages mode"
+    );
+    assert!(
+        !shell.contains("wikicc-asset:"),
+        "the manifest carries no placeholder"
     );
 }
 

@@ -639,15 +639,32 @@ function cutAround(text, start, length, options) {
 }
 
 /**
+ * The searchable heading text of one document.
+ *
+ * The embedded payload carries the outline structure, so the text is gathered
+ * here; the pages format's corpus carries it pre-flattened under
+ * `headings`, because the browser never sees that payload's outlines. Both
+ * must produce the same string for a hit in a heading to read the same way.
+ */
+export function headingsOf(doc) {
+  if (doc && typeof doc.headings === "string") {
+    return doc.headings;
+  }
+  return headingsText(doc && doc.toc);
+}
+
+/**
  * One entry per place the query occurs: the document, the passage around that
  * place, and which occurrence of the document it is.
  *
- * `docs` is the payload's document list and `ids` the ids the engine ranked, in
- * that order — the result list shows the engine's ranking, never a re-sort of
- * its own, and the hits of one document stay together: a document ranked first
- * lists all its hits before the next document's first. Within a document the
- * entries follow the body's own order, `hit` counting the occurrences from
- * zero, which is what lets the preview scroll to the place a row describes.
+ * `docs` is the payload's document list — or the corpus records of the
+ * pages format, which carry the same fields — and `ids` the ids the
+ * engine ranked, in that order — the result list shows the engine's ranking,
+ * never a re-sort of its own, and the hits of one document stay together: a
+ * document ranked first lists all its hits before the next document's first.
+ * Within a document the entries follow the body's own order, `hit` counting
+ * the occurrences from zero, which is what lets the preview scroll to the
+ * place a row describes.
  *
  * The list is never truncated: the reader asked for every place the words
  * appear, and enumerating them is one linear scan of each ranked document's
@@ -680,7 +697,7 @@ export function occurrences(docs, ids, query, options) {
         id: doc.id,
         title: doc.title || doc.id,
         path: doc.id,
-        snippet: matchSnippet(headingsText(doc.toc), query, options),
+        snippet: matchSnippet(headingsOf(doc), query, options),
         hit: -1,
       });
       return;

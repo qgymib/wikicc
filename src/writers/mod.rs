@@ -1,40 +1,46 @@
-//! Write stage: turn the rendered page into the artifact of the selected format.
+//! Write stage: turn the rendered output into the artifact of the selected format.
 //!
 //! This is the `write` stage described in `docs/design.md`. The render stage
-//! hands over one HTML document in which every local resource is addressed by
-//! the opaque placeholder [`crate::ASSET_PLACEHOLDER_PREFIX`]`<hash>`. A writer
-//! replaces those placeholders with the addressing form of its own format and
-//! puts the result on disk:
+//! hands over output in which every local resource is addressed by the opaque
+//! placeholder [`crate::ASSET_PLACEHOLDER_PREFIX`]`<hash>`. A writer replaces
+//! those placeholders with the addressing form of its own format and puts the
+//! result on disk:
 //!
 //! - `single-html` → `data:<mime>;base64,…` inside one `index.html`;
-//! - `html-dir` → `assets/<hash>.<ext>` next to `index.html`.
+//! - `html-dir` → `assets/<hash>.<ext>` next to `index.html`;
+//! - `pages` → the shell page, one `pages/<id>.json` chunk per document,
+//!   the search corpus file and `assets/<hash>.<ext>`, all addressed relative
+//!   to `index.html`.
 //!
-//! Addressing is the only thing the two formats differ in, so the writers stay
+//! Addressing is the only thing the formats differ in, so the writers stay
 //! thin and never duplicate rendering.
 //!
-//! The placeholders only ever appear inside the JSON payload that sits in the
-//! `<script type="application/json">` element. Every substitution value is a
-//! data URI or a relative path, none of which contains a quote, a backslash or
-//! a control character, so replacing them keeps the payload valid JSON and the
-//! page inert.
+//! The placeholders only ever appear inside JSON — the payload that sits in
+//! the `<script type="application/json">` element, and the chunk files of the
+//! pages format. Every substitution value is a data URI or a relative
+//! path, none of which contains a quote, a backslash or a control character,
+//! so replacing them keeps the JSON valid.
 //!
-//! Determinism: the artifact is the rendered page with a deterministic
+//! Determinism: the artifacts are the rendered output with a deterministic
 //! substitution applied, [`crate::assets::AssetTable`] iterates in hash order,
-//! and nothing here reads the clock or the environment. Two builds of the same
-//! input therefore produce byte-identical artifacts.
+//! the chunks follow scan order, and nothing here reads the clock or the
+//! environment. Two builds of the same input therefore produce byte-identical
+//! artifacts.
 
 use std::path::{Path, PathBuf};
 
 use crate::assets::{ASSET_PLACEHOLDER_PREFIX, Asset, AssetTable, HASH_HEX_LEN};
 use crate::error::{Error, Result};
 use crate::options::OutputFormat;
-use crate::render::RenderedSite;
+use crate::render::RenderedOutput;
 use crate::site::SiteBuild;
 
 pub mod html_dir;
+pub mod pages;
 pub mod single_html;
 
 pub use html_dir::HtmlDirWriter;
+pub use pages::PagesWriter;
 pub use single_html::{SingleHtmlWriter, data_uri};
 
 /// Name of the HTML artifact, used by `single-html` and `html-dir`.
@@ -108,7 +114,16 @@ pub trait SiteWriter {
     ///
     /// Directory creation and cleanup are [`write_site`]'s job, so an
     /// implementation may assume `out` exists and is empty.
-    fn write(&self, build: &SiteBuild, rendered: &RenderedSite, out: &Path) -> Result<WriteReport>;
+    ///
+    /// `rendered` is always the render of [`SiteWriter::format`]: the pipeline
+    /// pairs them, so any other variant is an internal contract break and an
+    /// implementation fails rather than writing a mixed artifact.
+    fn write(
+        &self,
+        build: &SiteBuild,
+        rendered: &RenderedOutput,
+        out: &Path,
+    ) -> Result<WriteReport>;
 }
 
 /// Writer for `format`.
@@ -119,10 +134,12 @@ pub trait SiteWriter {
 pub fn writer_for(format: OutputFormat) -> &'static dyn SiteWriter {
     static SINGLE_HTML: SingleHtmlWriter = SingleHtmlWriter;
     static HTML_DIR: HtmlDirWriter = HtmlDirWriter;
+    static PAGES: PagesWriter = PagesWriter;
 
     match format {
         OutputFormat::SingleHtml => &SINGLE_HTML,
         OutputFormat::HtmlDir => &HTML_DIR,
+        OutputFormat::Pages => &PAGES,
     }
 }
 
@@ -134,7 +151,7 @@ pub fn writer_for(format: OutputFormat) -> &'static dyn SiteWriter {
 pub fn write_site(
     format: OutputFormat,
     build: &SiteBuild,
-    rendered: &RenderedSite,
+    rendered: &RenderedOutput,
     out: &Path,
     force: bool,
 ) -> Result<WriteReport> {

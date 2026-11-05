@@ -611,12 +611,20 @@ function build(options) {
     theme: function () {
       return "dark";
     },
-    documentOf: function (id) {
-      calls.asked.push(id);
-      if (!options.documents) {
-        return null;
-      }
-      return options.documents[id] || null;
+    documents: {
+      peek(id) {
+        calls.asked.push(id);
+        if (!options.documents) {
+          return null;
+        }
+        return options.documents[id] || null;
+      },
+      get(id) {
+        if (options.travelling) {
+          return options.travelling(id);
+        }
+        return Promise.resolve(null);
+      },
     },
     onQuery(query, mode) {
       calls.queries.push(query);
@@ -2401,5 +2409,107 @@ test("two hits of one paragraph are addressed in reading order", () => {
       [HIT_CLASS, HIT_CLASS + " " + HIT_ACTIVE_CLASS],
       "the second hit of the paragraph is the second one addressed",
     );
+  });
+});
+
+/* ---------- the pages format: documents and answers that travel ---------- */
+
+test("loading names the wait where the rows will appear", () => {
+  withPage(function (page) {
+    var built = build({ container: page.container });
+    built.view.open();
+
+    built.view.setLoading();
+
+    var results = page.container.children[1];
+    assert.match(textOf(results), /Loading/);
+    assert.equal(
+      page.container.findAll(RESULT_CLASS).length,
+      0,
+      "no row pretends there is an answer yet",
+    );
+
+    built.view.setResults([entry("a.md", "Alpha", "alpha")], 0);
+    assert.doesNotMatch(
+      textOf(page.container.children[1]),
+      /Loading/,
+      "the answer replaces the wait",
+    );
+  });
+});
+
+test("a document that travels in replaces the excerpt when it lands", () => {
+  withPage(function (page) {
+    var deliver = null;
+    var built = build({
+      container: page.container,
+      travelling() {
+        return {
+          // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
+          then(callback) {
+            deliver = callback;
+          },
+        };
+      },
+    });
+
+    built.view.setResults([entry("a.md", "Alpha", "alpha")], 0);
+
+    assert.match(
+      textOf(previewOf(page)),
+      /alpha/,
+      "the excerpt answers while the document is on its way",
+    );
+
+    deliver({
+      id: "a.md",
+      html: "<p>the whole document</p>",
+      toc: [],
+      blocks: [],
+    });
+
+    assert.match(
+      textOf(previewOf(page)),
+      /the whole document/,
+      "the fetched document takes the excerpt's place",
+    );
+    assert.doesNotMatch(textOf(previewOf(page)), /alpha/);
+  });
+});
+
+test("an answer for a selection the reader has left behind draws nothing", () => {
+  withPage(function (page) {
+    // One callback per request, like the promises the store really returns:
+    // the older answer still lands, it just finds a newer row drawn.
+    const deliveries = [];
+    var built = build({
+      container: page.container,
+      travelling() {
+        return {
+          // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
+          then(callback) {
+            deliveries.push(callback);
+          },
+        };
+      },
+    });
+
+    built.view.setResults([entry("a.md", "Alpha", "alpha")], 0);
+    built.view.setResults([entry("b.md", "Beta", "beta")], 0);
+    assert.equal(deliveries.length, 2, "each row asked for its own document");
+
+    deliveries[0]({
+      id: "a.md",
+      html: "<p>stale document</p>",
+      toc: [],
+      blocks: [],
+    });
+
+    assert.doesNotMatch(
+      textOf(previewOf(page)),
+      /stale/,
+      "the newer row owns the preview",
+    );
+    assert.match(textOf(previewOf(page)), /beta/);
   });
 });

@@ -30,9 +30,9 @@ script runs. There is no server in either half.
 
 ```
 scan ──▶ parse ──▶ resolve ──▶ assemble ──▶ render ──▶ write
- .md      HTML +     link/asset   SiteBundle   shell     2 formats
- files    TOC +      rewriting,   (JSON)       HTML      via
-          highlight  asset bytes               string    SiteWriter
+ .md      HTML +     link/asset   SiteBundle   page or    3 formats
+ files    TOC +      rewriting,   (JSON)       page +     via
+          highlight  asset bytes               chunks     SiteWriter
 ```
 
 `pipeline::run` owns the order and the side effects:
@@ -44,8 +44,8 @@ scan ──▶ parse ──▶ resolve ──▶ assemble ──▶ render ─�
 | parse | `SourceDoc` → HTML, TOC, plain text | `markdown` |
 | resolve | destinations → final addressing, `AssetTable`, diagnostics | `markdown::links`, `assets` |
 | assemble | everything → `SiteBundle` + `SiteBuild` | `site` |
-| render | `SiteBundle` → one HTML string | `render` |
-| write | `RenderedSite` + `SiteBuild` → files | `writers` |
+| render | `SiteBundle` → the shell page, or the shell plus one chunk per document and the search corpus | `render` |
+| write | `RenderedOutput` + `SiteBuild` → files | `writers` |
 
 Every stage except `write` is a pure transformation over immutable data, so it
 is unit tested without a filesystem. The order of the side effects is part of
@@ -94,9 +94,18 @@ Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` �
    form of their format. The placeholder only ever appears inside the JSON
    payload, and every substitution value is quote-free, so the payload stays
    valid JSON.
-3. **The payload is inlined, never fetched.** The artifact must work over
-   `file://`, where `fetch()` of a local JSON file is blocked by CORS, so even
-   the multi-file format inlines the site JSON into the page.
+3. **The shell formats inline the payload; the pages format fetches.**
+   `single-html` and `html-dir` must work over `file://`, where `fetch()` of a
+   local JSON file is blocked by CORS, so their whole payload is embedded in
+   the page. `pages` is an artifact for an HTTP host: its page embeds
+   only the manifest — one `{id, title, hash}` reference per document — and
+   each document's model is one JSON file under `pages/` that the reader
+   fetches when it navigates there, with the search corpus in `search.json`
+   fetched on the first global search. That format does not open from
+   `file://`, and the reader says so when it finds itself there. Chunk file
+   names derive from the document id alone, so a cached page never points at
+   a file a redeploy removed; freshness travels in the hash, appended as a
+   `?v=` query a static host ignores but a browser counts as a new address.
 4. **Assets are content-addressed.** The name is the first 16 hex characters of
    the SHA-256 digest plus the original extension, which gives free
    deduplication and stable names across builds and platforms.
@@ -163,10 +172,13 @@ one is stated as a contract rather than left to the implementation.
 - **Testability.** Everything the run prints goes through a `std::io::Write`
   sink rather than `println!`, so wording, gate and `--quiet` are unit tested
   without spawning a process.
-- **Formats.** The two writers share the page and the asset table and never
-  re-render markup; each differs only in asset addressing. The multi-file writer
-  writes the page last, so the artifact never references a file that is not on
-  disk, and an asset-free site writes no empty directory.
+- **Formats.** The three writers never re-render markup: the two shell writers
+  share the page and differ only in asset addressing, and the pages
+  writer expands the same placeholders into its chunk files. A writer
+  receives the render of its own format and refuses any other. The pages
+  writer expands every chunk before it writes anything, writes the shell page
+  last, so the artifact never references a file that is not on disk, and an
+  asset-free or document-free site writes no empty directory.
 - **Weight.** `render.rs` holds a size guard that fails the build if the bundle
   regresses.
 - **The Windows icon.** A Windows executable shows an icon in the file
@@ -219,11 +231,24 @@ one is stated as a contract rather than left to the implementation.
   with every font embedded as a data URL, so the offline guarantee holds.
   Colours are inherited from the text, so a theme switch needs no re-render,
   and a formula that fails to typeset keeps its source text.
+- **Documents are looked up, then fetched.** `doc-store.js` is the one place
+  that knows where a document's model comes from: the payload for the shell
+  formats, a `pages/<id>.json` file for the pages format. The controller
+  renders from the store's `peek` when the document is on hand — every
+  navigation of the shell formats, any revisit of the split one — and awaits
+  `get` otherwise, showing a loading note and dropping the answer when a
+  newer navigation has taken the article over. The views that need another
+  document (the hover preview, the search panel's whole-document preview)
+  take the store, answer synchronously from `peek`, and fall back to `get`.
+  The search corpus of the split format is fetched once, on the first global
+  search; the local scope reads the document in view, which is already in
+  hand, so the default scope costs nothing.
 - **Layering rule.** Pure logic and DOM access live in separate modules
-  (`router.js`, `links.js`, `asset-links.js`, `search.js`, `table.js`,
-  `graph.js`, `preview.js`, `toc.js`, `anchor.js`, `diagrams.js`, `math.js`
-  versus `table-view.js`, `graph-view.js`, `diagram-view.js`, `math-view.js`,
-  `preview-view.js`, `banner.js`, `doc-list.js`), because the
+  (`router.js`, `links.js`, `asset-links.js`, `search.js`, `doc-store.js`,
+  `table.js`, `graph.js`, `preview.js`, `toc.js`, `anchor.js`, `diagrams.js`,
+  `math.js` versus `table-view.js`, `graph-view.js`, `diagram-view.js`,
+  `math-view.js`, `preview-view.js`, `search-view.js`, `banner.js`,
+  `doc-list.js`), because the
   JS test suite runs under `node --test` with no DOM. Anything that touches
   `document` belongs to a view module; a view is a projection of the pure
   functions beneath it, and the controller (`app.js`) is the only module that
@@ -266,7 +291,7 @@ must all pass.
 | Embedded diagram engine dominates the bundle | every format carries it | minification plus a size guard; the engine is only initialised when the current document has a diagram |
 | Front-end dependencies are installed outside Cargo | `cargo build` needs `npm ci` first | `build.rs` fails with an actionable message; versions and bytes are pinned |
 | The npm esbuild launcher is a script on Windows and a native binary elsewhere | running the launcher path through `node` fails on POSIX | `build.rs` resolves the executable and starts a script with `node` only; a native binary runs directly |
-| `file://` restrictions (CORS, module scripts) | a naive SPA would break | payload inlined, no `fetch`, one classic script |
+| `file://` restrictions (CORS, module scripts) | a naive SPA would break | the shell formats inline the payload; the pages format requires an HTTP host and says so on a `file://` page |
 | Large media in memory | peak RAM during base64 encoding | single-pass placeholder expansion into one reused buffer, so peak memory is the page plus one asset |
 | Raw HTML passthrough | XSS if untrusted Markdown is compiled | documented as trusted-input behaviour; no sanitizer |
 | No incremental build | full rebuild on every run | acceptable at folder scale; the artifacts are deterministic |

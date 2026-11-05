@@ -182,17 +182,19 @@ export var MISSING_TAIL = " exists in this document.";
 /**
  * Create the preview controller for one reader instance.
  *
- * `content` is the element whose links are watched; `byId` maps a document id to
- * its payload model; `theme` returns the theme currently in effect, because
- * diagrams bake their colours into the SVG; `onNavigate` takes over a click on a
- * link the browser cannot finish on its own — a broken reference, or a document
- * link without a chapter — so the preview and the click share one route. A
- * sound block reference is left to the browser, which routes and scrolls it in
- * one step.
+ * `content` is the element whose links are watched; `documents` is the
+ * reader's document store — `peek(id)` answers with the model already on hand
+ * or `null`, `get(id)` promises it, fetching first when the build split the
+ * site into files; `theme` returns the theme currently in effect, because
+ * diagrams bake their colours into the SVG; `onNavigate` takes over a click on
+ * a link the browser cannot finish on its own — a broken reference, or a
+ * document link without a chapter — so the preview and the click share one
+ * route. A sound block reference is left to the browser, which routes and
+ * scrolls it in one step.
  */
 export function createPreviewView(options) {
   var content = options.content;
-  var byId = options.byId;
+  var documents = options.documents || null;
   var theme =
     options.theme ||
     function () {
@@ -676,57 +678,28 @@ export function createPreviewView(options) {
     unlistenForDrag();
   }
 
-  /** Whether `link` still has a chapter to preview. */
-  function previewFor(link) {
-    var destination = Links.parseDocLink(link.getAttribute("href"));
-    if (!destination || !destination.anchor) {
+  /** The destination `link` addresses, or `null` when it is no document link. */
+  function destinationOf(link) {
+    return Links.parseDocLink(link.getAttribute("href"));
+  }
+
+  /** The notice `link` was marked with by the build, or `null`. */
+  function missingOf(link, destination) {
+    if (!taggedMissing(link)) {
       return null;
     }
 
-    var doc = byId ? byId.get(destination.id) : null;
-    return Preview.createPreview(doc, destination.anchor);
+    return {
+      kind: "missing",
+      docId: destination.id,
+      anchor: Links.missingAnchorOf(
+        link.getAttribute(Links.MISSING_ANCHOR_ATTRIBUTE),
+      ),
+    };
   }
 
-  /**
-   * What `link` addresses: `{ kind: "missing", docId, anchor }`,
-   * `{ kind: "none" }` or the preview itself.
-   *
-   * A reference the build could not resolve is recognised from its mark rather
-   * than from the `href`: the route deliberately carries no anchor (no element
-   * emits one), so re-parsing it would only ever say "the whole document".
-   */
-  function resolveLink(link) {
-    var destination = Links.parseDocLink(link.getAttribute("href"));
-    if (!destination) {
-      return { kind: "none" };
-    }
-
-    if (taggedMissing(link)) {
-      return {
-        kind: "missing",
-        docId: destination.id,
-        anchor: Links.missingAnchorOf(
-          link.getAttribute(Links.MISSING_ANCHOR_ATTRIBUTE),
-        ),
-      };
-    }
-
-    var preview = previewFor(link);
-    return preview ? { kind: "preview", preview: preview } : { kind: "none" };
-  }
-
-  function open(link) {
-    var resolved = resolveLink(link);
-    if (resolved.kind === "missing") {
-      openNotice(link, resolved);
-      return;
-    }
-
-    if (resolved.kind !== "preview") {
-      return;
-    }
-
-    var preview = resolved.preview;
+  /** Fill the panel with `preview` and put it beside `link`. */
+  function showPreview(preview, link) {
     ensurePanel();
     // The panel wears one of two roles; a preview must not inherit the notice
     // frame a previous hover left on it.
@@ -743,6 +716,58 @@ export function createPreviewView(options) {
     DocBody.drawMath(body);
 
     show(link);
+  }
+
+  function open(link) {
+    var destination = destinationOf(link);
+    if (!destination) {
+      return;
+    }
+
+    // A reference the build could not resolve is recognised from its mark
+    // rather than from the `href`: the route deliberately carries no anchor
+    // (no element emits one), so re-parsing it would only ever say "the whole
+    // document".
+    var missing = missingOf(link, destination);
+    if (missing) {
+      openNotice(link, missing);
+      return;
+    }
+
+    if (!destination.anchor) {
+      return;
+    }
+
+    // The document on hand answers at once, which is every hover in the
+    // embedded formats and every revisit in the split one. Otherwise the
+    // chapter waits for the file to arrive; the answer re-checks the link it
+    // belongs to, because the pointer may have moved on while it travelled —
+    // a close or a newer hover clears the pending link, and an answer for a
+    // link nobody points at any more would be a surprise, not a preview.
+    var doc = documents ? documents.peek(destination.id) : null;
+    var preview = Preview.createPreview(doc, destination.anchor);
+    if (preview) {
+      showPreview(preview, link);
+      return;
+    }
+
+    if (!documents || typeof documents.get !== "function") {
+      return;
+    }
+
+    var travelling = documents.get(destination.id);
+    if (travelling && typeof travelling.then === "function") {
+      travelling.then(function (loaded) {
+        if (pending !== link && anchor !== link) {
+          return;
+        }
+
+        var arrived = Preview.createPreview(loaded, destination.anchor);
+        if (arrived) {
+          showPreview(arrived, link);
+        }
+      });
+    }
   }
 
   /**

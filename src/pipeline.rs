@@ -26,8 +26,8 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
-use crate::options::Options;
-use crate::render;
+use crate::options::{Options, OutputFormat};
+use crate::render::{RenderedOutput, render_pages, render_site};
 use crate::scan;
 use crate::site::{self, Stats};
 use crate::writers::{self, WriteReport};
@@ -115,8 +115,14 @@ pub fn run(options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> Resul
 
     // Rendering and writing happen only after the `--strict` gate, so a build
     // that fails on warnings never leaves a half-written output directory (and
-    // never wipes a previous one).
-    let rendered = render::render_site(&build.bundle)?;
+    // never wipes a previous one). The pages format renders into its own
+    // projection — shell, chunks, corpus — because the shell-only render would
+    // embed every document body the artifact never carries.
+    let rendered = if options.format == OutputFormat::Pages {
+        RenderedOutput::Pages(render_pages(&build.bundle)?)
+    } else {
+        RenderedOutput::Page(render_site(&build.bundle)?)
+    };
     let written = writers::write_site(
         options.format,
         &build,
@@ -397,10 +403,12 @@ mod tests {
             let outcome = outcome.expect("the build succeeds");
 
             // `single-html` folds the asset into the page, `html-dir` writes it
-            // as a sibling file.
+            // as a sibling file, and `pages` adds a chunk per document and
+            // the search corpus next to the shell.
             let expected_files = match format {
                 OutputFormat::SingleHtml => 1,
                 OutputFormat::HtmlDir => 1 + outcome.written.assets,
+                OutputFormat::Pages => 2 + outcome.stats.documents + outcome.written.assets,
             };
             assert_eq!(outcome.written.files, expected_files, "{format}");
             assert!(
@@ -417,6 +425,31 @@ mod tests {
                 "{format}: a clean build reports no warning: {stderr}"
             );
         }
+    }
+
+    #[test]
+    fn a_pages_run_writes_the_shell_chunks_corpus_and_assets() {
+        use crate::render::{PAGES_DIR_NAME, SEARCH_FILE_NAME};
+
+        let dir = fixture();
+        let out = dir.path().join("dist");
+        let options = options(dir.path(), &out, OutputFormat::Pages);
+
+        let (outcome, stdout, _) = execute(&options);
+        let outcome = outcome.expect("the build succeeds");
+
+        assert!(out.join(writers::HTML_FILE_NAME).is_file());
+        assert!(out.join(SEARCH_FILE_NAME).is_file());
+        assert!(out.join(PAGES_DIR_NAME).join("intro.md.json").is_file());
+        assert!(out.join(writers::ASSETS_DIR_NAME).is_dir());
+        assert_eq!(
+            outcome.written.files, 4,
+            "the shell, one chunk, the corpus and one asset"
+        );
+        assert!(
+            stdout.contains("(pages)"),
+            "the summary names the format: {stdout}"
+        );
     }
 
     #[test]
