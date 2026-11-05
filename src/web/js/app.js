@@ -12,6 +12,7 @@
  */
 import * as Router from "./router.js";
 import * as Links from "./links.js";
+import * as AssetLinks from "./asset-links.js";
 import * as Search from "./search.js";
 import * as SearchView from "./search-view.js";
 import * as DocList from "./doc-list.js";
@@ -693,6 +694,14 @@ export function start() {
   }
 
   globalThis.addEventListener("hashchange", render);
+
+  // The single-file build inlines assets as `data:` URIs, which a browser
+  // refuses to navigate to; the delegated pair below is what makes a link to
+  // an inlined PDF open in the browser's own viewer instead of dying at
+  // `about:blank#blocked`. Document routes are decided before this is ever
+  // consulted: their `href`s start with the route prefix, not with `data:`.
+  AssetLinks.listenForInlineDataLinks(document);
+
   setDrawer(false);
   render();
 }
