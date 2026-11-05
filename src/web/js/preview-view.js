@@ -1148,10 +1148,10 @@ export function createPreviewView(options) {
   /**
    * Tag the broken references of `root` themselves.
    *
-   * The build writes the mark on a `<span>` right before the link, because
-   * `pulldown-cmark`'s serialiser owns the anchor's attributes; copying it
-   * here leaves the markup in the document free of reader-only state and lets
-   * every handler read one attribute from the anchor it already has.
+   * The build writes the mark on a `<span>` right before the link, keeping
+   * it out of the anchor itself; copying it here leaves the markup in the
+   * document free of reader-only state and lets every handler read one
+   * attribute from the anchor it already has.
    *
    * Returns whether `link` carries — or was just given — the mark.
    */

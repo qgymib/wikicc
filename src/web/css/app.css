@@ -534,6 +534,73 @@ a {
   margin-bottom: 0;
 }
 
+/* Obsidian callouts. The build turns a block quote whose first line is a
+   `[!kind]` marker into a titled aside; the kind only decides the accent, so
+   an unknown kind is still a readable callout in the default colour. */
+.doc-body .callout {
+  margin: 1.3em 0;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-alt);
+  border-radius: 10px;
+  background: var(--bg-hover);
+}
+
+.doc-body .callout-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.doc-body .callout-content > :first-child {
+  margin-top: 0;
+}
+
+.doc-body .callout-content > :last-child {
+  margin-bottom: 0;
+}
+
+.doc-body .callout[data-callout="tip"],
+.doc-body .callout[data-callout="success"] {
+  border-left-color: #4ea72e;
+}
+
+.doc-body .callout[data-callout="warning"],
+.doc-body .callout[data-callout="caution"] {
+  border-left-color: #d9a441;
+}
+
+.doc-body .callout[data-callout="danger"],
+.doc-body .callout[data-callout="error"] {
+  border-left-color: #d9534f;
+}
+
+.doc-body .callout[data-callout="example"],
+.doc-body .callout[data-callout="quote"] {
+  border-left-color: #9b7fd4;
+}
+
+/* Obsidian tags (`#tag`) and Typora math, both own-layer constructs. The tag
+   reads as a small chip; math stays escaped text until a renderer exists. */
+.doc-body .doc-tag {
+  color: var(--accent-alt);
+  font-weight: 500;
+}
+
+.doc-body .math-inline,
+.doc-body pre.math {
+  font-family: var(--font-mono);
+}
+
+.doc-body pre.math {
+  margin: 1.3em 0;
+  padding: 12px 15px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-code);
+  overflow-x: auto;
+}
+
 .doc-body code {
   padding: 0.12em 0.4em;
   border-radius: 6px;

@@ -323,6 +323,60 @@ fn an_undefined_citation_stays_verbatim() {
     assert!(doc.html.contains("散射[[1]][1]"), "html: {}", doc.html);
 }
 
+/// Back-to-back runs degrade the first run's duplicate into separator text
+/// (`[[1]][1][[2]][2]` — CommonMark never makes a shortcut out of a `[n]`
+/// followed by the next idiom's `[`), which used to leave the first citation
+/// rendered twice. Every run must still fold to its one visible link.
+#[test]
+fn adjacent_bracketed_citations_each_render_as_one_link() {
+    let doc = render_document(&cited("散射机理[[1]][1][[2]][2]"));
+
+    assert_eq!(
+        doc.html,
+        "<p>散射机理<a href=\"https://example.com/1\">[1]</a>\
+         <a href=\"https://example.com/2\">[2]</a></p>\n\
+         <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+         <a href=\"https://example.com/1\">https://example.com/1</a></p>\n\
+         <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[2]:</span> \
+         <a href=\"https://example.com/2\">https://example.com/2</a></p>\n",
+        "html: {}",
+        doc.html
+    );
+}
+
+#[test]
+fn adjacent_bracketed_citations_collapse_inside_a_table_cell() {
+    let doc = render_document(&cited(
+        "| 技术 | 引用 |\n| ---- | ---- |\n| 光纤 | 散射[[1]][1][[2]][2] |",
+    ));
+
+    assert!(
+        doc.html.contains(
+            "<td>散射<a href=\"https://example.com/1\">[1]</a>\
+             <a href=\"https://example.com/2\">[2]</a></td>"
+        ),
+        "html: {}",
+        doc.html
+    );
+    assert_eq!(
+        doc.html.matches("<a ").count(),
+        4,
+        "two folded citations plus one link per definition: {}",
+        doc.html
+    );
+}
+
+#[test]
+fn an_adjacent_undefined_citation_run_stays_verbatim() {
+    let doc = render_document("散射机理[[1]][1][[2]][2]\n");
+
+    assert!(
+        doc.html.contains("散射机理[[1]][1][[2]][2]"),
+        "html: {}",
+        doc.html
+    );
+}
+
 #[test]
 fn author_written_html_is_passed_through() {
     let doc = render_document("<figure><img src=\"a.png\"></figure>\n");
@@ -421,4 +475,119 @@ fn highlight_css_is_available_to_the_shell() {
     assert!(css.contains(".code {"), "css: {css}");
     assert_eq!(css, wikicc::theme_css(), "the CSS must come from the cache");
     assert_eq!(wikicc::THEME_NAME, "base16-ocean.dark");
+}
+
+// BUG-2026-11-04 acceptance construction: a citation-dense document whose
+// reference links must all resolve. Some engines cap the total size of
+// resolved reference links with an anti-DoS budget charged per successful
+// resolution, so with long definition titles the budget runs out part way
+// through and every further citation silently degrades to literal
+// `[[n]][n]` text. The construction below is fully synthetic English
+// filler; it must stay that way.
+
+/// Number of link reference definitions; every id is cited exactly twice.
+const DENSE_REFERENCES: usize = 300;
+
+/// Byte length of each definition title (inside the quotes).
+const DENSE_TITLE_BYTES: usize = 280;
+
+/// Table rows; each row carries two citations, covering the first half of
+/// the ids. The second half is cited by the paragraphs.
+const DENSE_TABLE_ROWS: usize = DENSE_REFERENCES / 2;
+
+/// The dense-citation document: 150 four-column table rows with two
+/// citations per row, 300 one-line paragraphs with one citation each, and
+/// 300 definitions with ~280-byte titles, in the reference-list layout a
+/// citation-heavy author writes.
+fn dense_citation_document() -> String {
+    let mut source = String::new();
+    source.push_str("| Reference | Source | Venue | Note |\n");
+    source.push_str("| --- | --- | --- | --- |\n");
+    for row in 1..=DENSE_TABLE_ROWS {
+        let first = 2 * row - 1;
+        let second = 2 * row;
+        source.push_str(&format!(
+            "| Row {row} cites [[{first}]][{first}] | then [[{second}]][{second}] | filler | filler |\n"
+        ));
+    }
+    source.push('\n');
+    for id in 1..=DENSE_REFERENCES {
+        source.push_str(&format!("Paragraph {id} cites [[{id}]][{id}] once.\n\n"));
+    }
+    for id in 1..=DENSE_REFERENCES {
+        let head = format!("Dense citation reference {id} for the regression corpus. ");
+        let title = format!("{head}{}", "R".repeat(DENSE_TITLE_BYTES - head.len()));
+        source.push_str(&format!(
+            "[{id}]: https://example.com/ref/{id} \"{title}\"\n"
+        ));
+    }
+    source
+}
+
+#[test]
+fn the_dense_citation_construction_matches_the_incident_shape() {
+    let source = dense_citation_document();
+
+    // Two resolutions per citation, one link per resolution, plus nothing
+    // else: the whole point of the construction is volume.
+    assert_eq!(source.matches("[[").count(), 600, "600 citations");
+    assert_eq!(
+        source.matches("]: https://example.com/ref/").count(),
+        300,
+        "300 definitions"
+    );
+    assert!(
+        (110_000..140_000).contains(&source.len()),
+        "the document must stay in the budget-busting size class: {}",
+        source.len()
+    );
+}
+
+/// The engine-level acceptance bar: every `[[n]][n]` citation resolves both
+/// of its reference links, nothing degrades to literal text, and a citation
+/// inside a table cell carries the definition's title attribute — proving
+/// resolution went through the reference map. The engine view renders the
+/// reference definitions in place like the reader does, so the count is the
+/// 1 200 citation links plus one link per rendered definition.
+#[test]
+fn dense_citations_resolve_every_reference_at_engine_level() {
+    let html = wikicc::render_engine_html(&dense_citation_document());
+
+    assert_eq!(
+        html.matches("<a href").count(),
+        1200 + 300,
+        "two links per citation, every citation resolved, every definition in place"
+    );
+    assert!(
+        !html.contains("[["),
+        "no citation may degrade to literal bracketed text"
+    );
+    assert!(
+        html.contains("<a href=\"https://example.com/ref/1\" title=\""),
+        "a resolved citation must carry the definition's title"
+    );
+}
+
+/// The reader-level acceptance bar: with the product's citation folding on,
+/// every `[[n]][n]` collapses to its one visible link and every definition
+/// renders in place, with no literal brackets surviving anywhere.
+#[test]
+fn dense_citations_resolve_every_reference_in_the_reader() {
+    let doc = render_document(&dense_citation_document());
+
+    assert_eq!(
+        doc.html.matches("<a href").count(),
+        600 + DENSE_REFERENCES,
+        "one folded link per citation plus one per rendered definition"
+    );
+    assert_eq!(
+        doc.html.matches("<p class=\"link-ref-def\">").count(),
+        DENSE_REFERENCES,
+        "every definition must render in place"
+    );
+    assert!(
+        !doc.html.contains("[["),
+        "no citation may degrade to literal bracketed text: {}",
+        doc.html.matches("[[").count()
+    );
 }

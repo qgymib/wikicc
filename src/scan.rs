@@ -15,7 +15,6 @@
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
-use pulldown_cmark::{Event, HeadingLevel, Options as MarkdownOptions, Parser, Tag, TagEnd};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::error::{Error, Result};
@@ -274,43 +273,11 @@ pub fn document_id(root: &Path, path: &Path) -> Option<String> {
 /// Document title: first level-one heading text, else the file stem, else
 /// [`FALLBACK_DOC_TITLE`].
 ///
-/// The heading text is collected from the event stream, so inline markup
+/// The heading text is collected from the parsed tree, so inline markup
 /// (`**bold**`, `` `code` ``, links) is stripped for free and a `#` inside a
 /// fenced code block is never mistaken for a heading.
 pub fn extract_title(text: &str, path: &Path) -> String {
-    first_h1_text(text).unwrap_or_else(|| fallback_title(path))
-}
-
-/// Inline extensions that change how heading text is tokenised.
-///
-/// The renderer uses the full GFM set; scanning only needs the inline ones,
-/// because block extensions cannot appear inside a heading.
-const TITLE_OPTIONS: MarkdownOptions = MarkdownOptions::ENABLE_STRIKETHROUGH;
-
-/// Text of the first level-one heading, collapsed to single spaces.
-fn first_h1_text(text: &str) -> Option<String> {
-    let mut inside = false;
-    let mut title = String::new();
-
-    for event in Parser::new_ext(text, TITLE_OPTIONS) {
-        match event {
-            Event::Start(Tag::Heading {
-                level: HeadingLevel::H1,
-                ..
-            }) => inside = true,
-            Event::End(TagEnd::Heading(_)) => {
-                if inside {
-                    break;
-                }
-            }
-            Event::Text(value) | Event::Code(value) if inside => title.push_str(&value),
-            Event::SoftBreak | Event::HardBreak if inside => title.push(' '),
-            _ => {}
-        }
-    }
-
-    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    if title.is_empty() { None } else { Some(title) }
+    crate::markdown::first_h1(text).unwrap_or_else(|| fallback_title(path))
 }
 
 /// File stem, or [`FALLBACK_DOC_TITLE`] when there is none.

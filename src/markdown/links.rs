@@ -34,7 +34,7 @@
 //! the anchor written into the route is the one that matched — see
 //! [`LinkContext::match_anchor`].
 //!
-//! Rewriting happens on `pulldown-cmark` events (see
+//! Rewriting happens on the own-layer tree during serialisation (see
 //! [`crate::markdown::render_document_with`]), never on serialised HTML, so
 //! attribute quoting and nesting cannot be corrupted.
 //!

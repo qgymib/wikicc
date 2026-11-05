@@ -34,6 +34,7 @@ pub use markdown::highlight::{MERMAID_CLASS, MERMAID_FENCE, THEME_NAME, theme_cs
 pub use markdown::links::{LinkClass, LinkContext, LinkResolver, MissingReason, classify};
 pub use markdown::{
     LinkRewriter, NoRewrite, RenderedDoc, TocEntry, render_document, render_document_with,
+    render_engine_html,
 };
 pub use options::{Options, OutputFormat};
 pub use pipeline::BuildOutcome;

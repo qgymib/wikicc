@@ -1,93 +1,97 @@
 //! Markdown rendering: GFM HTML with stable anchors and a chapter outline.
 //!
-//! Parsing and HTML serialisation are entirely delegated to `pulldown-cmark`.
-//! This module adds the two things the crate does not provide: an anchor on
-//! every heading and the nested outline derived from those headings.
+//! Parsing runs once per document with `markdown-rs` ([`parse`]), the tree
+//! is converted into the own-layer model ([`ast`]), and the own-layer
+//! transforms run in the order the engine decision fixed:
 //!
-//! Anchors are injected at the event level, by filling the `id` field of
-//! `Tag::Heading` that `push_html` renders as `<h2 id="…">`. The HTML string is
-//! never post-processed, so attribute quoting and nesting cannot be corrupted.
+//! 1. [`transform::fold`] collapses the Typora citation idiom `[[n]][n]`
+//!    into the single link `[n]`,
+//! 2. [`transform::wikilink`] claims the Obsidian `[[wikilink]]`,
+//!    `[[wikilink|alias]]` and `![[embed]]` runs the fold left behind,
+//! 3. [`transform::inline`] claims the Typora sugar (`==highlight==`,
+//!    `~subscript~`, `^superscript^`, `%%comments%%`, `#tags`,
+//!    `:shortcodes:`),
+//! 4. [`transform::callout`] rewrites Obsidian callout block quotes.
 //!
-//! A heading's text is only complete when the closing event arrives, while its
-//! `id` has to be present on the opening event. The renderer therefore buffers
-//! the event stream, patches the buffered opening event once the slug is known,
-//! and serialises once — the document is parsed exactly once.
+//! Everything after that is one serialisation pass ([`html`]): the body
+//! HTML, the plain text the front end searches, the heading anchors and the
+//! chapter blocks all come out of the same walk, so they always describe
+//! exactly the same source. Link and image destinations are rewritten
+//! structurally during that walk through [`LinkRewriter`], never on
+//! serialised HTML, so attribute quoting and nesting cannot be corrupted.
 //!
-//! Code blocks take the same route: their text is buffered, highlighted once by
-//! [`highlight::code_block_html`], and re-emitted as a single `Event::Html`, so
-//! the highlight markup is produced structurally instead of by rewriting HTML.
+//! Reference definitions render where the author wrote them: the tree keeps
+//! every [`OwnKind::Definition`] at its source position, and the serialiser
+//! shows the first definition of every label as one paragraph, resolved
+//! through the same rewriter as an inline link.
 //!
-//! Link and image destinations are rewritten on the same event stream through
-//! [`LinkRewriter`], which is how [`links`] turns author paths into hash routes
-//! and asset placeholders. [`render_document`] keeps the destinations verbatim
-//! and is therefore byte-for-byte identical to the pre-resolution renderer.
-//!
-//! One authoring idiom is normalised before the rewriter sees it: Typora users
-//! wrap a numbered citation in a second pair of brackets, writing `[[1]][1]`
-//! for a citation whose definition block is `[1]: https://…`. CommonMark reads
-//! that as a literal `[`, the reference link `[1]`, a literal `]` and a second
-//! reference link `[1]`, so the reader would show `[1]1`. [`fold_bracketed_reference`]
-//! collapses the sequence into the single link `[1]` Typora displays.
-//!
-//! Folding therefore has to happen before the destinations are rewritten, and
-//! it can only be recognised once the *second* link closes. A link that may
-//! open such a citation is kept pending instead of being rewritten at its own
-//! closing event; the next event settles the question. The swallowed duplicate
-//! consequently never reaches the resolver, so it cannot produce a second
-//! diagnostic or a second link-graph edge.
-//!
-//! The same idiom puts a definition block under a heading, `[1]: https://…`,
-//! which CommonMark consumes as link metadata and never renders — the section
-//! then reads as empty. [`refdefs`] turns every definition back into one
-//! paragraph at its source position, so the reader shows the list Typora
-//! shows. Definitions produce no events of their own, so they are injected
-//! between events by source offset; each one resolves its destination through
-//! the same [`LinkRewriter`] as an inline link and contributes its text to the
-//! search index.
-//!
-//! The same pass also collects the plain text of the document, which is what
-//! the front end searches, and the chapter blocks the reader previews when a
-//! link to another chapter is hovered (see [`sections`]). Keeping all of them
-//! in one pass means `html`, `toc`, `blocks` and `text` always describe exactly
-//! the same source.
+//! One authoring idiom is normalised on the tree: Typora users wrap a
+//! numbered citation in a second pair of brackets, writing `[[1]][1]` for a
+//! citation whose definition block is `[1]: https://…`. The fold collapses
+//! that into the single link Typora displays. The Obsidian wikilink shares
+//! the `[[` opening, so the fold runs first and the wikilink pass takes
+//! only the remainder — a target that sits in the reference table is a
+//! citation display, never a wikilink.
 
 pub mod highlight;
 pub mod links;
-pub(crate) mod refdefs;
 pub mod sections;
 pub mod slug;
 pub mod toc;
 
-use pulldown_cmark::html::push_html;
-use pulldown_cmark::{
-    CodeBlockKind, CowStr, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd,
-};
+pub(crate) mod ast;
+pub(crate) mod html;
+pub(crate) mod parse;
+pub(crate) mod refdefs;
+pub(crate) mod transform;
 
-use highlight::code_block_html;
-use refdefs::ReferenceDefinition;
+use std::collections::BTreeMap;
+
+use ast::{OwnKind, OwnNode};
 use sections::Block;
+use toc::Heading;
 
 pub use links::{LinkClass, LinkContext, LinkResolver, classify};
 pub use sections::Block as ChapterBlock;
 pub use slug::{FALLBACK_SLUG, Slugger, slugify};
-pub use toc::{Heading, HeadingText, TocEntry, build_toc, collapse_whitespace};
+pub use toc::{HeadingText, TocEntry, build_toc, collapse_whitespace};
 
-/// Markdown extensions compiled in.
+/// Class of a link whose block-reference chapter the target document lacks.
 ///
-/// Tables, footnotes, strikethrough and task lists are the GFM subset promised
-/// by the plan. Smart punctuation stays off so quotes and `--` survive verbatim
-/// instead of drifting with a library upgrade, and heading attributes stay off
-/// so anchors are decided by [`slugify`] alone and never by author input.
-pub const PARSER_OPTIONS: Options = Options::ENABLE_TABLES
-    .union(Options::ENABLE_FOOTNOTES)
-    .union(Options::ENABLE_STRIKETHROUGH)
-    .union(Options::ENABLE_TASKLISTS);
+/// The stylesheet uses it to mark the link in the document itself, so a
+/// broken reference is visible before it is ever hovered or clicked.
+pub const MISSING_LINK_CLASS: &str = "doc-link-missing";
+
+/// Attribute carrying the chapter a broken block reference named.
+///
+/// The route cannot carry it, because no element of the target document
+/// emits that anchor; the reader reads the attribute instead and reports
+/// it. Must stay in step with `MISSING_ANCHOR_ATTRIBUTE` in
+/// `src/web/js/links.js`.
+pub const MISSING_ANCHOR_ATTRIBUTE: &str = "data-wikicc-missing-anchor";
+
+/// Opening-tag attributes for a link whose chapter does not exist.
+///
+/// Built from escaped parts, so the authored chapter cannot terminate the
+/// attribute it is written into.
+pub(crate) fn missing_link_attributes(anchor: &str) -> String {
+    let mut attributes = String::with_capacity(anchor.len() + 64);
+    attributes.push_str(" class=\"");
+    attributes.push_str(MISSING_LINK_CLASS);
+    attributes.push_str("\" ");
+    attributes.push_str(MISSING_ANCHOR_ATTRIBUTE);
+    attributes.push_str("=\"");
+    highlight::escape_into(&mut attributes, anchor);
+    attributes.push('"');
+    attributes
+}
 
 /// Result of rendering one document.
 ///
-/// `html`, `toc` and `text` come from the same parse, so a document is never
-/// parsed twice: the HTML is what the reader shows, the outline is what the
-/// right column lists and `text` is what the search index matches.
+/// `html`, `toc` and `text` come from the same parse and the same
+/// serialisation walk, so a document is never parsed twice: the HTML is
+/// what the reader shows, the outline is what the right column lists and
+/// `text` is what the search index matches.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedDoc {
     /// Body HTML, with an `id` attribute on every heading.
@@ -96,12 +100,12 @@ pub struct RenderedDoc {
     pub toc: Vec<TocEntry>,
     /// Body HTML split into one block per heading, in document order.
     ///
-    /// A block holds its heading and its own content up to the next heading,
-    /// plus its place in the outline, so a block reference can read a whole
-    /// chapter — itself and everything nested under it — without a second
-    /// parse and without repeating any markup.
+    /// A block holds its heading and its own content up to the next
+    /// heading, plus its place in the outline, so a block reference can read
+    /// a whole chapter — itself and everything nested under it — without a
+    /// second parse and without repeating any markup.
     pub blocks: Vec<Block>,
-    /// Plain text of the document: every `Text` and `Code` event, with block
+    /// Plain text of the document: every text and code run, with block
     /// boundaries turned into single spaces and whitespace collapsed.
     pub text: String,
 }
@@ -109,15 +113,17 @@ pub struct RenderedDoc {
 /// Final addressing form of one destination, as the build decides it.
 ///
 /// Most destinations only need a string, but a block reference can name a
-/// chapter its target document does not have: the route then cannot carry the
-/// anchor — no element emits it — yet the reader is expected to say *which*
-/// chapter was asked for. The authored spelling therefore travels beside the
-/// route, and the renderer turns it into the attributes the reader looks for.
+/// chapter its target document does not have: the route then cannot carry
+/// the anchor — no element emits it — yet the reader is expected to say
+/// *which* chapter was asked for. The authored spelling therefore travels
+/// beside the route, and the serialiser turns it into the attributes the
+/// reader looks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkTarget {
     /// Destination written into the `href` or `src`.
     pub dest: String,
-    /// Chapter the author named when the target document has no such chapter.
+    /// Chapter the author named when the target document has no such
+    /// chapter.
     ///
     /// `Some` is the authored spelling, kept verbatim so the message quotes
     /// the line the author has to fix. Only a chapter mismatch ever sets it.
@@ -144,10 +150,11 @@ impl LinkTarget {
 
 /// Rewrites link and image destinations while a document is rendered.
 ///
-/// The renderer calls this for every `Tag::Link` and `Tag::Image` it meets, on
-/// the event stream and before any HTML exists, so a destination can be
-/// replaced without touching attribute quoting. `line` is the 1-based source
-/// line the destination starts on, which is what diagnostics quote.
+/// The serialiser calls this for every link, image and reference
+/// destination it meets, in document order and before any HTML exists, so a
+/// destination can be replaced without touching attribute quoting. `line`
+/// is the 1-based source line the element starts on, which is what
+/// diagnostics quote.
 pub trait LinkRewriter {
     /// Final target for `destination`.
     fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget;
@@ -163,132 +170,12 @@ impl LinkRewriter for NoRewrite {
     }
 }
 
-/// Heading whose opening event is buffered but not yet patched.
-struct OpenHeading<'a> {
-    /// Position of the opening event in the buffer.
-    index: usize,
-    /// Heading level, reused for the patched event and the outline entry.
-    level: HeadingLevel,
-    /// Classes and attributes carried over from the parser.
-    classes: Vec<CowStr<'a>>,
-    attrs: Vec<(CowStr<'a>, Option<CowStr<'a>>)>,
-    /// Text seen so far, collapsed once the heading closes.
-    text: HeadingText,
-}
-
-/// Link whose destination has not been rewritten yet.
-///
-/// Links are rewritten when they close, not when they open, because a
-/// `[[n]][n]` citation is only recognisable at the closing event of its second
-/// link — and by then one of the two must be gone, so the resolver is called
-/// exactly once.
-struct OpenLink {
-    /// Position of the opening event in the buffer.
-    index: usize,
-    /// 1-based source line the link starts on.
-    line: usize,
-    /// Byte length of the plain text when the link opened.
-    text_start: usize,
-}
-
-/// Rewrite the destination of the link whose `Start` is at `index`.
-///
-/// A no-op when the event there is no longer a link, which keeps the caller
-/// free of extra bookkeeping.
-fn rewrite_link_at<R: LinkRewriter + ?Sized>(
-    events: &mut [Event<'_>],
-    index: usize,
-    rewriter: &mut R,
-    line: usize,
-) {
-    let Some(Event::Start(Tag::Link {
-        link_type,
-        dest_url,
-        title,
-        id,
-    })) = events.get(index)
-    else {
-        return;
-    };
-
-    let target = rewriter.rewrite(dest_url, line);
-    // A block reference whose chapter does not exist has no anchor to route
-    // to, so the fact has to travel as markup. The `id` slot is the only
-    // place on a link event that carries it: it is unused by the build, and
-    // [`write_positioned_html`] turns it into an [`Event::InlineHtml`] prefix
-    // right before the link's opening tag — still one serialisation pass, and
-    // still no string post-processing.
-    let id = id.clone();
-    let marked = match target.missing_anchor {
-        Some(anchor) => heading_marker(anchor),
-        None => id,
-    };
-    events[index] = Event::Start(Tag::Link {
-        link_type: *link_type,
-        dest_url: CowStr::from(target.dest),
-        title: title.clone(),
-        id: marked,
-    });
-}
-
-/// Class of a link whose block-reference chapter the target document lacks.
-///
-/// The stylesheet uses it to mark the link in the document itself, so a
-/// broken reference is visible before it is ever hovered or clicked.
-pub const MISSING_LINK_CLASS: &str = "doc-link-missing";
-
-/// Attribute carrying the chapter a broken block reference named.
-///
-/// The route cannot carry it, because no element of the target document emits
-/// that anchor; the reader reads the attribute instead and reports it. Must
-/// stay in step with `MISSING_ANCHOR_ATTRIBUTE` in `src/web/js/links.js`.
-pub const MISSING_ANCHOR_ATTRIBUTE: &str = "data-wikicc-missing-anchor";
-
-/// Prefix of a link's opening tag, standing in for the `id` slot of its event.
-///
-/// [`write_positioned_html`] expands it back into an [`Event::InlineHtml`]
-/// immediately before the link, so nothing here reaches the payload as text.
-pub(crate) const LINK_MARKER_PREFIX: &str = "\u{0}wikicc-link:";
-
-/// Marker recording the extra attributes of a link with a missing chapter.
-pub(crate) fn heading_marker(anchor: String) -> CowStr<'static> {
-    CowStr::Boxed(format!("{LINK_MARKER_PREFIX}{anchor}").into_boxed_str())
-}
-
-/// The chapter a marker carries, or `None` for an `id` that is not one.
-pub(crate) fn marked_anchor(id: &str) -> Option<&str> {
-    id.strip_prefix(LINK_MARKER_PREFIX)
-}
-
-/// Opening-tag attributes for a link whose chapter does not exist.
-///
-/// Built from escaped parts, so the authored chapter cannot terminate the
-/// attribute it is written into.
-fn missing_link_attributes(anchor: &str) -> String {
-    let mut attributes = String::with_capacity(anchor.len() + 64);
-    attributes.push_str(" class=\"");
-    attributes.push_str(MISSING_LINK_CLASS);
-    attributes.push_str("\" ");
-    attributes.push_str(MISSING_ANCHOR_ATTRIBUTE);
-    attributes.push_str("=\"");
-    highlight::escape_into(&mut attributes, anchor);
-    attributes.push('"');
-    attributes
-}
-
-/// Fenced or indented code block whose text is still being collected.
-struct CodeBlockBuffer {
-    /// Fence info string, `None` for an indented block.
-    info: Option<String>,
-    /// Verbatim code, in source order.
-    code: String,
-}
-
 /// Render one Markdown document into HTML, its chapter outline and its text.
 ///
-/// Never fails: `pulldown-cmark` accepts any input, and unknown constructs
-/// degrade to escaped text. Link and image destinations are left exactly as
-/// written; use [`render_document_with`] to resolve them.
+/// Never fails: the parser degrades to plain text on input it cannot
+/// represent, and unknown constructs degrade to escaped text. Link and
+/// image destinations are left exactly as written; use
+/// [`render_document_with`] to resolve them.
 pub fn render_document(source: &str) -> RenderedDoc {
     render_document_with(source, &mut NoRewrite)
 }
@@ -299,275 +186,15 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
     source: &str,
     rewriter: &mut R,
 ) -> RenderedDoc {
-    let line_starts = line_starts(source);
-    let mut events: Vec<Event<'_>> = Vec::new();
-    let mut headings: Vec<Heading> = Vec::new();
-    let mut text = String::with_capacity(source.len());
+    let tree = prepare(source);
     let mut slugger = Slugger::new();
-    let mut open: Option<OpenHeading<'_>> = None;
-    let mut code_block: Option<CodeBlockBuffer> = None;
-    let mut open_links: Vec<OpenLink> = Vec::new();
-    // Link whose rewrite waits until it is known whether it opens a
-    // `[[n]][n]` citation. At most one such link can be pending: the shape
-    // only ever spans two adjacent links.
-    let mut pending: Option<OpenLink> = None;
-    // Definitions are collected before the parser is consumed, then injected
-    // between events at their source offset.
-    let parser = Parser::new_ext(source, PARSER_OPTIONS);
-    let definitions = refdefs::collect(&parser);
-    let mut next_definition = 0;
+    let mut headings: Vec<Heading> = Vec::new();
+    collect_headings(&tree, &mut slugger, &mut headings);
+    let footnotes = footnote_numbers(&tree);
+    let mut definitions = refdefs::collect(&tree);
 
-    for (event, range) in parser.into_offset_iter() {
-        // A definition is only ever met at the start of a paragraph block, so
-        // every event after its span starts later. Emitting the definitions
-        // whose span ends at or before this event therefore keeps the exact
-        // source order with a single forward pass.
-        emit_definitions_before(
-            &mut events,
-            &mut text,
-            &definitions,
-            &mut next_definition,
-            range.start,
-            &line_starts,
-            &mut *rewriter,
-        );
-
-        match event {
-            Event::Start(Tag::Link {
-                link_type,
-                dest_url,
-                title,
-                id,
-            }) => {
-                // The destination is rewritten when the fold is settled, not
-                // here: a `[[n]][n]` pair must be matched on the destinations
-                // the author wrote, and a swallowed duplicate must never reach
-                // the resolver.
-                events.push(Event::Start(Tag::Link {
-                    link_type,
-                    dest_url,
-                    title,
-                    id,
-                }));
-                open_links.push(OpenLink {
-                    index: events.len() - 1,
-                    line: line_of(&line_starts, range.start),
-                    // The plain text does not hold this link's own content yet.
-                    text_start: text.len(),
-                });
-            }
-            Event::Start(Tag::Image {
-                link_type,
-                dest_url,
-                title,
-                id,
-            }) => {
-                let line = line_of(&line_starts, range.start);
-                // An image addresses a file, never a chapter, so it has
-                // nothing to report and is written as resolved.
-                let target = rewriter.rewrite(&dest_url, line);
-                events.push(Event::Start(Tag::Image {
-                    link_type,
-                    dest_url: CowStr::from(target.dest),
-                    title,
-                    id,
-                }));
-            }
-            Event::End(TagEnd::Link) => {
-                events.push(Event::End(TagEnd::Link));
-                let Some(open_link) = open_links.pop() else {
-                    continue;
-                };
-                // A fold can only be recognised once the *second* link closes,
-                // so the first link of a possible `[[n]][n]` is kept pending.
-                // Rewriting it now would leave the two destinations different
-                // and the fold would never match.
-                if pending.is_none() && looks_like_wrap_candidate(&events, open_link.index) {
-                    pending = Some(open_link);
-                    continue;
-                }
-
-                match pending
-                    .as_ref()
-                    .and_then(|pending_link| fold_bracketed_reference(&mut events, pending_link))
-                {
-                    Some(fold) => {
-                        // The citation reads as `[n]`, not as `[[n]][n]`. The
-                        // plain text holds `[`, `n`, `]` and then the duplicate
-                        // `n`; `text_start` marks the `n` of the surviving link,
-                        // so keeping it and closing the bracket is the citation.
-                        let keep = fold.text_start + fold.duplicate_len;
-                        text.truncate(keep);
-                        text.push_str(CLOSING_BRACKET);
-                        if let Some(heading) = open.as_mut() {
-                            heading.text.truncate(keep);
-                            heading.text.push(CLOSING_BRACKET);
-                        }
-                        // The two links are settled; the pending slot is free.
-                        pending = None;
-                        // Only the surviving link reaches the resolver, and it
-                        // keeps the line it starts on.
-                        rewrite_link_at(&mut events, fold.link_start, &mut *rewriter, fold.line);
-                    }
-                    None => {
-                        // No citation here. When a link was pending, *this* link
-                        // is the one that broke the shape, so the pending link
-                        // is rewritten first and this one after it; otherwise
-                        // only this link is rewritten.
-                        let earlier = pending.take();
-                        if let Some(pending_link) = earlier {
-                            rewrite_link_at(
-                                &mut events,
-                                pending_link.index,
-                                &mut *rewriter,
-                                pending_link.line,
-                            );
-                        }
-                        rewrite_link_at(
-                            &mut events,
-                            open_link.index,
-                            &mut *rewriter,
-                            open_link.line,
-                        );
-                    }
-                }
-            }
-            Event::Start(Tag::Heading {
-                level,
-                classes,
-                attrs,
-                ..
-            }) => {
-                // Placeholder: replaced by the patched event once the text is known.
-                events.push(Event::Start(Tag::Heading {
-                    level,
-                    id: None,
-                    classes: Vec::new(),
-                    attrs: Vec::new(),
-                }));
-                separate(&mut text);
-                open = Some(OpenHeading {
-                    index: events.len() - 1,
-                    level,
-                    classes,
-                    attrs,
-                    text: HeadingText::new(),
-                });
-            }
-            Event::End(TagEnd::Heading(level)) => {
-                if let Some(heading) = open.take() {
-                    let heading_text = heading.text.finish();
-                    let slug = slugger.unique(&heading_text);
-                    events[heading.index] = Event::Start(Tag::Heading {
-                        level: heading.level,
-                        id: Some(CowStr::from(slug.clone())),
-                        classes: heading.classes,
-                        attrs: heading.attrs,
-                    });
-                    headings.push(Heading {
-                        level: heading.level as u32,
-                        id: slug,
-                        text: heading_text,
-                    });
-                }
-                events.push(Event::End(TagEnd::Heading(level)));
-            }
-            Event::Start(Tag::CodeBlock(kind)) => {
-                let info = match kind {
-                    CodeBlockKind::Fenced(info) => Some(info.to_string()),
-                    CodeBlockKind::Indented => None,
-                };
-                separate(&mut text);
-                code_block = Some(CodeBlockBuffer {
-                    info,
-                    code: String::new(),
-                });
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                if let Some(block) = code_block.take() {
-                    let html = code_block_html(&block.code, block.info.as_deref());
-                    events.push(Event::Html(CowStr::from(html)));
-                }
-            }
-            Event::Text(value) => {
-                // Code is searchable too, so the plain text keeps a copy of
-                // what the highlighter consumes.
-                text.push_str(&value);
-                if let Some(block) = code_block.as_mut() {
-                    // Code is highlighted as a whole, so the text never reaches
-                    // the serialiser as an event of its own.
-                    block.code.push_str(&value);
-                } else {
-                    if let Some(heading) = open.as_mut() {
-                        heading.text.push(&value);
-                    }
-                    events.push(Event::Text(value));
-                }
-            }
-            Event::Code(value) => {
-                text.push_str(&value);
-                if let Some(heading) = open.as_mut() {
-                    heading.text.push(&value);
-                }
-                events.push(Event::Code(value));
-            }
-            other @ (Event::SoftBreak | Event::HardBreak) => {
-                text.push(' ');
-                if let Some(heading) = open.as_mut() {
-                    heading.text.push_break();
-                }
-                events.push(other);
-            }
-            other => {
-                // A pending link waits for the event after it to prove whether it
-                // opens a citation. Only the `]` that would separate the two
-                // links keeps it waiting; anything else settles the question.
-                if !is_literal(&other, CLOSING_BRACKET)
-                    && let Some(pending_link) = pending.take()
-                {
-                    rewrite_link_at(
-                        &mut events,
-                        pending_link.index,
-                        &mut *rewriter,
-                        pending_link.line,
-                    );
-                }
-                // Block boundaries become spaces, so a table row reads as
-                // `name value` instead of `namevalue` in the index. Inline
-                // elements are deliberately not boundaries: `[a](b.md).` must
-                // read as `a.`, not as `a .`.
-                if let Event::Start(tag) = &other
-                    && separates_words(tag)
-                {
-                    separate(&mut text);
-                }
-                // An image's alt text and a footnote reference also belong to a
-                // heading that wraps them, so the outline says `Logo` and not
-                // an empty heading.
-                if let Some(heading) = open.as_mut() {
-                    heading.text.push_other(inline_text(&other));
-                }
-                if code_block.is_none() {
-                    events.push(other);
-                }
-            }
-        }
-    }
-
-    // A document that ends with its definitions never reaches an event past
-    // them, which is exactly the "参考链接" layout: flush the rest here.
-    emit_definitions_before(
-        &mut events,
-        &mut text,
-        &definitions,
-        &mut next_definition,
-        usize::MAX,
-        &line_starts,
-        &mut *rewriter,
-    );
-
-    let mut html = String::with_capacity(source.len());
-    let blocks = write_positioned_html(&events, &headings, &mut html);
+    let (html, text, blocks) =
+        html::serialize(&tree, &headings, &footnotes, &mut definitions, rewriter);
 
     RenderedDoc {
         html,
@@ -577,539 +204,199 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
     }
 }
 
-/// Plain text an inline event other than text, code or a break contributes.
+/// The engine-level view: parse and serialise, no own-layer transforms.
 ///
-/// Only the two events that carry author-visible characters are considered:
-/// an image contributes its alt text and a footnote reference its marker.
-/// Everything else is markup, so it contributes nothing and a heading made of
-/// pure emphasis keeps the text inside it.
-fn inline_text<'a>(event: &'a Event<'_>) -> &'a str {
-    match event {
-        Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image) => "",
-        Event::FootnoteReference(name) => name,
-        Event::InlineHtml(html) | Event::Html(html) => html,
-        _ => "",
-    }
+/// This is what the markdown engine itself makes of a document: the same
+/// parser configuration and the same serialiser, with every own-layer pass
+/// skipped. It exists so the engine's behaviour can be observed directly —
+/// the citation-budget acceptance test runs against it, because the fold it
+/// must not hit lives above this line.
+pub fn render_engine_html(source: &str) -> String {
+    let tree = ast::to_own(&parse::parse_document(source));
+    let mut slugger = Slugger::new();
+    let mut headings: Vec<Heading> = Vec::new();
+    collect_headings(&tree, &mut slugger, &mut headings);
+    let footnotes = footnote_numbers(&tree);
+    let mut definitions = refdefs::collect(&tree);
+
+    let (html, _, _) = html::serialize(
+        &tree,
+        &headings,
+        &footnotes,
+        &mut definitions,
+        &mut NoRewrite,
+    );
+    html
 }
 
 /// Anchors of every heading in `source`, in document order.
 ///
-/// A link may point at a chapter of a document that has not been rendered yet
-/// (or at any document at all, given that rendering order follows the scan),
-/// so the anchor set has to be known *before* the link resolver runs. This pass
-/// therefore walks only the heading events: it skips highlighting, code
-/// buffering, text collection and every link, which keeps the cost far below a
-/// second full render.
-///
-/// The result must match the anchors [`render_document_with`] emits exactly,
-/// because a mismatch would either report a chapter that cannot be reached or
-/// accept one that does not exist. Both paths use [`HeadingText`] and
-/// [`Slugger`], and the parser options are shared, so the only thing to keep in
-/// step is which events feed the heading text — which is why that logic is not
-/// duplicated here but expressed by [`HeadingText`]'s methods.
-///
-/// Raw HTML passthrough is a documented build-input trust decision, so a
-/// `<h2>` written by hand is not a heading for either pass and the two stay
-/// consistent.
+/// A link may point at a chapter of a document that has not been rendered
+/// yet (or at any document at all, given that rendering order follows the
+/// scan), so the anchor set has to be known *before* the link resolver
+/// runs. The pre-pass runs the same parse, the same transforms and the same
+/// heading collection the render pass runs, minus the serialisation, which
+/// keeps the cost far below a second full render and the anchors exactly in
+/// step with it: a mismatch would either report a chapter that cannot be
+/// reached or accept one that does not exist.
 pub fn sections_of(source: &str) -> Vec<String> {
+    let tree = prepare(source);
     let mut slugger = Slugger::new();
-    let mut open: Option<HeadingText> = None;
-    let mut anchors: Vec<String> = Vec::new();
+    let mut headings: Vec<Heading> = Vec::new();
+    collect_headings(&tree, &mut slugger, &mut headings);
 
-    for event in Parser::new_ext(source, PARSER_OPTIONS) {
-        match event {
-            Event::Start(Tag::Heading { .. }) => open = Some(HeadingText::new()),
-            Event::End(TagEnd::Heading(_)) => {
-                if let Some(text) = open.take() {
-                    anchors.push(slugger.unique(&text.finish()));
-                }
-            }
-            Event::Text(value) | Event::Code(value) => {
-                if let Some(heading) = open.as_mut() {
-                    heading.push(&value);
-                }
-            }
-            Event::SoftBreak | Event::HardBreak => {
-                if let Some(heading) = open.as_mut() {
-                    heading.push_break();
-                }
-            }
-            other => {
-                if let Some(heading) = open.as_mut() {
-                    heading.push_other(inline_text(&other));
-                }
-            }
-        }
-    }
-
-    anchors
+    headings.into_iter().map(|heading| heading.id).collect()
 }
 
-/// Marker placed before a heading to record where its section starts.
+/// The text of the first level-one heading, if the document has one.
 ///
-/// A comment rather than a tag, and one no Markdown source can carry: raw HTML
-/// from the document is passed through verbatim, so a marker an author could
-/// write would move every boundary after it.
-const SECTION_MARKER_PREFIX: &str = "<!--wikicc-section:";
-/// End of the marker.
-const SECTION_MARKER_SUFFIX: &str = "-->";
-
-/// Marker announcing section `index`.
-fn section_marker(index: usize) -> Box<str> {
-    format!("{SECTION_MARKER_PREFIX}{index}{SECTION_MARKER_SUFFIX}").into_boxed_str()
-}
-
-/// Serialise `events` into `html`, reporting one [`Block`] per heading.
-///
-/// `push_html` is a stateful writer — a table cell's closing tag depends on the
-/// event that follows it, so serialising one event at a time produces different
-/// markup — which is why the body is produced in a single call. Byte offsets
-/// come from a marker written before every heading: a block starts where its
-/// marker started, and the markers are cut out afterwards together with the
-/// blank lines the serialiser wrapped them in. Only those offsets are used, so
-/// the HTML is exactly what the renderer produced before blocks existed.
-///
-/// `headings` supplies each block's level, in the same document order the
-/// markers are written in: the two lists are read positionally, and a heading
-/// the render pass did not record simply has no level and is dropped by
-/// [`sections::slice`] rather than guessed.
-///
-/// The same single pass expands the marker [`rewrite_link_at`] parks in a
-/// broken link's `id`: it becomes an inline `<span class hidden>` that carries
-/// the attributes the reader looks for, right before the link's opening tag.
-/// A bare inline tag is the one shape `push_html` writes from an
-/// [`Event::InlineHtml`] without a trailing newline, so it lands *inside* the
-/// paragraph the link belongs to, and stays syntactically valid everywhere it
-/// can appear — unlike a `<div>`, which would be invalid inside a table cell.
-fn write_positioned_html(
-    events: &[Event<'_>],
-    headings: &[Heading],
-    html: &mut String,
-) -> Vec<Block> {
-    let mut marked: Vec<Event<'_>> = Vec::with_capacity(events.len() + 8);
-    let mut ids: Vec<String> = Vec::new();
-    let mut levels: Vec<u32> = Vec::new();
-
-    for event in events {
-        if let Event::Start(Tag::Heading { id, .. }) = event {
-            marked.push(Event::Html(CowStr::Boxed(section_marker(ids.len()))));
-            ids.push(id.as_deref().unwrap_or_default().to_string());
-            // `headings` is in the same order as the heading events, because
-            // both are appended as the document is parsed.
-            levels.extend(headings.get(ids.len() - 1).map(|heading| heading.level));
-        }
-
-        if let Event::Start(Tag::Link { id: marker, .. }) = event
-            && let Some(anchor) = marked_anchor(marker)
-        {
-            let attributes = missing_link_attributes(anchor);
-            let mut opening = String::with_capacity(attributes.len() + 28);
-            opening.push_str("<span hidden");
-            opening.push_str(&attributes);
-            opening.push_str("></span>");
-            marked.push(Event::InlineHtml(CowStr::from(opening)));
-        }
-
-        marked.push(event.clone());
-    }
-
-    push_html(html, marked.into_iter());
-
-    // One `(marker_start, cut_end)` pair per heading, in document order, where
-    // `cut_end` is just past the blank lines the serialiser wrapped the marker
-    // in — which is exactly where the heading itself starts.
-    let mut found: Vec<(usize, usize)> = Vec::with_capacity(ids.len());
-    let mut cursor = 0;
-
-    for index in 0..ids.len() {
-        let marker = section_marker(index);
-        let Some(position) = find_from(html, &marker, cursor) else {
-            break;
-        };
-        let cut_end = skip_newlines(html, position + marker.len());
-        found.push((position, cut_end));
-        cursor = position + marker.len();
-    }
-
-    found.truncate(ids.len());
-    if found.is_empty() {
-        return Vec::new();
-    }
-
-    // Cut every marker out of the body, together with the blank lines the
-    // serialiser wrapped it in, so a document that opens with a heading still
-    // opens with that heading and no paragraph gains a stray blank line.
-    let mut without_markers = String::with_capacity(html.len());
-    let mut copied = 0;
-    for &(start, end) in &found {
-        without_markers.push_str(&html[copied..start]);
-        copied = end;
-    }
-    without_markers.push_str(&html[copied..]);
-
-    // A heading starts exactly where its marker started, once the markers
-    // before it are gone: everything between the two was cut.
-    let mut starts: Vec<usize> = Vec::with_capacity(found.len());
-    let mut removed = 0;
-    for &(marker_start, heading_start) in &found {
-        starts.push(marker_start - removed);
-        removed += heading_start - marker_start;
-    }
-
-    let blocks = sections::slice(&without_markers, &starts, &ids, &levels);
-    html.clone_from(&without_markers);
-    blocks
-}
-
-/// First offset at or after `from` that is not a newline.
-fn skip_newlines(html: &str, from: usize) -> usize {
-    let rest = &html[from..];
-    from + (rest.len() - rest.trim_start_matches(['\n', '\r']).len())
-}
-
-/// Start of `needle` in `haystack`, searching from `from`.
-fn find_from(haystack: &str, needle: &str, from: usize) -> Option<usize> {
-    haystack.get(from..)?.find(needle).map(|index| index + from)
-}
-
-/// Append one space unless the buffer is empty or already ends with whitespace.
-///
-/// Used at block boundaries: it keeps neighbouring pieces of text from gluing
-/// together without ever producing runs of spaces.
-fn separate(text: &mut String) {
-    if !text.is_empty() && !text.ends_with(char::is_whitespace) {
-        text.push(' ');
-    }
-}
-
-/// Emit every definition that ends at or before `offset`.
-///
-/// Each definition becomes one `Event::Html` paragraph at its source position,
-/// with its destination resolved by `rewriter` and its text appended to the
-/// search index. `next` is the index of the first definition not yet emitted,
-/// so the pass is linear in the number of events plus definitions and never
-/// reorders them: the caller walks the source front to back and passes each
-/// event's start offset.
-#[allow(clippy::too_many_arguments)]
-fn emit_definitions_before<R: LinkRewriter + ?Sized>(
-    events: &mut Vec<Event<'_>>,
-    text: &mut String,
-    definitions: &[ReferenceDefinition],
-    next: &mut usize,
-    offset: usize,
-    line_starts: &[usize],
-    rewriter: &mut R,
-) {
-    while let Some(definition) = definitions.get(*next) {
-        if definition.end > offset {
-            break;
-        }
-
-        separate(text);
-        text.push_str(&refdefs::definition_text(definition));
-        let line = line_of(line_starts, definition.start);
-        let html = refdefs::definition_html(definition, rewriter, line);
-        events.push(Event::Html(CowStr::from(html)));
-        *next += 1;
-    }
-}
-
-/// The character that opens a citation wrap, `[[n]][n]`.
-const OPENING_BRACKET: &str = "[";
-/// The literal that separates the two links of `[[n]][n]`.
-const CLOSING_BRACKET: &str = "]";
-
-/// What a successful fold did, so the caller can keep its own bookkeeping in
-/// step with the events it just replaced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Folded {
-    /// Index of the surviving link's `Start` after the fold.
-    link_start: usize,
-    /// Source line the surviving link starts on, for the resolver's diagnostics.
-    line: usize,
-    /// Byte length of the plain text when the surviving link opened.
-    text_start: usize,
-    /// Byte length of the citation's visible text, which is `n` for `[[n]][n]`.
-    duplicate_len: usize,
-}
-
-/// Whether the link starting at `index` may open a `[[n]][n]` citation.
-///
-/// Only a reference link preceded by a `[` text event can, which is a cheap
-/// test that keeps ordinary links on the immediate-rewrite path.
-fn looks_like_wrap_candidate(events: &[Event<'_>], index: usize) -> bool {
-    let Some(opening) = index.checked_sub(1) else {
-        return false;
-    };
-    let Some(Event::Text(text)) = events.get(opening) else {
-        return false;
-    };
-    if !text.ends_with(OPENING_BRACKET) {
-        return false;
-    }
-    matches!(
-        events.get(index),
-        Some(Event::Start(Tag::Link { link_type, .. })) if is_reference(*link_type)
-    )
-}
-
-/// Fold a Typora-style `[[n]][n]` citation into the single link `[n]`.
-///
-/// The event stream the parser produces for `[[1]][1]` is a literal `[`, a
-/// reference link `[1]`, a literal `]` and a second, identical reference link
-/// `[1]`. Serialising that yields `[<a>1</a>]<a>1</a>`, which a reader shows as
-/// `[1]1`; Typora instead shows one `[1]` link. This function runs right after
-/// the closing event of a link has been pushed and, when the last events form
-/// exactly that shape, rewrites them into `<a href="…">[1]</a>`:
-///
-/// * the `[` that opened the wrap is dropped from the preceding text event,
-/// * the `]` between the links is dropped,
-/// * the second link is dropped entirely, and
-/// * `[` and `]` are pushed inside the first link, so the brackets become part
-///   of its visible text instead of anonymous text around it.
-///
-/// Both links must be reference links (`Shortcut` or `Collapsed`) to the same
-/// destination with the same visible text; an inline `[1](url)` pair is left
-/// alone, because there the brackets are the author's own syntax rather than a
-/// wrap around a citation. Folding stops at any other event, so a match can
-/// never cross a block or inline boundary.
-///
-/// Returns `None` when the tail is not a `[[n]][n]`, which is the common case.
-fn fold_bracketed_reference(events: &mut Vec<Event<'_>>, pending: &OpenLink) -> Option<Folded> {
-    let Shape {
-        first_end,
-        second_start,
-        opening,
-        opening_is_empty,
-        ..
-    } = bracket_shape(events)?;
-
-    // Drop the duplicate link together with the `]` that separated the two
-    // links. Removing from the back keeps the surviving indices valid.
-    events.truncate(second_start);
-    events.pop();
-
-    // The `[` that opened the wrap goes next: either the whole text event when
-    // it held nothing else, or just the bracket when it was glued to the text
-    // in front of it (`text[[1]][1]`).
-    if opening_is_empty {
-        events.remove(opening);
-    } else if let Event::Text(text) = &events[opening] {
-        let prefix = text.strip_suffix(OPENING_BRACKET).unwrap_or(text);
-        events[opening] = Event::Text(CowStr::from(prefix.to_string()));
-    }
-    // Only the `[` event, when it was dropped whole, sat before the surviving
-    // link; the removals below it never shift its indices.
-    let shift = usize::from(opening_is_empty);
-    let link_start = opening + (1 - shift);
-    let link_end = first_end - shift;
-
-    // The brackets move inside the link, so the reader sees the same `[1]`
-    // Typora shows instead of anonymous text around a link. Insert from the
-    // back so the earlier index stays valid.
-    events.insert(link_end, Event::Text(CowStr::Borrowed(CLOSING_BRACKET)));
-    events.insert(
-        link_start + 1,
-        Event::Text(CowStr::Borrowed(OPENING_BRACKET)),
-    );
-
-    Some(Folded {
-        link_start,
-        line: pending.line,
-        text_start: pending.text_start,
-        duplicate_len: visible_text(events, link_start)
-            .trim_start_matches(OPENING_BRACKET)
-            .trim_end_matches(CLOSING_BRACKET)
-            .len(),
-    })
-}
-
-/// Indices of the events that make up one `[[n]][n]` at the tail of the buffer.
-struct Shape {
-    /// Index of the surviving link's `End`.
-    first_end: usize,
-    /// Index of the dropped link's `Start`.
-    second_start: usize,
-    /// Index of the text event that ends with the wrap's `[`.
-    opening: usize,
-    /// Whether that text event holds nothing but the `[`.
-    opening_is_empty: bool,
-}
-
-/// Recognise the tail of `events` as `[[n]][n]` and return its layout.
-///
-/// Returns `None` for every other shape, which is the common case: the checks
-/// are a handful of index lookups, so the fast path stays cheap.
-fn bracket_shape(events: &[Event<'_>]) -> Option<Shape> {
-    // The buffer always ends with the dropped link's `End`.
-    let second_end = events.len().checked_sub(1)?;
-    match events.get(second_end)? {
-        Event::End(TagEnd::Link) => {}
-        _ => return None,
-    }
-    let second_start = find_link_start(events, second_end)?;
-
-    // Between the links sits exactly one `]` text event.
-    let separator = second_start.checked_sub(1)?;
-    if !is_literal(events.get(separator)?, CLOSING_BRACKET) {
-        return None;
-    }
-
-    // Before the surviving candidate: its `End`, then the text that ends with
-    // the `[` that opened the wrap.
-    let first_end = separator.checked_sub(1)?;
-    match events.get(first_end)? {
-        Event::End(TagEnd::Link) => {}
-        _ => return None,
-    }
-    let first_start = find_link_start(events, first_end)?;
-    let opening = first_start.checked_sub(1)?;
-    let Event::Text(text) = events.get(opening)? else {
+/// Used by the scan for a document's title. Inline markup is stripped the
+/// way the outline strips it, except that raw HTML contributes nothing: a
+/// title is metadata, and markup fragments have no business in it. A `#`
+/// inside a fenced code block is never mistaken for a heading.
+pub(crate) fn first_h1(source: &str) -> Option<String> {
+    let tree = prepare(source);
+    let OwnKind::Root(children) = &tree.kind else {
         return None;
     };
-    let opening_is_empty = text.strip_suffix(OPENING_BRACKET)?.is_empty();
 
-    if !same_reference(events, first_start, second_start)
-        || !same_visible_text(events, first_start, second_start)
-    {
-        return None;
-    }
-
-    Some(Shape {
-        first_end,
-        second_start,
-        opening,
-        opening_is_empty,
-    })
-}
-
-/// Index of the `Start(Tag::Link)` that opened the link closing at `end`.
-///
-/// The scan walks backwards over inline events only: any other link, block or
-/// inline container means the closing event does not belong to a plain link
-/// here, and the shape is rejected.
-fn find_link_start(events: &[Event<'_>], end: usize) -> Option<usize> {
-    let mut index = end;
-    while index > 0 {
-        index -= 1;
-        match &events[index] {
-            Event::Start(Tag::Link { .. }) => return Some(index),
-            Event::Start(_) | Event::End(_) | Event::Html(_) | Event::InlineHtml(_) => {
-                return None;
-            }
-            _ => {}
+    for node in children {
+        if let OwnKind::Heading { depth: 1, children } = &node.kind {
+            let mut text = HeadingText::new();
+            collect_title_text(children, &mut text);
+            let finished = text.finish();
+            return if finished.is_empty() {
+                None
+            } else {
+                Some(finished)
+            };
         }
     }
     None
 }
 
-/// Whether the two links are reference links to the same destination.
-///
-/// Both destinations are compared as written. The surviving link may already
-/// have been rewritten when a previous `End(Link)` was handled, so the
-/// rewritten form is stripped back to the author's destination first.
-fn same_reference(events: &[Event<'_>], first_start: usize, second_start: usize) -> bool {
-    let (
-        Event::Start(Tag::Link {
-            link_type: first_type,
-            dest_url: first_dest,
-            title: first_title,
-            ..
-        }),
-        Event::Start(Tag::Link {
-            link_type: second_type,
-            dest_url: second_dest,
-            title: second_title,
-            ..
-        }),
-    ) = (&events[first_start], &events[second_start])
-    else {
-        return false;
-    };
-
-    is_reference(*first_type)
-        && is_reference(*second_type)
-        && first_dest == second_dest
-        && first_title == second_title
-}
-
-/// Whether a link type is `[n]` / `[n][]` rather than `[n](url)`.
-fn is_reference(link_type: LinkType) -> bool {
-    matches!(link_type, LinkType::Shortcut | LinkType::Collapsed)
-}
-
-/// Whether the two links render the same visible text.
-fn same_visible_text(events: &[Event<'_>], first_start: usize, second_start: usize) -> bool {
-    let first = visible_text(events, first_start);
-    let second = visible_text(events, second_start);
-    !first.is_empty() && first == second
-}
-
-/// Visible text of the link that starts at `start`, up to its `End`.
-///
-/// Only plain text and code spans count: anything else (emphasis, an image, a
-/// nested link) makes the link uninteresting to the fold, and an empty string
-/// is returned so the comparison fails.
-fn visible_text(events: &[Event<'_>], start: usize) -> String {
-    let mut text = String::new();
-    for event in &events[start + 1..] {
-        match event {
-            Event::Text(value) | Event::Code(value) => text.push_str(value),
-            Event::End(TagEnd::Link) => break,
-            _ => return String::new(),
+/// Plain text of a heading for the title scan: runs, code, images' alt text
+/// and breaks, nothing else.
+fn collect_title_text(children: &[OwnNode], into: &mut HeadingText) {
+    for node in children {
+        match &node.kind {
+            OwnKind::Text(value) | OwnKind::InlineCode(value) | OwnKind::InlineMath(value) => {
+                into.push(value)
+            }
+            OwnKind::Break => into.push_break(),
+            OwnKind::Image { alt, .. } | OwnKind::ImageReference { alt, .. } => into.push(alt),
+            OwnKind::Highlight(inner)
+            | OwnKind::Sub(inner)
+            | OwnKind::Sup(inner)
+            | OwnKind::Emphasis(inner)
+            | OwnKind::Strong(inner)
+            | OwnKind::Delete(inner)
+            | OwnKind::Link {
+                children: inner, ..
+            }
+            | OwnKind::LinkReference {
+                children: inner, ..
+            } => {
+                collect_title_text(inner, into);
+            }
+            _ => {}
         }
     }
-    text
 }
 
-/// Whether `event` is a text event holding exactly `literal`.
-fn is_literal(event: &Event<'_>, literal: &str) -> bool {
-    matches!(event, Event::Text(value) if value.as_ref() == literal)
+/// Parse the document and run every own-layer transform over it.
+fn prepare(source: &str) -> OwnNode {
+    let mut tree = ast::to_own(&parse::parse_document(source));
+    let table = refdefs::collect(&tree);
+
+    transform::fold::run(&mut tree, &table);
+    transform::wikilink::run(&mut tree, &table);
+    transform::inline::run(&mut tree);
+    transform::callout::run(&mut tree);
+
+    tree
 }
 
-/// Whether opening `tag` starts a new block in the plain text.
+/// Collect every heading, assigning its anchor.
 ///
-/// Only block-level tags separate words; emphasis, links, images, code spans
-/// and footnote references stay glued to their neighbours, exactly as they
-/// appear in the rendered document.
-fn separates_words(tag: &Tag<'_>) -> bool {
-    matches!(
-        tag,
-        Tag::Paragraph
-            | Tag::Heading { .. }
-            | Tag::BlockQuote(_)
-            | Tag::CodeBlock(_)
-            | Tag::HtmlBlock
-            | Tag::List(_)
-            | Tag::Item
-            | Tag::FootnoteDefinition(_)
-            | Tag::Table(_)
-            | Tag::TableHead
-            | Tag::TableRow
-            | Tag::TableCell
-    )
+/// The slugger sees the headings in document order, so the anchors are the
+/// same whatever pass collects them — the render pass serialises exactly
+/// this list.
+fn collect_headings(node: &OwnNode, slugger: &mut Slugger, out: &mut Vec<Heading>) {
+    if let OwnKind::Heading { depth, children } = &node.kind {
+        let mut text = HeadingText::new();
+        collect_heading_text(children, &mut text);
+        let finished = text.finish();
+        let id = slugger.unique(&finished);
+        out.push(Heading {
+            level: u32::from(*depth),
+            id,
+            text: finished,
+        });
+    }
+
+    if let Some(children) = node.children() {
+        for child in children {
+            collect_headings(child, slugger, out);
+        }
+    }
 }
 
-/// Byte offsets of every line start in `source`, always beginning with `0`.
-///
-/// Built once per document so a diagnostic can name the line of any event with
-/// a binary search instead of rescanning the source for every link.
-fn line_starts(source: &str) -> Vec<usize> {
-    let mut starts = Vec::with_capacity(source.len() / 32 + 1);
-    starts.push(0);
-    starts.extend(
-        source
-            .bytes()
-            .enumerate()
-            .filter(|(_, byte)| *byte == b'\n')
-            .map(|(index, _)| index + 1),
-    );
-    starts
+/// Plain text of a heading's children: what the outline shows.
+fn collect_heading_text(children: &[OwnNode], into: &mut HeadingText) {
+    for node in children {
+        match &node.kind {
+            OwnKind::Text(value) | OwnKind::InlineCode(value) | OwnKind::InlineMath(value) => {
+                into.push(value)
+            }
+            OwnKind::Break => into.push_break(),
+            OwnKind::Image { alt, .. } | OwnKind::ImageReference { alt, .. } => into.push(alt),
+            OwnKind::FootnoteReference { label, identifier } => {
+                into.push(label.as_deref().unwrap_or(identifier));
+            }
+            OwnKind::Html { value } => into.push(value),
+            OwnKind::Tag(name) => into.push(&format!("#{name}")),
+            OwnKind::Shortcode { emoji, .. } => into.push(&emoji.to_string()),
+            OwnKind::Wikilink { target, alias } => {
+                into.push(alias.as_deref().unwrap_or(target));
+            }
+            OwnKind::Embed { target } => into.push(target),
+            OwnKind::Highlight(inner)
+            | OwnKind::Sub(inner)
+            | OwnKind::Sup(inner)
+            | OwnKind::Emphasis(inner)
+            | OwnKind::Strong(inner)
+            | OwnKind::Delete(inner)
+            | OwnKind::Link {
+                children: inner, ..
+            }
+            | OwnKind::LinkReference {
+                children: inner, ..
+            } => {
+                collect_heading_text(inner, into);
+            }
+            _ => {}
+        }
+    }
 }
 
-/// 1-based line number of the line that contains `offset`.
-fn line_of(line_starts: &[usize], offset: usize) -> usize {
-    line_starts.partition_point(|&start| start <= offset)
+/// The display number of every footnote definition, in definition order.
+fn footnote_numbers(root: &OwnNode) -> BTreeMap<String, u32> {
+    fn walk(node: &OwnNode, numbers: &mut BTreeMap<String, u32>) {
+        if let OwnKind::FootnoteDefinition { identifier, .. } = &node.kind {
+            let next = numbers.len() as u32 + 1;
+            numbers.entry(identifier.clone()).or_insert(next);
+        }
+        if let Some(children) = node.children() {
+            for child in children {
+                walk(child, numbers);
+            }
+        }
+    }
+
+    let mut numbers = BTreeMap::new();
+    walk(root, &mut numbers);
+    numbers
 }
 
 #[cfg(test)]
@@ -1168,6 +455,40 @@ mod tests {
             "html: {}",
             doc.html
         );
+        assert!(
+            doc.html.contains("type=\"checkbox\"/"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn table_cells_align_by_the_delimiter_row() {
+        let source = "| a | b | c |\n| :- | -: | :-: |\n| 1 | 2 | 3 |\n";
+        let doc = render_document(source);
+
+        assert!(
+            doc.html.contains("<th style=\"text-align: left\">"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("<td style=\"text-align: right\">"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("<td style=\"text-align: center\">"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn an_ordered_list_keeps_its_start() {
+        let doc = render_document("3. third\n4. fourth\n");
+
+        assert!(doc.html.contains("<ol start=\"3\">"), "html: {}", doc.html);
     }
 
     #[test]
@@ -1284,11 +605,6 @@ mod tests {
              </tbody></table>\n",
             "the block slicing must not disturb the document body"
         );
-        assert!(
-            !doc.html.contains("wikicc-section"),
-            "no marker may survive into the body: {}",
-            doc.html
-        );
         assert_eq!(
             doc.blocks[0].html, doc.html,
             "a document with a single heading is one block"
@@ -1354,6 +670,17 @@ mod tests {
     }
 
     #[test]
+    fn inline_html_passes_through_inside_a_paragraph() {
+        let doc = render_document("a <b>bold</b> word\n");
+
+        assert!(
+            doc.html.contains("<p>a <b>bold</b> word</p>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
     fn empty_document_renders_nothing() {
         let doc = render_document("");
 
@@ -1369,13 +696,23 @@ mod tests {
     }
 
     #[test]
-    fn parser_options_match_the_documented_gfm_subset() {
-        assert!(PARSER_OPTIONS.contains(Options::ENABLE_TABLES));
-        assert!(PARSER_OPTIONS.contains(Options::ENABLE_FOOTNOTES));
-        assert!(PARSER_OPTIONS.contains(Options::ENABLE_STRIKETHROUGH));
-        assert!(PARSER_OPTIONS.contains(Options::ENABLE_TASKLISTS));
-        assert!(!PARSER_OPTIONS.contains(Options::ENABLE_SMART_PUNCTUATION));
-        assert!(!PARSER_OPTIONS.contains(Options::ENABLE_HEADING_ATTRIBUTES));
+    fn the_construct_set_matches_the_documented_syntax_promise() {
+        let options = parse::parse_options();
+
+        // The GFM subset the product promises.
+        assert!(options.constructs.gfm_table);
+        assert!(options.constructs.gfm_footnote_definition);
+        assert!(options.constructs.gfm_strikethrough);
+        assert!(options.constructs.gfm_task_list_item);
+        assert!(options.constructs.gfm_autolink_literal);
+        // The Typora constructs that arrive with the parser.
+        assert!(options.constructs.frontmatter);
+        assert!(options.constructs.math_flow);
+        assert!(options.constructs.math_text);
+        // Single tilde belongs to the own-layer subscript transform.
+        assert!(!options.gfm_strikethrough_single_tilde);
+        // MDX is a component format, not a document format.
+        assert!(!options.constructs.mdx_esm);
     }
 
     #[test]
@@ -1439,7 +776,7 @@ mod tests {
     }
 
     /// Rewriter that records every destination and tags it, so a test can see
-    /// exactly what the renderer handed over.
+    /// exactly what the serialiser handed over.
     struct Recorder {
         seen: Vec<(String, usize)>,
     }
@@ -1682,6 +1019,20 @@ fn main() {}
         assert_eq!(doc.text, "alpha beta gamma delta");
     }
 
+    #[test]
+    fn a_bare_url_autolinks_like_typora() {
+        let doc = render_document("see https://example.com/page now\n");
+
+        assert!(
+            doc.html
+                .contains("<a href=\"https://example.com/page\">https://example.com/page</a>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    // The Typora citation idiom and the reference list under it.
+
     /// A document whose `[1]` and `[2]` are reference link definitions.
     fn citation_source(body: &str) -> String {
         format!("{body}\n\n[1]: https://example.com/1\n[2]: https://example.com/2\n")
@@ -1871,7 +1222,7 @@ fn main() {}
     }
 
     #[test]
-    fn a_pending_link_that_ends_a_paragraph_is_still_rewritten() {
+    fn a_link_at_the_end_of_a_paragraph_is_still_rewritten() {
         let mut recorder = Recorder::new();
 
         let doc = render_document_with(&citation_source("see [[1]]"), &mut recorder);
@@ -1895,6 +1246,8 @@ fn main() {}
             doc.html
         );
     }
+
+    // Reference definitions in place.
 
     /// A source whose definitions end the document, the way a reference list
     /// sits under its last heading.
@@ -2041,6 +1394,214 @@ fn main() {}
              <p>see <a href=\"rewritten:a.md\">1</a></p>\n",
             "html: {}",
             doc.html
+        );
+    }
+
+    // The own-layer syntax extension layer: Typora and Obsidian constructs.
+
+    #[test]
+    fn highlight_renders_as_a_mark_element() {
+        let doc = render_document("a ==marked== word\n");
+
+        assert!(
+            doc.html.contains("<p>a <mark>marked</mark> word</p>"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "a marked word");
+    }
+
+    #[test]
+    fn subscript_and_superscript_render_as_their_elements() {
+        let doc = render_document("H~2~O and X^2^\n");
+
+        assert!(
+            doc.html.contains("H<sub>2</sub>O and X<sup>2</sup>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn comments_render_nothing() {
+        let doc = render_document("a %%secret%% b\n");
+
+        assert_eq!(doc.html, "<p>a  b</p>\n", "html: {}", doc.html);
+        assert_eq!(doc.text, "a b");
+    }
+
+    #[test]
+    fn tags_render_as_tagged_spans() {
+        let doc = render_document("tagged #v2 here\n");
+
+        assert!(
+            doc.html.contains("<span class=\"doc-tag\">#v2</span>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn shortcodes_render_their_emoji() {
+        let doc = render_document("well done :tada:\n");
+
+        assert!(doc.html.contains("🎉"), "html: {}", doc.html);
+        assert!(doc.text.contains('🎉'), "text: {}", doc.text);
+    }
+
+    #[test]
+    fn math_renders_as_stylable_elements() {
+        let doc = render_document("inline $E=mc^2$ math\n\n$$\na+b\n$$\n");
+
+        assert!(
+            doc.html
+                .contains("<code class=\"math-inline\">E=mc^2</code>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("<pre class=\"math\">a+b</pre>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn front_matter_stays_out_of_every_output() {
+        let doc = render_document("---\ntitle: t\n---\n\n# Body\n");
+
+        assert!(!doc.html.contains("title:"), "html: {}", doc.html);
+        assert!(!doc.text.contains("title:"), "text: {}", doc.text);
+        assert!(
+            doc.html.contains("<h1 id=\"body\">Body</h1>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_wikilink_without_a_definition_becomes_a_link() {
+        let doc = render_document("see [[My Page]] now\n");
+
+        assert!(
+            doc.html.contains("<a href=\"My Page.md\">My Page</a>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_wikilink_alias_becomes_the_link_text() {
+        let doc = render_document("[[a.md|the alias]]\n");
+
+        assert!(
+            doc.html.contains("<a href=\"a.md\">the alias</a>"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "the alias");
+    }
+
+    #[test]
+    fn a_wikilink_target_that_resolves_is_a_route() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with("[[b.md]]\n", &mut recorder);
+
+        assert_eq!(
+            recorder.seen,
+            [("b.md".to_string(), 1)],
+            "the wikilink target goes through the same resolver"
+        );
+        assert!(
+            doc.html.contains("<a href=\"rewritten:b.md\">b.md</a>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn an_embed_of_a_local_file_renders_an_image() {
+        let doc = render_document("![[img.png]]\n");
+
+        assert!(
+            doc.html.contains("<img src=\"img.png\" alt=\"img.png\" />"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "img.png");
+    }
+
+    #[test]
+    fn a_callout_renders_as_the_callout_markup() {
+        let doc = render_document("> [!note] Remember\n> body text\n");
+
+        assert!(
+            doc.html.contains(
+                "<div class=\"callout\" data-callout=\"note\">\n\
+                 <p class=\"callout-title\">Remember</p>\n\
+                 <div class=\"callout-content\">\n<p>body text</p>\n</div>\n</div>"
+            ),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.text.contains("Remember body text"),
+            "text: {}",
+            doc.text
+        );
+    }
+
+    #[test]
+    fn a_markerless_callout_takes_its_kind_as_the_title() {
+        let doc = render_document("> [!warning]\n> body\n");
+
+        assert!(
+            doc.html.contains("<p class=\"callout-title\">Warning</p>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_plain_blockquote_stays_a_blockquote() {
+        let doc = render_document("> just quoted\n");
+
+        assert!(
+            doc.html
+                .contains("<blockquote>\n<p>just quoted</p>\n</blockquote>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn the_engine_view_skips_every_own_layer_transform() {
+        let source = "x[[1]][1] and [[page]] and ==mark==\n\n[1]: https://example.com/1\n";
+
+        let engine = render_engine_html(source);
+        let reader = render_document(source);
+
+        // The engine resolves every reference but folds nothing and claims
+        // no sugar: the shapes stay exactly as the parser produced them.
+        assert!(
+            engine.contains(
+                "[<a href=\"https://example.com/1\">1</a>]<a href=\"https://example.com/1\">1</a>"
+            ),
+            "engine: {engine}"
+        );
+        assert!(!engine.contains("<mark>"), "engine: {engine}");
+        assert!(
+            reader
+                .html
+                .contains("<a href=\"https://example.com/1\">[1]</a>"),
+            "reader: {}",
+            reader.html
+        );
+        assert!(
+            reader.html.contains("<mark>mark</mark>"),
+            "reader: {}",
+            reader.html
         );
     }
 }

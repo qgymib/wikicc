@@ -81,10 +81,13 @@ Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` �
 
 ## 4. Invariants
 
-1. **Rewrite the event stream, not the HTML.** `pulldown-cmark` events are
-   mapped before `push_html`, so link and image destinations are rewritten
-   structurally. Regex post-processing of HTML is rejected because attribute
-   quoting and nesting make it unsound.
+1. **Rewrite the tree, not the HTML.** Every document is parsed once with
+   markdown-rs into mdast, converted to the own-layer tree, and passed
+   through the own-layer transforms (citation fold, wikilinks, inline sugar,
+   callouts) before the serialiser runs. Link and image destinations are
+   rewritten structurally while that serialiser emits elements. Regex
+   post-processing of HTML is rejected because attribute quoting and nesting
+   make it unsound.
 2. **One page, two addressing schemes.** The document HTML is rendered once
    and carries an opaque placeholder (`wikicc-asset:<hash>`) wherever a local
    resource is referenced. Writers expand the placeholder into the addressing
@@ -119,11 +122,10 @@ Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` �
    is an element id.
 9. **Static state travels in the markup.** Anything the reader must know about
    a link that the route grammar cannot express is written into the document as
-   `data-*` attributes, and every consumer reads it from there. Because
-   `pulldown-cmark` owns a link's attributes during serialisation, such
-   attributes go on an inline `<span hidden>` immediately before the link —
-   the one shape the serialiser emits without a trailing newline and which
-   stays valid inside a paragraph, a list item or a table cell.
+   `data-*` attributes, and every consumer reads it from there. The mark goes
+   on an inline `<span hidden>` immediately before the link — the shape that
+   stays valid inside a paragraph, a list item or a table cell, and the one
+   the reader copies onto the anchor it points at.
 
 ## 5. Determinism
 
