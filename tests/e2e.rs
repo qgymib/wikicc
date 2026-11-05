@@ -726,6 +726,42 @@ fn the_search_scope_button_sits_at_the_field_s_right_edge() {
 }
 
 #[test]
+fn the_search_field_carries_one_clear_button_of_its_own() {
+    // The field is a `type="search"` input, and the engine answers that with
+    // search furniture of its own — a cancel cross that shows while the field
+    // is focused and leaves on a blur. The panel already has a clear button,
+    // the one that shows while the field holds text and hides when it does
+    // not, so the engine's cross would stand beside it: two crosses for one
+    // job, and a pair that comes and goes with the focus. The engine's
+    // furniture is switched off, and the field's own button is the only one.
+    let css = SHELL_CSS;
+    let native = rule_of(css, ".search-input::-webkit-search-cancel-button,");
+
+    assert_eq!(
+        declaration(native, "-webkit-appearance"),
+        Some("none"),
+        "the engine's cancel cross is switched off"
+    );
+    assert_eq!(
+        declaration(native, "appearance"),
+        Some("none"),
+        "the standard spelling is carried alongside the prefixed one"
+    );
+
+    // The results button and the decoration are the rest of what the search
+    // type hangs on the field; one selector list carries all three, and the
+    // sheet says so once.
+    assert!(
+        css.contains(".search-input::-webkit-search-results-button,"),
+        "the results button is switched off with the cross"
+    );
+    assert!(
+        css.contains(".search-input::-webkit-search-decoration {"),
+        "the search decoration is switched off with the cross"
+    );
+}
+
+#[test]
 fn the_search_preview_scrolls_the_document_it_shows() {
     // The document is longer than the dialog, so the preview is what scrolls:
     // its own column, on its own, with a gutter held open so switching

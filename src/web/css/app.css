@@ -1944,6 +1944,20 @@ a {
   outline: none;
 }
 
+/* The engine draws search furniture of its own on a `type="search"` field —
+   most visibly a cancel cross that shows while the field is focused and
+   leaves on a blur. The field already carries a clear button of its own, the
+   one that answers to the text it holds rather than to the focus, so the
+   engine's cross would stand beside it: two crosses for one job, and a pair
+   that comes and goes with the focus. All of the engine's furniture is
+   switched off, and the field's own button is the only one there is. */
+.search-input::-webkit-search-cancel-button,
+.search-input::-webkit-search-results-button,
+.search-input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* The whole field answers the focus, because the input itself has no frame. */
 .search-field:focus-within {
   background: var(--accent-soft);
