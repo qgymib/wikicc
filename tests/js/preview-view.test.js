@@ -4,8 +4,10 @@
  *
  * Driven with a minimal fake DOM — plain objects with just the methods the view
  * calls — because the rules under test are *when* things happen, not how the
- * browser paints them: the popover opens for a chapter that exists, turns into
- * a notice for one that does not, and reporting a broken reference through the
+ * browser paints them: the popover opens for a chapter that exists, opens at
+ * once as a loading panel when the document still travels and fills it on
+ * arrival, says so inside the panel when the arrival fails, turns into a
+ * notice for one that does not, and reporting a broken reference through the
  * banner is reserved for the click that navigates.
  *
  * The second half of the file covers pinning: a panel the reader clicked on
@@ -23,9 +25,13 @@ import {
   DRAGGING_ATTRIBUTE,
   DRAG_LABEL,
   DRAG_THRESHOLD_PX,
+  ERROR_ATTRIBUTE,
   HEAD_CLASS,
   HEAD_TEXT_CLASS,
   HOVER_DELAY_MS,
+  LOADING_ATTRIBUTE,
+  LOADING_CLASS,
+  LOADING_LABEL,
   MISSING_ATTRIBUTE,
   MISSING_LABEL,
   PIN_ATTRIBUTE,
@@ -391,6 +397,42 @@ function asStore(byId) {
   };
 }
 
+/**
+ * A lazy store whose one document never arrives on its own: `get` hands the
+ * test the resolver, so the answer — a document or a failure — is delivered
+ * when the test says so.
+ */
+function travellingStore() {
+  let deliver = null;
+  const store = {
+    isLazy() {
+      return true;
+    },
+    peek() {
+      return null;
+    },
+    title(id) {
+      return id === "guide/intro.md" ? "Guide Introduction" : null;
+    },
+    get() {
+      return {
+        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
+        then(callback) {
+          deliver = callback;
+        },
+      };
+    },
+  };
+
+  return {
+    store,
+    /** Resolve the one request the view is waiting on. */
+    deliver(doc) {
+      deliver(doc);
+    },
+  };
+}
+
 /** The one popover the view builds, or `null` before it is built. */
 function panelOf(doc) {
   return (
@@ -535,21 +577,8 @@ test("hovering a chapter that exists opens the preview", () => {
   });
 });
 
-test("hovering a chapter whose document travels in opens once it arrives", () => {
-  let deliver = null;
-  const travelling = {
-    peek() {
-      return null;
-    },
-    get() {
-      return {
-        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
-        then(callback) {
-          deliver = callback;
-        },
-      };
-    },
-  };
+test("hovering a chapter whose document travels in opens a loading panel at once", () => {
+  const travelling = travellingStore();
 
   setup(
     function ({ view, content, clock, doc }) {
@@ -562,35 +591,43 @@ test("hovering a chapter whose document travels in opens once it arrives", () =>
 
       assert.equal(
         view.isOpen(),
-        false,
-        "nothing shows while the document is on its way",
+        true,
+        "the panel opens before the document arrives",
+      );
+      const panel = panelOf(doc);
+      assert.equal(
+        panel.getAttribute(LOADING_ATTRIBUTE),
+        "true",
+        "it is the loading state the panel shows",
+      );
+      assert.equal(panel.getAttribute("aria-busy"), "true");
+      assert.equal(panel.getAttribute("aria-label"), LOADING_LABEL);
+      assert.equal(byClass(panel, LOADING_CLASS).length, 1);
+      assert.match(textOf(panel), /Loading/);
+      assert.match(
+        textOf(panel),
+        /Guide Introduction/,
+        "the head names the document from the manifest",
       );
 
-      deliver(payload().get("guide/intro.md"));
+      travelling.deliver(payload().get("guide/intro.md"));
 
-      assert.equal(view.isOpen(), true, "the answer opens the panel");
-      const panel = panelOf(doc);
+      assert.equal(view.isOpen(), true, "the answer fills the panel");
+      assert.equal(
+        panel.getAttribute(LOADING_ATTRIBUTE),
+        null,
+        "the loading state is gone",
+      );
+      assert.equal(panel.getAttribute("aria-busy"), null);
+      assert.equal(panel.getAttribute("aria-label"), PREVIEW_LABEL);
       assert.match(textOf(panel), /Getting Started/);
     },
-    { documents: travelling },
+    { documents: travelling.store },
   );
 });
 
 test("an answer for a hover the reader left behind opens nothing", () => {
-  let deliver = null;
-  const travelling = {
-    peek() {
-      return null;
-    },
-    get() {
-      return {
-        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
-        then(callback) {
-          deliver = callback;
-        },
-      };
-    },
-  };
+  const travelling = travellingStore();
 
   setup(
     function ({ view, content, clock }) {
@@ -600,10 +637,13 @@ test("an answer for a hover the reader left behind opens nothing", () => {
 
       content.fire("pointerover", { target: anchor, relatedTarget: null });
       clock.runAll();
+      assert.equal(view.isOpen(), true, "the loading panel is up");
+
       content.fire("pointerout", { target: anchor, relatedTarget: null });
       clock.runAll();
+      assert.equal(view.isOpen(), false, "leaving closes the loading panel");
 
-      deliver(payload().get("guide/intro.md"));
+      travelling.deliver(payload().get("guide/intro.md"));
 
       assert.equal(
         view.isOpen(),
@@ -611,7 +651,7 @@ test("an answer for a hover the reader left behind opens nothing", () => {
         "a panel for a link nobody points at any more would be a surprise",
       );
     },
-    { documents: travelling },
+    { documents: travelling.store },
   );
 });
 
@@ -853,21 +893,8 @@ test("hovering a document reference opens the whole document", () => {
   });
 });
 
-test("a document preview opens once its document arrives", () => {
-  let deliver = null;
-  const travelling = {
-    peek() {
-      return null;
-    },
-    get() {
-      return {
-        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
-        then(callback) {
-          deliver = callback;
-        },
-      };
-    },
-  };
+test("a document preview opens a loading panel at once and fills it on arrival", () => {
+  const travelling = travellingStore();
 
   setup(
     function ({ view, content, clock, doc }) {
@@ -880,38 +907,27 @@ test("a document preview opens once its document arrives", () => {
 
       assert.equal(
         view.isOpen(),
-        false,
-        "nothing shows while the document is on its way",
+        true,
+        "the panel opens before the document arrives",
       );
-
-      deliver(payload().get("guide/intro.md"));
-
-      assert.equal(view.isOpen(), true, "the answer opens the panel");
       const panel = panelOf(doc);
+      assert.equal(panel.getAttribute(LOADING_ATTRIBUTE), "true");
+
+      travelling.deliver(payload().get("guide/intro.md"));
+
+      assert.equal(view.isOpen(), true, "the answer fills the panel");
+      assert.equal(panel.getAttribute(LOADING_ATTRIBUTE), null);
       assert.match(
         byClass(panel, "preview-scroll")[0].innerHTML,
         /<p>body<\/p>/,
       );
     },
-    { documents: travelling },
+    { documents: travelling.store },
   );
 });
 
 test("a document answer for a hover the reader left behind opens nothing", () => {
-  let deliver = null;
-  const travelling = {
-    peek() {
-      return null;
-    },
-    get() {
-      return {
-        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
-        then(callback) {
-          deliver = callback;
-        },
-      };
-    },
-  };
+  const travelling = travellingStore();
 
   setup(
     function ({ view, content, clock }) {
@@ -921,10 +937,13 @@ test("a document answer for a hover the reader left behind opens nothing", () =>
 
       content.fire("pointerover", { target: anchor, relatedTarget: null });
       clock.runAll();
+      assert.equal(view.isOpen(), true, "the loading panel is up");
+
       content.fire("pointerout", { target: anchor, relatedTarget: null });
       clock.runAll();
+      assert.equal(view.isOpen(), false, "leaving closes the loading panel");
 
-      deliver(payload().get("guide/intro.md"));
+      travelling.deliver(payload().get("guide/intro.md"));
 
       assert.equal(
         view.isOpen(),
@@ -932,7 +951,159 @@ test("a document answer for a hover the reader left behind opens nothing", () =>
         "a panel for a link nobody points at any more would be a surprise",
       );
     },
-    { documents: travelling },
+    { documents: travelling.store },
+  );
+});
+
+test("a document that never arrives turns the panel into an error notice", () => {
+  const travelling = travellingStore();
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      assert.equal(view.isOpen(), true);
+
+      travelling.deliver(null);
+
+      assert.equal(
+        view.isOpen(),
+        true,
+        "a panel whose document fails says so instead of closing on the reader",
+      );
+      const panel = panelOf(doc);
+      assert.equal(panel.getAttribute(ERROR_ATTRIBUTE), "true");
+      assert.equal(panel.getAttribute(LOADING_ATTRIBUTE), null);
+      assert.equal(panel.getAttribute("aria-busy"), null);
+      assert.match(textOf(panel), /Preview failed to load\./);
+      assert.match(textOf(panel), /retry/);
+      assert.match(
+        textOf(panel),
+        /Guide Introduction/,
+        "the head keeps the document's name",
+      );
+    },
+    { documents: travelling.store },
+  );
+});
+
+test("a document without the hovered chapter answers with the broken-reference notice", () => {
+  const travelling = travellingStore();
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#no-such-chapter");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      assert.equal(view.isOpen(), true, "the loading panel is up");
+
+      travelling.deliver(payload().get("guide/intro.md"));
+
+      const panel = panelOf(doc);
+      assert.equal(
+        panel.getAttribute(MISSING_ATTRIBUTE),
+        "true",
+        "a missing chapter sounds like a broken reference",
+      );
+      assert.equal(panel.getAttribute(LOADING_ATTRIBUTE), null);
+      assert.equal(panel.getAttribute("aria-label"), MISSING_LABEL);
+      assert.match(textOf(panel), /No chapter named /);
+    },
+    { documents: travelling.store },
+  );
+});
+
+test("a reference the embedded payload does not hold stays silent", () => {
+  setup(function ({ view, content, clock }) {
+    const anchor = link("#/doc/guide/missing.md#getting-started");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    assert.equal(
+      view.isOpen(),
+      false,
+      "no request could produce a document the payload does not hold",
+    );
+  });
+});
+
+test("a broken reference hovered while a panel loads replaces the loading state", () => {
+  const travelling = travellingStore();
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const loadingLink = link("#/doc/guide/intro.md#getting-started");
+      const broken = brokenLink("#/doc/guide/intro.md", "1.4 配色与字体");
+      content.appendChild(loadingLink);
+      content.appendChild(broken);
+      view.tag(content);
+
+      content.fire("pointerover", {
+        target: loadingLink,
+        relatedTarget: null,
+      });
+      clock.runAll();
+      assert.equal(
+        panelOf(doc).getAttribute(LOADING_ATTRIBUTE),
+        "true",
+        "the first hover is loading",
+      );
+
+      content.fire("pointerover", { target: broken, relatedTarget: null });
+      clock.runAll();
+
+      const panel = panelOf(doc);
+      assert.equal(panel.getAttribute(MISSING_ATTRIBUTE), "true");
+      assert.equal(
+        panel.getAttribute(LOADING_ATTRIBUTE),
+        null,
+        "the notice owns the panel; no loading mark survives it",
+      );
+      assert.equal(panel.getAttribute("aria-busy"), null);
+    },
+    { documents: travelling.store },
+  );
+});
+
+test("a loading panel pinned by the reader keeps the pin once the document arrives", () => {
+  const travelling = travellingStore();
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      clickInside(panelOf(doc));
+
+      travelling.deliver(payload().get("guide/intro.md"));
+
+      assert.equal(view.isOpen(), true);
+      assert.equal(
+        view.isPinned(),
+        true,
+        "the pin the reader put on the loading panel survives the answer",
+      );
+      assert.match(textOf(panelOf(doc)), /Getting Started/);
+
+      // And the pin holds: the pointer leaving must not take the panel away.
+      content.fire("pointerout", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      assert.equal(view.isOpen(), true);
+    },
+    { documents: travelling.store },
   );
 });
 

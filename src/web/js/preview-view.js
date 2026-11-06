@@ -18,6 +18,16 @@
  * cross — without the grace period the panel would close under the hand that is
  * about to scroll it.
  *
+ * In the split format the document a reference names may not be on the page
+ * yet, and waiting for its file before showing anything would put the network
+ * between the pointer and the panel. So the panel opens at once with a loading
+ * state — a spinner and the document's name, which the manifest carries before
+ * any chunk travels — and the answer fills it when it arrives. An answer that
+ * is not a preview is not silence either: a fetch that failed turns the panel
+ * into an error notice that invites another hover, which retries, and a
+ * document without the hovered chapter says so the way a reference the build
+ * marked as broken does.
+ *
  * A preview can also be *pinned*. Every delay above is a guess at what the
  * pointer meant; a click on the panel is not a guess, it is the reader saying
  * they want the chapter at hand while they read something else. So a click
@@ -180,6 +190,37 @@ export var MISSING_SEPARATOR = "No chapter named ";
 /** Text after the chapter of a notice, once the document is named. */
 export var MISSING_TAIL = " exists in this document.";
 
+/** Class of the loading state shown while a document is on its way. */
+export var LOADING_CLASS = "preview-loading";
+
+/** Class of the loading state's one line of text. */
+export var LOADING_TEXT_CLASS = "preview-loading-text";
+
+/** Text of the loading state. */
+export var LOADING_TEXT = "Loading…";
+
+/** Accessible name of the popover while it loads a document. */
+export var LOADING_LABEL = "Loading preview";
+
+/** Attribute marking the popover as loading, used by the stylesheet. */
+export var LOADING_ATTRIBUTE = "data-loading";
+
+/** Class of the error state shown when a document fails to arrive. */
+export var ERROR_CLASS = "preview-error";
+
+/** Heading of the error state: what went wrong. */
+export var ERROR_TITLE = "Preview failed to load.";
+
+/** Text of the error state: what the reader can do about it. */
+export var ERROR_TEXT =
+  "The document did not arrive. Hover the link again to retry.";
+
+/** Accessible name of the popover while it shows the error state. */
+export var FAILED_LABEL = "Preview failed";
+
+/** Attribute marking the popover as showing the error state. */
+export var ERROR_ATTRIBUTE = "data-error";
+
 /**
  * Create the preview controller for one reader instance.
  *
@@ -219,6 +260,12 @@ export function createPreviewView(options) {
   var noticeText = null;
   var noticeDoc = null;
   var noticeChapter = null;
+  // The loading and error states are part of the panel from the start too, on
+  // the same terms as the notice: the split format's first hover on a document
+  // happens while its chunk is still travelling, and the states it turns
+  // through must not grow or reflow the panel as they replace one another.
+  var loading = null;
+  var error = null;
   // The head's two buttons, so their state can follow the pin without a query.
   var pinButton = null;
   var closeButton = null;
@@ -349,11 +396,40 @@ export function createPreviewView(options) {
     notice.appendChild(noticeTitle);
     notice.appendChild(noticeText);
 
+    // The loading state: the spinner is the stylesheet's, drawn on the
+    // element's own `::before`, so the panel loads nothing and animates
+    // nothing until a document is actually on its way.
+    loading = document.createElement("div");
+    loading.className = LOADING_CLASS;
+
+    var loadingText = document.createElement("p");
+    loadingText.className = LOADING_TEXT_CLASS;
+    loadingText.textContent = LOADING_TEXT;
+    loading.appendChild(loadingText);
+
+    // The error state: a heading and one sentence, the notice's shape again.
+    // The document's name stays in the head, where the loading state left it.
+    error = document.createElement("div");
+    error.className = ERROR_CLASS;
+
+    var errorTitle = document.createElement("p");
+    errorTitle.className = "preview-error-title";
+    errorTitle.textContent = ERROR_TITLE;
+
+    var errorText = document.createElement("p");
+    errorText.className = "preview-error-text";
+    errorText.textContent = ERROR_TEXT;
+
+    error.appendChild(errorTitle);
+    error.appendChild(errorText);
+
     body = document.createElement("div");
     body.className = BODY_CLASS;
 
     panel.appendChild(head);
     panel.appendChild(notice);
+    panel.appendChild(loading);
+    panel.appendChild(error);
     panel.appendChild(body);
     document.body.appendChild(panel);
 
@@ -702,9 +778,10 @@ export function createPreviewView(options) {
   /** Fill the panel with `preview` and put it beside `link`. */
   function showPreview(preview, link) {
     ensurePanel();
-    // The panel wears one of two roles; a preview must not inherit the notice
-    // frame a previous hover left on it.
-    setKind(false);
+    // The panel wears one of four roles; a preview must not inherit the
+    // notice frame, the loading mark or the error frame a previous hover
+    // left on it.
+    setRole("preview");
     title.textContent = preview.title;
     path.textContent = preview.path;
 
@@ -754,13 +831,21 @@ export function createPreviewView(options) {
    * Answer `link` with the preview `build` makes of the document it names.
    *
    * The document on hand answers at once, which is every hover in the
-   * embedded formats and every revisit in the split one. Otherwise the answer
-   * waits for the file to arrive; it re-checks the link it belongs to,
-   * because the pointer may have moved on while it travelled — a close or a
-   * newer hover clears the pending link, and an answer for a link nobody
-   * points at any more would be a surprise, not a preview. A document the
-   * payload never holds answers with nothing, which reads as silence rather
-   * than as a failure.
+   * embedded formats and every revisit in the split one. Otherwise — and only
+   * in the split format, where the file can still arrive — the panel opens at
+   * once with its loading state, and the answer fills it when the file gets
+   * here. The answer re-checks the link it belongs to, because the pointer
+   * may have moved on while it travelled — a close or a newer hover clears
+   * the pending link, and an answer for a link nobody points at any more
+   * would be a surprise, not a preview.
+   *
+   * The answers that are not previews are handled, not swallowed: a fetch
+   * that failed turns the panel into its error state, which a later hover
+   * retries because the store keeps no failed request; a document without
+   * the hovered chapter says so through the notice a broken reference wears.
+   * In the embedded formats a document the payload does not hold does not
+   * exist — no request could produce it — and the panel stays closed, the
+   * silence it has always been.
    */
   function whenArrived(destination, link, build) {
     var doc = documents ? documents.peek(destination.id) : null;
@@ -774,19 +859,48 @@ export function createPreviewView(options) {
       return;
     }
 
-    var travelling = documents.get(destination.id);
-    if (travelling && typeof travelling.then === "function") {
-      travelling.then(function (loaded) {
-        if (pending !== link && anchor !== link) {
-          return;
-        }
-
-        var arrived = build(loaded);
-        if (arrived) {
-          showPreview(arrived, link);
-        }
-      });
+    // A document already in hand whose chapter does not build is a final
+    // answer — the chapter is not there — and stays silent, whatever the
+    // format: the panel has never opened for it and does not start now.
+    var lazy = typeof documents.isLazy === "function" && documents.isLazy();
+    if (doc) {
+      return;
     }
+
+    var travelling = documents.get(destination.id);
+    if (!travelling || typeof travelling.then !== "function") {
+      return;
+    }
+
+    if (lazy) {
+      showLoading(destination, link);
+    }
+
+    travelling.then(function (loaded) {
+      if (pending !== link && anchor !== link) {
+        return;
+      }
+
+      var arrived = loaded ? build(loaded) : null;
+      if (arrived) {
+        showPreview(arrived, link);
+        return;
+      }
+
+      if (!lazy) {
+        return;
+      }
+
+      if (!loaded) {
+        showError(link);
+        return;
+      }
+
+      openNotice(link, {
+        docId: destination.id,
+        anchor: destination.anchor,
+      });
+    });
   }
 
   /**
@@ -799,8 +913,9 @@ export function createPreviewView(options) {
    */
   function openNotice(link, resolved) {
     ensurePanel();
-    setKind(true);
-    // Nothing of a previous preview may survive: the notice owns the panel.
+    setRole("missing");
+    // Nothing of a previous preview, loading mark or error may survive: the
+    // notice owns the panel.
     body.textContent = "";
     title.textContent = MISSING_TITLE;
     path.textContent = resolved.docId ? String(resolved.docId) : "";
@@ -811,20 +926,94 @@ export function createPreviewView(options) {
   }
 
   /**
-   * Switch the panel between the two roles it can play.
+   * Show the panel beside `link` with its loading state, for a document the
+   * split build has not put on the page yet.
    *
-   * Only attributes and visible text change, so the element the page already
-   * holds is reused and neither role can leave a mark on the other.
+   * The head names the document from the manifest — the one thing about it the
+   * page already holds — and the body is the spinner, so the panel is on
+   * screen the moment the hover matures instead of after the chunk travels.
    */
-  function setKind(missing) {
-    if (missing) {
-      panel.setAttribute(MISSING_ATTRIBUTE, "true");
-      panel.setAttribute("aria-label", MISSING_LABEL);
-      return;
+  function showLoading(destination, link) {
+    ensurePanel();
+    setRole("loading");
+    // Nothing of a previous preview, notice or error may survive: the loading
+    // state owns the panel until the document arrives.
+    body.textContent = "";
+    title.textContent = titleOf(destination.id);
+    path.textContent = destination.id;
+
+    show(link);
+  }
+
+  /**
+   * Turn the panel's loading state into its error state.
+   *
+   * The panel is already on screen for this link — the answer only reaches
+   * here through the guard that says so — so the head keeps the document's
+   * name and only the body changes: the spinner gives way to what went wrong
+   * and what the reader can do about it.
+   */
+  function showError(link) {
+    ensurePanel();
+    setRole("error");
+    body.textContent = "";
+
+    show(link);
+  }
+
+  /** The name the payload gives `id`, or the id itself when it does not. */
+  function titleOf(id) {
+    if (documents && typeof documents.title === "function") {
+      var named = documents.title(id);
+      if (named) {
+        return String(named);
+      }
     }
 
-    panel.removeAttribute(MISSING_ATTRIBUTE);
-    panel.setAttribute("aria-label", PREVIEW_LABEL);
+    return id;
+  }
+
+  /**
+   * Switch the panel between the four roles it can play.
+   *
+   * A role is one attribute on the panel root — `data-missing`, `data-loading`
+   * or `data-error`, and none of them for a preview — plus the accessible name
+   * that goes with it and `aria-busy` while a document is on its way. Only
+   * attributes and visible text change, so the element the page already holds
+   * is reused and no role can leave a mark on another: every entry writes the
+   * whole role, which is what keeps a loading mark from surviving into the
+   * notice that replaced it.
+   */
+  function setRole(role) {
+    if (role === "missing") {
+      panel.setAttribute(MISSING_ATTRIBUTE, "true");
+    } else {
+      panel.removeAttribute(MISSING_ATTRIBUTE);
+    }
+
+    if (role === "loading") {
+      panel.setAttribute(LOADING_ATTRIBUTE, "true");
+      panel.setAttribute("aria-busy", "true");
+    } else {
+      panel.removeAttribute(LOADING_ATTRIBUTE);
+      panel.removeAttribute("aria-busy");
+    }
+
+    if (role === "error") {
+      panel.setAttribute(ERROR_ATTRIBUTE, "true");
+    } else {
+      panel.removeAttribute(ERROR_ATTRIBUTE);
+    }
+
+    var label = PREVIEW_LABEL;
+    if (role === "missing") {
+      label = MISSING_LABEL;
+    } else if (role === "loading") {
+      label = LOADING_LABEL;
+    } else if (role === "error") {
+      label = FAILED_LABEL;
+    }
+    panel.setAttribute("aria-label", label);
   }
 
   /**
@@ -969,10 +1158,10 @@ export function createPreviewView(options) {
     anchor = null;
     panel.hidden = true;
     panel.removeAttribute(OPEN_ATTRIBUTE);
-    // Both roles are cleared, not just the one that was showing: the next
+    // Every role is cleared, not just the one that was showing: the next
     // hover fills in what it needs, and a closed panel holds a stale message
     // whether or not it is visible.
-    setKind(false);
+    setRole("preview");
     body.textContent = "";
     title.textContent = "";
     path.textContent = "";
@@ -1242,6 +1431,8 @@ export function createPreviewView(options) {
     noticeText = null;
     noticeDoc = null;
     noticeChapter = null;
+    loading = null;
+    error = null;
     pinButton = null;
     closeButton = null;
   }

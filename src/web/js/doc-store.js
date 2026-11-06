@@ -76,6 +76,20 @@ export function createDocStore(bundle, fetchImpl) {
     return doc && typeof doc.html === "string" ? doc : null;
   }
 
+  /**
+   * The title the payload records for `id`, or `null` when it does not.
+   *
+   * In the pages format the manifest carries one `{id, title, hash}` entry per
+   * document long before its chunk is fetched, so the preview panel can name a
+   * document it is still loading instead of showing an empty head.
+   */
+  function titleOf(id) {
+    var entry = byId.get(id);
+    return entry && typeof entry.title === "string" && entry.title
+      ? entry.title
+      : null;
+  }
+
   /** Fetch, parse and cache the chunk of `id`; resolves `null` on failure. */
   function load(id) {
     var known = embedded(id);
@@ -165,6 +179,10 @@ export function createDocStore(bundle, fetchImpl) {
     /** The document `id` when it is already on hand, `null` otherwise. */
     peek: function (id) {
       return embedded(id);
+    },
+    /** The manifest's title for `id`, `null` when the payload does not name it. */
+    title: function (id) {
+      return titleOf(id);
     },
     /** The document `id`, fetched first when the build split the site. */
     get: function (id) {

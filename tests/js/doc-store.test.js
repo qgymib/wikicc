@@ -110,6 +110,24 @@ test("a lazy store fetches the chunk at the encoded path with the hash as buster
   );
 });
 
+test("the manifest's titles answer before any document is fetched", async () => {
+  const fetch_ = fetcher({});
+  const store = docStore.createDocStore(manifest(), fetch_.fetch);
+
+  assert.equal(store.title("guide/intro.md"), "Intro");
+  assert.equal(store.title("index.md"), "Index");
+  assert.equal(
+    store.title("missing.md"),
+    null,
+    "a document the manifest does not name has no title",
+  );
+  assert.deepEqual(
+    fetch_.asked,
+    [],
+    "a title is a manifest read, never a fetch",
+  );
+});
+
 test("a loaded document is cached and an in-flight request is shared", async () => {
   const fetch_ = fetcher({ "pages/index.md.json?v=hash0": chunk("index.md") });
   const store = docStore.createDocStore(manifest(), fetch_.fetch);
