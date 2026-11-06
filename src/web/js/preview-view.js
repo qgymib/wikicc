@@ -439,6 +439,13 @@ export function createPreviewView(options) {
       scheduleClose();
     });
 
+    // The wheel over the panel belongs to the panel: scrolling the chapter in
+    // the body must never move the article behind it, and over the head or a
+    // notice — where nothing in the panel scrolls — the browser's default
+    // action would reach the article itself. Non-passive, because the answer
+    // to those events is preventDefault.
+    panel.addEventListener("wheel", onPanelWheel, { passive: false });
+
     // Reading the panel is reaching for it: a click anywhere inside it says the
     // reader wants this chapter at hand, and the delays stop applying.
     panel.addEventListener("click", onPanelClick);
@@ -1220,6 +1227,37 @@ export function createPreviewView(options) {
   function onKeyDown(event) {
     if (event.key === "Escape" && panel && !panel.hidden) {
       close();
+    }
+  }
+
+  /**
+   * A wheel over the panel belongs to the panel.
+   *
+   * The scrollable body consumes its own wheel, and `overscroll-behavior`
+   * keeps a delta it cannot take — past either end of the chapter, or when
+   * the chapter fits — from chaining to the article behind the panel. But
+   * every other part of the panel owns no scroller at all, so there the
+   * browser's default action would reach the article itself: the reader
+   * scrolling over the head or a notice would find the document moving
+   * under their hand. Only a wheel aimed at the body keeps its default;
+   * everywhere else the event is answered with nothing.
+   */
+  function onPanelWheel(event) {
+    if (!event) {
+      return;
+    }
+
+    var target = event.target;
+    if (
+      target &&
+      typeof target.closest === "function" &&
+      target.closest("." + BODY_CLASS)
+    ) {
+      return;
+    }
+
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
     }
   }
 

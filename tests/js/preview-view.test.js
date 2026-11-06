@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 
 import {
   ACTIONS_CLASS,
+  BODY_CLASS,
   CLOSE_CLASS,
   CLOSE_DELAY_MS,
   CLOSE_LABEL,
@@ -2067,6 +2068,90 @@ test("switching documents keeps a pinned preview and drops nothing of it", () =>
     assert.equal(view.isOpen(), true);
     assert.equal(byClass(panel, "preview-scroll")[0].innerHTML, shown);
     assert.equal(panelOf(doc), panel);
+  });
+});
+
+/* ---------- wheel over the panel ---------- */
+
+test("a wheel over the panel outside its body is answered with nothing", () => {
+  setup(function (ctx) {
+    const { panel } = openPreview(ctx);
+    const head = byClass(panel, HEAD_CLASS)[0];
+
+    let prevented = false;
+    panel.fire("wheel", {
+      target: head,
+      deltaY: 120,
+      preventDefault() {
+        prevented = true;
+      },
+    });
+
+    assert.equal(
+      prevented,
+      true,
+      "nothing in the head scrolls, so the default would reach the article",
+    );
+  });
+
+  setup(function ({ view, content, clock, doc }) {
+    const anchor = brokenLink("#/doc/guide/intro.md", "1.4 配色与字体");
+    content.appendChild(anchor);
+    view.tag(content);
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    const panel = panelOf(doc);
+    const notice = byClass(panel, "preview-missing")[0];
+
+    let prevented = false;
+    panel.fire("wheel", {
+      target: notice,
+      deltaY: 120,
+      preventDefault() {
+        prevented = true;
+      },
+    });
+
+    assert.equal(
+      prevented,
+      true,
+      "the notice has no scroller either — the wheel must not leave the panel",
+    );
+    assert.equal(
+      view.isOpen(),
+      true,
+      "a wheel the panel answered is not a scroll of the article",
+    );
+  });
+});
+
+test("a wheel over the scroll body keeps the browser's own scrolling", () => {
+  setup(function (ctx) {
+    const { panel } = openPreview(ctx);
+    const scroll = byClass(panel, "preview-scroll")[0];
+    // A target inside the body answers `closest` the way a real element does:
+    // the guard asks it once, and the body it names keeps its default.
+    const inside = {
+      closest(selector) {
+        return selector === "." + BODY_CLASS ? scroll : null;
+      },
+    };
+
+    let prevented = false;
+    panel.fire("wheel", {
+      target: inside,
+      deltaY: 120,
+      preventDefault() {
+        prevented = true;
+      },
+    });
+
+    assert.equal(
+      prevented,
+      false,
+      "the body scrolls the chapter; the stylesheet keeps the rest from chaining",
+    );
   });
 });
 

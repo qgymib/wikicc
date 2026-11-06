@@ -1379,6 +1379,10 @@ a {
   padding: 4px 14px 14px;
   scroll-behavior: auto;
   overflow-y: auto;
+  /* A wheel the body cannot take — past either end of the chapter, or when
+     the chapter fits — stops here: without it the scroll chains to the
+     article behind the panel, and reading the preview moves the document. */
+  overscroll-behavior: contain;
 }
 
 /* The body reuses the article typography, minus the parts that only make sense
