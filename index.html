@@ -2765,6 +2765,14 @@ a {
     animation: none;
   }
 
+  /* An infinite rotation under the compression above becomes a per-frame
+     jump: the spinner seems to spin wildly instead of slowly, which is worse
+     than no spin at all. The arc is held still — it still says loading,
+     without the motion the reader asked the page to spare them. */
+  .preview-loading::before {
+    animation: none;
+  }
+
   /* The diagram engine measures its own geometry while its transitions run: a
      duration that is merely tiny still creates a transition and the
      measurement comes back distorted (a three-node flowchart laid out 2 500px
