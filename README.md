@@ -22,8 +22,9 @@ their chapter outline.
   otherwise; folding is never remembered, so every document opens whole.
   Following a link or an outline entry into a folded chapter reopens it.
 - **Block references**: a link to a chapter of another document previews that
-  chapter on hover and opens it on click. A chapter that does not exist is
-  reported as a broken reference and explained by the reader.
+  chapter on hover and opens it on click, and a link to a whole document
+  previews that document on hover. A chapter that does not exist is reported
+  as a broken reference and explained by the reader.
 - **Tables**: sorting and Excel-style per-column filtering.
 - **Theme** toggle (light/dark) and a layout that stays usable down to phone
   width.

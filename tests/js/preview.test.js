@@ -1,9 +1,9 @@
 /**
- * Tests for `src/web/js/preview.js`: what a block reference previews.
+ * Tests for `src/web/js/preview.js`: what a reference previews.
  *
- * The rules under test are the product promise: a reference shows the chapter
- * it names and every chapter nested below it, and never a sibling or an
- * ancestor.
+ * The rules under test are the product promise: a chapter reference shows the
+ * chapter it names and every chapter nested below it, and never a sibling or
+ * an ancestor; a document reference shows the document it names whole.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -12,6 +12,7 @@ import {
   FALLBACK_SLUG,
   buildPreviewHtml,
   collectPreview,
+  createDocumentPreview,
   createPreview,
   previewTitle,
   resolveAnchor,
@@ -256,4 +257,54 @@ test("slugify mirrors the build's rules", () => {
   assert.equal(slugify("ÜBERSICHT"), "übersicht");
   assert.equal(slugify("!!!"), FALLBACK_SLUG);
   assert.equal(slugify(""), FALLBACK_SLUG);
+});
+
+/* ---------- document references: a whole document on hover ---------- */
+
+test("a document reference previews the complete body", () => {
+  const source = doc();
+  // The whole body, preamble included: the build cuts the body into blocks
+  // that tile it from the first heading, so nothing is missing and nothing
+  // repeats.
+  source.html = "<p>intro</p><p>a</p><p>a1</p>";
+
+  assert.deepEqual(createDocumentPreview(source), {
+    html: "<p>intro</p><p>a</p><p>a1</p>",
+    title: "guide/intro.md",
+    path: "guide/intro.md",
+  });
+});
+
+test("a document preview carries the build's title", () => {
+  const source = doc();
+  source.title = "Guide Introduction";
+  source.html = "<h1>Guide Introduction</h1><p>body</p>";
+
+  assert.deepEqual(createDocumentPreview(source), {
+    html: "<h1>Guide Introduction</h1><p>body</p>",
+    title: "Guide Introduction",
+    path: "guide/intro.md",
+  });
+});
+
+test("a document without headings still previews its whole body", () => {
+  const source = doc();
+  // No blocks at all: the body is preamble only, and it still previews.
+  source.blocks = [];
+  source.html = "<p>just prose</p>";
+
+  assert.deepEqual(createDocumentPreview(source), {
+    html: "<p>just prose</p>",
+    title: "guide/intro.md",
+    path: "guide/intro.md",
+  });
+});
+
+test("a document without a body degrades to no preview", () => {
+  const source = doc();
+  source.html = "";
+
+  assert.equal(createDocumentPreview(source), null);
+  assert.equal(createDocumentPreview({ id: "a.md", title: "A" }), null);
+  assert.equal(createDocumentPreview(null), null);
 });

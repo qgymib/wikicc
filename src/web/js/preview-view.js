@@ -1,14 +1,15 @@
 /**
- * The hover preview for a block reference.
+ * The hover preview for a reference to a chapter or a whole document.
  *
  * `preview.js` decides *what* to show; this module owns the popover: when it
  * appears, where it sits and when it goes away.
  *
- * The same popover serves two moments. A reference whose chapter exists shows
- * the chapter's content; a reference the build already marked as broken shows a
- * notice naming the chapter that is missing instead. The notice is a hint
- * about the link under the pointer, so it is shaped like a tooltip and never
- * like the banner: that one explains a navigation, and is raised on click.
+ * The same popover serves three moments. A reference whose chapter exists
+ * shows the chapter's content; one without a chapter shows the document it
+ * names whole; a reference the build already marked as broken shows a notice
+ * naming the chapter that is missing instead. The notice is a hint about the
+ * link under the pointer, so it is shaped like a tooltip and never like the
+ * banner: that one explains a navigation, and is raised on click.
  *
  * Timing is deliberately split in two. Opening waits `HOVER_DELAY_MS`, so
  * moving the pointer across a paragraph never flashes a panel. Closing waits
@@ -727,7 +728,9 @@ export function createPreviewView(options) {
     // A reference the build could not resolve is recognised from its mark
     // rather than from the `href`: the route deliberately carries no anchor
     // (no element emits one), so re-parsing it would only ever say "the whole
-    // document".
+    // document". The mark is read before the anchor is consulted for the
+    // same reason — a broken reference's route also carries none, and the
+    // notice it owes must not be mistaken for a request for the document.
     var missing = missingOf(link, destination);
     if (missing) {
       openNotice(link, missing);
@@ -735,17 +738,33 @@ export function createPreviewView(options) {
     }
 
     if (!destination.anchor) {
+      // A reference without a chapter names the whole document, and the panel
+      // shows it whole: the same window a chapter reference opens, opened
+      // onto the document instead of onto one chapter of it.
+      whenArrived(destination, link, Preview.createDocumentPreview);
       return;
     }
 
-    // The document on hand answers at once, which is every hover in the
-    // embedded formats and every revisit in the split one. Otherwise the
-    // chapter waits for the file to arrive; the answer re-checks the link it
-    // belongs to, because the pointer may have moved on while it travelled —
-    // a close or a newer hover clears the pending link, and an answer for a
-    // link nobody points at any more would be a surprise, not a preview.
+    whenArrived(destination, link, function (doc) {
+      return Preview.createPreview(doc, destination.anchor);
+    });
+  }
+
+  /**
+   * Answer `link` with the preview `build` makes of the document it names.
+   *
+   * The document on hand answers at once, which is every hover in the
+   * embedded formats and every revisit in the split one. Otherwise the answer
+   * waits for the file to arrive; it re-checks the link it belongs to,
+   * because the pointer may have moved on while it travelled — a close or a
+   * newer hover clears the pending link, and an answer for a link nobody
+   * points at any more would be a surprise, not a preview. A document the
+   * payload never holds answers with nothing, which reads as silence rather
+   * than as a failure.
+   */
+  function whenArrived(destination, link, build) {
     var doc = documents ? documents.peek(destination.id) : null;
-    var preview = Preview.createPreview(doc, destination.anchor);
+    var preview = build(doc);
     if (preview) {
       showPreview(preview, link);
       return;
@@ -762,7 +781,7 @@ export function createPreviewView(options) {
           return;
         }
 
-        var arrived = Preview.createPreview(loaded, destination.anchor);
+        var arrived = build(loaded);
         if (arrived) {
           showPreview(arrived, link);
         }
@@ -1139,9 +1158,10 @@ export function createPreviewView(options) {
    * Tag every internal document link in `root`, so the handlers can find them
    * with one selector instead of re-parsing every href on each pointer move.
    *
-   * A reference the build marked as broken is tagged too: hovering it opens the
-   * notice, so it does expose a popover and announces the same collapsed state
-   * a sound reference does.
+   * Every tagged link opens the popover now: a chapter reference shows the
+   * chapter, a document reference shows the whole document, and a reference
+   * the build marked as broken shows the notice — so each announces the same
+   * collapsed state its hover expands.
    */
   function tag(root) {
     if (!root || typeof root.querySelectorAll !== "function") {
@@ -1159,15 +1179,8 @@ export function createPreviewView(options) {
       }
 
       link.setAttribute(Links.DOC_LINK_ATTRIBUTE, "");
-
-      if (taggedMissing(link)) {
-        link.setAttribute("aria-expanded", "false");
-        return;
-      }
-
-      if (Links.isBlockReference(href)) {
-        link.setAttribute("aria-expanded", "false");
-      }
+      taggedMissing(link);
+      link.setAttribute("aria-expanded", "false");
     });
   }
 

@@ -1,18 +1,25 @@
 /**
- * What a block reference shows when it is hovered.
+ * What a reference shows when it is hovered.
  *
- * A reference names one chapter, and the reader promises to show *that chapter
- * and nothing above it*: its own content plus every nested chapter below it,
- * with no sibling and no ancestor. The build already cut the body into blocks
- * (`DocModel.blocks`, one per heading, ending where the next heading starts)
- * and recorded each block's place in the outline, so the preview is a lookup
- * rather than a second parse of Markdown in the browser.
+ * A chapter reference names one chapter, and the reader promises to show *that
+ * chapter and nothing above it*: its own content plus every nested chapter
+ * below it, with no sibling and no ancestor. The build already cut the body
+ * into blocks (`DocModel.blocks`, one per heading, ending where the next
+ * heading starts) and recorded each block's place in the outline, so the
+ * preview is a lookup rather than a second parse of Markdown in the browser.
  *
  * A block holds its own chapter's markup and lists the blocks it contains
  * (`Block.subtree`, itself first, in document order), so showing a whole
  * chapter is "read that list and join the blocks it names": the order is the
  * source order and no paragraph is repeated, because every block owns its
  * markup exactly once.
+ *
+ * A reference without a chapter anchor names the whole document. Its preview
+ * is the complete body — the preamble before the first heading joined with
+ * every block in document order, which is exactly what `DocModel.html`
+ * already is, because the build cuts the blocks to tile the body from its
+ * first heading to its end. The reader recombines what the build wrote;
+ * nothing new travels in the payload.
  *
  * Pure: no DOM, so `node --test` covers the selection rules directly.
  */
@@ -206,6 +213,31 @@ export function createPreview(doc, anchor) {
   return {
     html: html,
     title: previewTitle(doc, anchor),
+    path: doc.id || doc.path || "",
+  };
+}
+
+/**
+ * Everything the popover needs about a reference that names a whole document,
+ * or `null` when there is nothing to show.
+ *
+ * The body is shown whole, so `html` is the document's own body: the same
+ * bytes joining the preamble with every block in document order would
+ * produce, since the blocks tile the body from the first heading to its end.
+ * The title is the build's (`DocModel.title`, the first level-one heading or
+ * the file stem), falling back to the path, because a document without a
+ * title still has a name. A document without a body — a stale artifact, or a
+ * payload that predates the field — answers `null`, which the reader reads as
+ * silence rather than as a failure.
+ */
+export function createDocumentPreview(doc) {
+  if (!doc || typeof doc.html !== "string" || !doc.html) {
+    return null;
+  }
+
+  return {
+    html: doc.html,
+    title: doc.title || doc.id || doc.path || "",
     path: doc.id || doc.path || "",
   };
 }

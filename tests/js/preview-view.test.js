@@ -1,5 +1,6 @@
 /**
- * Tests for `src/web/js/preview-view.js`: the popover around a block reference.
+ * Tests for `src/web/js/preview-view.js`: the popover around a chapter or a
+ * whole-document reference.
  *
  * Driven with a minimal fake DOM — plain objects with just the methods the view
  * calls — because the rules under test are *when* things happen, not how the
@@ -354,6 +355,8 @@ function payload() {
       {
         id: "guide/intro.md",
         path: "guide/intro.md",
+        title: "Guide Introduction",
+        html: "<h1>Guide Introduction</h1>\n<p>body</p>\n",
         toc: [
           {
             id: "getting-started",
@@ -815,6 +818,205 @@ test("hovering a reference to a chapter the document lost stays silent", () => {
 
     assert.deepEqual(messages, []);
     assert.equal(view.isOpen(), false);
+  });
+});
+
+/* ---------- hovering a document reference ---------- */
+
+test("hovering a document reference opens the whole document", () => {
+  setup(function ({ view, content, clock, doc }) {
+    const anchor = link("#/doc/guide/intro.md");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    assert.deepEqual(
+      clock.delays(),
+      [HOVER_DELAY_MS],
+      "the open timer is armed",
+    );
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(anchor.getAttribute("aria-expanded"), "true");
+
+    const panel = panelOf(doc);
+    assert.equal(
+      panel.getAttribute(MISSING_ATTRIBUTE),
+      null,
+      "an ordinary preview",
+    );
+    assert.match(textOf(panel), /Guide Introduction/, "the head names it");
+    const shown = byClass(panel, "preview-scroll")[0].innerHTML;
+    assert.match(shown, /<h1>Guide Introduction<\/h1>/);
+    assert.match(shown, /<p>body<\/p>/);
+  });
+});
+
+test("a document preview opens once its document arrives", () => {
+  let deliver = null;
+  const travelling = {
+    peek() {
+      return null;
+    },
+    get() {
+      return {
+        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
+        then(callback) {
+          deliver = callback;
+        },
+      };
+    },
+  };
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      assert.equal(
+        view.isOpen(),
+        false,
+        "nothing shows while the document is on its way",
+      );
+
+      deliver(payload().get("guide/intro.md"));
+
+      assert.equal(view.isOpen(), true, "the answer opens the panel");
+      const panel = panelOf(doc);
+      assert.match(
+        byClass(panel, "preview-scroll")[0].innerHTML,
+        /<p>body<\/p>/,
+      );
+    },
+    { documents: travelling },
+  );
+});
+
+test("a document answer for a hover the reader left behind opens nothing", () => {
+  let deliver = null;
+  const travelling = {
+    peek() {
+      return null;
+    },
+    get() {
+      return {
+        // biome-ignore lint/suspicious/noThenProperty: a deliberately synchronous thenable, so the test needs no microtask flush
+        then(callback) {
+          deliver = callback;
+        },
+      };
+    },
+  };
+
+  setup(
+    function ({ view, content, clock }) {
+      const anchor = link("#/doc/guide/intro.md");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      content.fire("pointerout", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      deliver(payload().get("guide/intro.md"));
+
+      assert.equal(
+        view.isOpen(),
+        false,
+        "a panel for a link nobody points at any more would be a surprise",
+      );
+    },
+    { documents: travelling },
+  );
+});
+
+test("a broken reference without an anchor still opens the notice, not a document preview", () => {
+  setup(function ({ view, content, clock, doc }) {
+    const anchor = brokenLink("#/doc/guide/intro.md", "1.4 配色与字体");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    const panel = panelOf(doc);
+    assert.equal(
+      panel.getAttribute(MISSING_ATTRIBUTE),
+      "true",
+      "the mark outranks the missing anchor",
+    );
+    assert.equal(
+      byClass(panel, "preview-scroll")[0].innerHTML,
+      "",
+      "no document body is assembled for a notice",
+    );
+  });
+});
+
+test("a document reference is tagged with an expandable state", () => {
+  setup(function ({ view, content }) {
+    const anchor = link("#/doc/guide/intro.md");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    assert.equal(anchor.getAttribute(DOC_LINK_ATTRIBUTE), "");
+    assert.equal(
+      anchor.getAttribute("aria-expanded"),
+      "false",
+      "there is a preview to expand, so the state is announced",
+    );
+  });
+});
+
+test("an external link is never tagged and never previews", () => {
+  setup(function ({ view, content, clock }) {
+    const anchor = link("https://example.com/page");
+    content.appendChild(anchor);
+    view.tag(content);
+
+    assert.equal(
+      anchor.getAttribute(DOC_LINK_ATTRIBUTE),
+      null,
+      "only a route is a document link",
+    );
+
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), false, "a network resource has no preview");
+  });
+});
+
+test("clicking the document reference a pinned panel describes closes it", () => {
+  setup(function (ctx) {
+    const { view, content, clock, navigations } = ctx;
+    const { anchor, panel } = openPreview(ctx, "#/doc/guide/intro.md");
+    clickInside(panel);
+
+    let prevented = false;
+    content.fire("click", {
+      target: anchor,
+      button: 0,
+      preventDefault() {
+        prevented = true;
+      },
+    });
+    clock.runAll();
+
+    assert.equal(
+      prevented,
+      true,
+      "the browser must not follow the link as well",
+    );
+    assert.equal(view.isOpen(), false);
+    assert.deepEqual(navigations, [], "closing the panel is not a navigation");
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
   });
 });
 
