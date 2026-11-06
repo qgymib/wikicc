@@ -1,11 +1,17 @@
 //! Resolved build options: defaults, lexical path normalization and safety guards.
+//!
+//! [`Settings`] is the shared shape of everything the command line and
+//! `.wikicc.json` can both express; [`Options::resolve`] merges the two
+//! sources — command line over file over built-in defaults — into the
+//! [`Options`] the pipeline consumes.
 
 use std::ffi::OsString;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
-use crate::cli::Cli;
+use clap::Parser;
+
 use crate::error::{Error, Result};
 
 /// Directory appended to the input directory when `--out` is omitted.
@@ -63,6 +69,66 @@ impl FromStr for OutputFormat {
     }
 }
 
+/// Settings both the command line and the configuration file can express.
+///
+/// Every field is `None` until one of the two sources names it, so both
+/// surfaces share one shape, one normalization and one validation. `None`
+/// never means "off" — it means "this source did not speak".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Parser)]
+pub struct Settings {
+    /// Output directory [default: <INPUT_DIR>/dist]
+    #[arg(short, long, value_name = "DIR")]
+    pub out: Option<PathBuf>,
+
+    /// Output format: single-html (one self-contained file), html-dir (page
+    /// plus an assets folder) or pages (static site for GitHub Pages) [default: single-html]
+    #[arg(long, value_name = "FMT", value_parser = OutputFormat::from_str)]
+    pub format: Option<OutputFormat>,
+
+    /// Site title [default: input folder name]
+    #[arg(long, value_name = "TITLE")]
+    pub title: Option<String>,
+
+    /// Treat warnings (broken links, missing assets) as errors; `--strict=false` overrides the configuration
+    //
+    // `require_equals` keeps a following positional (`wikicc --strict docs`)
+    // out of the optional value; a bare `--strict` means true and
+    // `--strict=false` means false, so the command line can override a
+    // configuration that turns the gate on.
+    #[arg(
+        long,
+        value_name = "BOOL",
+        num_args(0..=1),
+        require_equals = true,
+        default_missing_value = "true"
+    )]
+    pub strict: Option<bool>,
+
+    /// Document the reader opens at an empty or unknown address; overrides `.wikicc.json`
+    #[arg(long, value_name = "DOC")]
+    pub home: Option<String>,
+
+    /// Directory whose entire subtree stays out of the site; repeatable, overrides `.wikicc.json`
+    #[arg(long, value_name = "DIR")]
+    pub exclude: Option<Vec<String>>,
+}
+
+/// The raw build intent: what the command line said, before any default.
+///
+/// The pipeline merges this over the configuration file, so the binary stays
+/// thin and file-driven behaviour stays testable without spawning a process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+    /// Input folder.
+    pub input: PathBuf,
+    /// Values the command line named explicitly.
+    pub settings: Settings,
+    /// Overwrite an existing output directory without confirmation (writers).
+    pub force: bool,
+    /// Suppress the summary line.
+    pub quiet: bool,
+}
+
 /// Fully resolved options for one build.
 ///
 /// Paths are kept exactly as the user wrote them (or as derived from the input
@@ -84,30 +150,61 @@ pub struct Options {
     pub force: bool,
     /// Suppress the summary line.
     pub quiet: bool,
+    /// The `home` value exactly as written, before it is matched against the
+    /// scanned document ids.
+    pub home: Option<String>,
+    /// The `exclude` entries, normalized (trimmed, `\` read as `/`, a leading
+    /// `./` and a trailing `/` dropped) and deduplicated; empty when unset.
+    pub exclude: Vec<String>,
 }
 
 impl Options {
-    /// Derive defaults from raw CLI arguments. Performs no I/O.
+    /// Merge the command line over the configuration file over the built-in
+    /// defaults, and normalize and validate what the winning source wrote.
     ///
-    /// Only valid for a build invocation: `INPUT_DIR` is missing when
-    /// `--init-config` replaces the build, and the binary dispatches that
-    /// action before reaching here.
-    pub fn from_cli(cli: Cli) -> Self {
-        let input = cli
-            .input
-            .expect("INPUT_DIR is set for every build invocation");
-        let out = cli.out.unwrap_or_else(|| input.join(DEFAULT_OUT_DIR));
-        let title = cli.title.unwrap_or_else(|| default_title(&input));
+    /// Pure: no I/O and no filesystem access. A configuration `out` was
+    /// already resolved against the input folder when the file was read, so
+    /// both sources carry the same kind of value here. A `home` that is empty
+    /// after normalization and an `exclude` entry that escapes the input
+    /// folder are hard errors, whatever the source.
+    pub fn resolve(request: &Request, file: &Settings) -> Result<Self> {
+        let cli = &request.settings;
+        let input = &request.input;
 
-        Self {
-            input,
-            out,
-            format: cli.format,
-            title,
-            strict: cli.strict,
-            force: cli.force,
-            quiet: cli.quiet,
+        let home = cli.home.clone().or_else(|| file.home.clone());
+        if let Some(raw) = &home
+            && normalize_candidate(raw).is_empty()
+        {
+            return Err(Error::InvalidInput(
+                "'home' must be a non-empty string".to_string(),
+            ));
         }
+
+        let exclude = cli
+            .exclude
+            .clone()
+            .or_else(|| file.exclude.clone())
+            .unwrap_or_default();
+
+        Ok(Self {
+            input: input.clone(),
+            out: cli
+                .out
+                .clone()
+                .or_else(|| file.out.clone())
+                .unwrap_or_else(|| input.join(DEFAULT_OUT_DIR)),
+            format: cli.format.or(file.format).unwrap_or_default(),
+            title: cli
+                .title
+                .clone()
+                .or_else(|| file.title.clone())
+                .unwrap_or_else(|| default_title(input)),
+            strict: cli.strict.or(file.strict).unwrap_or(false),
+            force: request.force,
+            quiet: request.quiet,
+            home,
+            exclude: normalize_excludes(&exclude)?,
+        })
     }
 
     /// Absolute, lexically normalized input path.
@@ -120,48 +217,61 @@ impl Options {
         normalize(&self.out)
     }
 
-    /// Reject unusable input/output combinations.
-    ///
-    /// This is the only place that guards the output directory, so it must run
-    /// before anything is written or removed.
+    /// Both guards below, for a caller that holds a resolved [`Options`].
     pub fn validate(&self) -> Result<()> {
-        if !self.input.exists() {
-            return Err(Error::InvalidInput(format!(
-                "input directory not found: {}",
-                self.input.display()
-            )));
-        }
-        if !self.input.is_dir() {
-            return Err(Error::InvalidInput(format!(
-                "input path is not a directory: {}",
-                self.input.display()
-            )));
-        }
-
-        let input = self.normalized_input();
-        let out = self.normalized_out();
-
-        if same_path(&input, &out) {
-            return Err(Error::InvalidInput(format!(
-                "output directory must differ from the input directory: {}",
-                out.display()
-            )));
-        }
-        if is_ancestor(&out, &input) {
-            return Err(Error::InvalidInput(format!(
-                "output directory must not be an ancestor of the input directory: {}",
-                out.display()
-            )));
-        }
-        if same_path(&normalize(&std::env::current_dir()?), &out) {
-            return Err(Error::InvalidInput(format!(
-                "refusing to use the current working directory as the output directory: {}",
-                out.display()
-            )));
-        }
-
-        Ok(())
+        validate_input(&self.input)?;
+        validate_paths(&self.input, &self.out)
     }
+}
+
+/// Reject an unusable input folder.
+pub fn validate_input(input: &Path) -> Result<()> {
+    if !input.exists() {
+        return Err(Error::InvalidInput(format!(
+            "input directory not found: {}",
+            input.display()
+        )));
+    }
+    if !input.is_dir() {
+        return Err(Error::InvalidInput(format!(
+            "input path is not a directory: {}",
+            input.display()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Reject unusable input/output combinations.
+///
+/// This is the only place that guards the output directory, so it must run
+/// before anything is written or removed. It runs on the merged options, so
+/// an output directory that arrived through the configuration file is
+/// guarded exactly like one typed on the command line.
+pub fn validate_paths(input: &Path, out: &Path) -> Result<()> {
+    let input = normalize(input);
+    let out = normalize(out);
+
+    if same_path(&input, &out) {
+        return Err(Error::InvalidInput(format!(
+            "output directory must differ from the input directory: {}",
+            out.display()
+        )));
+    }
+    if is_ancestor(&out, &input) {
+        return Err(Error::InvalidInput(format!(
+            "output directory must not be an ancestor of the input directory: {}",
+            out.display()
+        )));
+    }
+    if same_path(&normalize(&std::env::current_dir()?), &out) {
+        return Err(Error::InvalidInput(format!(
+            "refusing to use the current working directory as the output directory: {}",
+            out.display()
+        )));
+    }
+
+    Ok(())
 }
 
 /// Make `path` absolute and collapse `.`/`..` segments without touching the
@@ -253,27 +363,93 @@ fn default_title(input: &Path) -> String {
     FALLBACK_TITLE.to_string()
 }
 
+/// Normalize a `home` value or an `exclude` entry for matching: trimmed,
+/// `/`-separated, without a leading `./`.
+pub(crate) fn normalize_candidate(raw: &str) -> String {
+    let mut candidate = raw.trim().replace('\\', "/");
+    while let Some(rest) = candidate.strip_prefix("./") {
+        candidate = rest.to_string();
+    }
+    candidate
+}
+
+/// Normalize and validate the `exclude` entries of either source.
+///
+/// Each entry becomes a `/`-separated directory path relative to the input
+/// folder: trimmed, `\` read as `/`, a leading `./` and any trailing `/`
+/// dropped. An entry that normalizes to nothing, or that carries an empty,
+/// `.` or `..` component, is a hard error — an exclusion that escapes the
+/// input folder or cannot match any directory would silently do nothing, and
+/// a broken instruction must not look like it worked. Duplicates keep their
+/// first occurrence, so the order the author wrote is the order that counts.
+pub(crate) fn normalize_excludes(entries: &[String]) -> Result<Vec<String>> {
+    let mut excludes: Vec<String> = Vec::new();
+    for raw in entries {
+        let candidate = normalize_candidate(raw);
+        let candidate = candidate.trim_end_matches('/');
+        if candidate.is_empty() {
+            return Err(Error::InvalidInput(
+                "'exclude' entries must be non-empty directory paths".to_string(),
+            ));
+        }
+        if candidate
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+        {
+            return Err(Error::InvalidInput(format!(
+                "'exclude' entry '{candidate}' is not a directory path inside the input folder"
+            )));
+        }
+        if !excludes.iter().any(|known| known == candidate) {
+            excludes.push(candidate.to_string());
+        }
+    }
+    Ok(excludes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn cli_for(input: &Path) -> Cli {
-        Cli {
-            input: Some(input.to_path_buf()),
-            out: None,
-            format: OutputFormat::SingleHtml,
-            title: None,
-            strict: false,
+    /// Options for one request whose command line carries only `out`.
+    fn options_for(input: &Path, out: Option<&Path>) -> Options {
+        let settings = Settings {
+            out: out.map(Path::to_path_buf),
+            ..Settings::default()
+        };
+        let request = Request {
+            input: input.to_path_buf(),
+            settings,
             force: false,
             quiet: false,
-            init_config: None,
-        }
+        };
+        Options::resolve(&request, &Settings::default()).expect("the request resolves")
     }
 
-    fn options_for(input: &Path, out: Option<&Path>) -> Options {
-        let mut cli = cli_for(input);
-        cli.out = out.map(Path::to_path_buf);
-        Options::from_cli(cli)
+    /// Resolve a request with explicit command line settings.
+    fn resolve_cli(input: &Path, settings: Settings) -> Result<Options> {
+        Options::resolve(
+            &Request {
+                input: input.to_path_buf(),
+                settings,
+                force: false,
+                quiet: false,
+            },
+            &Settings::default(),
+        )
+    }
+
+    /// Resolve a request with explicit file settings and a silent command line.
+    fn resolve_file(input: &Path, file: Settings) -> Result<Options> {
+        Options::resolve(
+            &Request {
+                input: input.to_path_buf(),
+                settings: Settings::default(),
+                force: false,
+                quiet: false,
+            },
+            &file,
+        )
     }
 
     #[test]
@@ -334,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn derives_default_out_and_title() {
+    fn resolve_derives_default_out_and_title() {
         let dir = tempfile::tempdir().expect("temp dir");
         let options = options_for(dir.path(), None);
 
@@ -343,27 +519,205 @@ mod tests {
             options.title,
             dir.path().file_name().unwrap().to_string_lossy()
         );
+        assert_eq!(options.format, OutputFormat::SingleHtml);
+        assert!(!options.strict);
+        assert!(options.home.is_none());
+        assert!(options.exclude.is_empty());
     }
 
     #[test]
-    fn keeps_explicit_out_and_title() {
+    fn resolve_keeps_explicit_cli_values() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let mut cli = cli_for(dir.path());
-        cli.out = Some(PathBuf::from("build"));
-        cli.title = Some("Handbook".to_string());
-        cli.format = OutputFormat::HtmlDir;
-        cli.strict = true;
-        cli.force = true;
-        cli.quiet = true;
+        let settings = Settings {
+            out: Some(PathBuf::from("build")),
+            format: Some(OutputFormat::HtmlDir),
+            title: Some("Handbook".to_string()),
+            strict: Some(true),
+            home: Some("intro".to_string()),
+            exclude: Some(vec!["drafts".to_string()]),
+        };
 
-        let options = Options::from_cli(cli);
+        let options = resolve_cli(dir.path(), settings).expect("valid settings");
 
         assert_eq!(options.out, PathBuf::from("build"));
         assert_eq!(options.title, "Handbook");
         assert_eq!(options.format, OutputFormat::HtmlDir);
         assert!(options.strict);
-        assert!(options.force);
-        assert!(options.quiet);
+        assert_eq!(options.home.as_deref(), Some("intro"));
+        assert_eq!(options.exclude, ["drafts"]);
+    }
+
+    #[test]
+    fn resolve_falls_back_to_the_file_settings() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = Settings {
+            out: Some(dir.path().join("site")),
+            format: Some(OutputFormat::Pages),
+            title: Some("From Config".to_string()),
+            strict: Some(true),
+            home: Some("intro.md".to_string()),
+            exclude: Some(vec!["drafts".to_string()]),
+        };
+
+        let options = resolve_file(dir.path(), file).expect("valid settings");
+
+        assert_eq!(options.out, dir.path().join("site"));
+        assert_eq!(options.format, OutputFormat::Pages);
+        assert_eq!(options.title, "From Config");
+        assert!(options.strict);
+        assert_eq!(options.home.as_deref(), Some("intro.md"));
+        assert_eq!(options.exclude, ["drafts"]);
+    }
+
+    #[test]
+    fn resolve_prefers_the_command_line_over_the_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                out: Some(PathBuf::from("from-cli")),
+                format: Some(OutputFormat::HtmlDir),
+                title: Some("From CLI".to_string()),
+                strict: Some(false),
+                home: Some("cli.md".to_string()),
+                exclude: Some(vec!["cli-drafts".to_string()]),
+            },
+            force: false,
+            quiet: false,
+        };
+        let file = Settings {
+            out: Some(dir.path().join("from-file")),
+            format: Some(OutputFormat::Pages),
+            title: Some("From Config".to_string()),
+            strict: Some(true),
+            home: Some("file.md".to_string()),
+            exclude: Some(vec!["file-drafts".to_string()]),
+        };
+
+        let options = Options::resolve(&request, &file).expect("valid settings");
+
+        assert_eq!(options.out, PathBuf::from("from-cli"));
+        assert_eq!(options.format, OutputFormat::HtmlDir);
+        assert_eq!(options.title, "From CLI");
+        assert!(!options.strict);
+        assert_eq!(options.home.as_deref(), Some("cli.md"));
+        assert_eq!(options.exclude, ["cli-drafts"]);
+    }
+
+    #[test]
+    fn a_command_line_false_overrides_a_configured_strict() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                strict: Some(false),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+        let file = Settings {
+            strict: Some(true),
+            ..Settings::default()
+        };
+
+        let options = Options::resolve(&request, &file).expect("valid settings");
+
+        assert!(
+            !options.strict,
+            "the command line wins even when it says no"
+        );
+    }
+
+    #[test]
+    fn the_command_line_exclusions_replace_the_configured_ones() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                exclude: Some(vec!["archive".to_string()]),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+        let file = Settings {
+            exclude: Some(vec!["drafts".to_string()]),
+            ..Settings::default()
+        };
+
+        let options = Options::resolve(&request, &file).expect("valid settings");
+
+        assert_eq!(
+            options.exclude,
+            ["archive"],
+            "the file list is not merged into the command line list"
+        );
+    }
+
+    #[test]
+    fn command_line_exclusions_are_normalized_like_configured_ones() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let settings = Settings {
+            exclude: Some(vec![
+                " guide\\drafts ".to_string(),
+                "./scratch/".to_string(),
+                "guide\\drafts".to_string(),
+            ]),
+            ..Settings::default()
+        };
+
+        let options = resolve_cli(dir.path(), settings).expect("valid settings");
+
+        assert_eq!(options.exclude, ["guide/drafts", "scratch"]);
+    }
+
+    #[test]
+    fn an_escaping_exclusion_is_a_hard_error_whatever_the_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cli = Settings {
+            exclude: Some(vec!["../outside".to_string()]),
+            ..Settings::default()
+        };
+        let file = Settings {
+            exclude: Some(vec!["guide/../drafts".to_string()]),
+            ..Settings::default()
+        };
+
+        let cli_error = resolve_cli(dir.path(), cli).expect_err("an escaping entry is rejected");
+        let file_error = resolve_file(dir.path(), file).expect_err("an escaping entry is rejected");
+
+        assert!(
+            cli_error
+                .to_string()
+                .contains("is not a directory path inside the input folder"),
+            "unexpected message: {cli_error}"
+        );
+        assert!(
+            file_error
+                .to_string()
+                .contains("is not a directory path inside the input folder"),
+            "unexpected message: {file_error}"
+        );
+    }
+
+    #[test]
+    fn an_empty_home_is_a_hard_error_whatever_the_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cli = Settings {
+            home: Some("   ".to_string()),
+            ..Settings::default()
+        };
+        let file = Settings {
+            home: Some(String::new()),
+            ..Settings::default()
+        };
+
+        let cli_error = resolve_cli(dir.path(), cli).expect_err("an empty home is rejected");
+        let file_error = resolve_file(dir.path(), file).expect_err("an empty home is rejected");
+
+        assert_eq!(cli_error.to_string(), "'home' must be a non-empty string");
+        assert_eq!(file_error.to_string(), "'home' must be a non-empty string");
     }
 
     #[test]

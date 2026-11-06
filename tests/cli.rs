@@ -35,6 +35,8 @@ fn help_lists_documented_options() {
         "--format",
         "--title",
         "--strict",
+        "--home",
+        "--exclude",
         "--force",
         "--quiet",
     ] {
@@ -382,4 +384,117 @@ fn output_that_contains_the_input_exits_with_1() {
         .stderr(predicate::str::contains(
             "output directory must not be an ancestor of the input directory",
         ));
+}
+
+#[test]
+fn the_command_line_home_overrides_the_configuration_file() {
+    let dir = fixture();
+    std::fs::write(dir.path().join("second.md"), "# Second\n").expect("write second doc");
+    std::fs::write(dir.path().join(".wikicc.json"), r#"{"home": "intro.md"}"#)
+        .expect("write config");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out), "--home", "second"])
+        .assert()
+        .success();
+
+    let shell = std::fs::read_to_string(out.join("index.html")).expect("read shell");
+    assert!(
+        shell.contains(r#""home":"second.md""#),
+        "the command line home wins over the configured one"
+    );
+}
+
+#[test]
+fn exclude_replaces_the_configured_list() {
+    let dir = fixture();
+    for (name, body) in [("drafts/wip.md", "# Wip\n"), ("archive/old.md", "# Old\n")] {
+        let path = dir.path().join(name);
+        std::fs::create_dir(path.parent().expect("parent")).expect("create directory");
+        std::fs::write(path, body).expect("write fixture");
+    }
+    std::fs::write(
+        dir.path().join(".wikicc.json"),
+        r#"{"exclude": ["drafts"]}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out), "--exclude", "archive"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("compiled 2 documents, 0 assets"));
+
+    let shell = std::fs::read_to_string(out.join("index.html")).expect("read shell");
+    assert!(
+        shell.contains(r#""id":"drafts/wip.md""#),
+        "the configured draft is back when the command line replaces the list"
+    );
+    assert!(
+        !shell.contains(r#""id":"archive/old.md""#),
+        "the command line exclusion applies"
+    );
+}
+
+#[test]
+fn strict_false_overrides_the_configured_gate() {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join("intro.md"),
+        "# Intro\n\n[gone](missing.md)\n",
+    )
+    .expect("write fixture");
+    std::fs::write(dir.path().join(".wikicc.json"), r#"{"strict": true}"#).expect("write config");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "1 warning treated as an error (--strict)",
+        ));
+    assert!(!out.exists(), "the configured gate refused the build");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out), "--strict=false"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("1 warning (use --strict to fail)"));
+    assert!(out.join("index.html").is_file());
+}
+
+#[test]
+fn an_escaping_exclude_entry_is_a_runtime_error() {
+    let dir = fixture();
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--exclude", "../outside"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "'exclude' entry '../outside' is not a directory path inside the input folder",
+        ));
+}
+
+#[test]
+fn the_configured_out_directory_receives_the_artifact() {
+    let dir = fixture();
+    std::fs::write(dir.path().join(".wikicc.json"), r#"{"out": "site"}"#).expect("write config");
+    let out = dir.path().join("site");
+
+    wikicc()
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(path_string(&out)));
+
+    assert!(out.join("index.html").is_file());
 }

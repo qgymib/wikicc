@@ -39,7 +39,7 @@ pub use markdown::{
     LinkRewriter, NoRewrite, RenderedDoc, TocEntry, render_document, render_document_with,
     render_engine_html,
 };
-pub use options::{Options, OutputFormat};
+pub use options::{Options, OutputFormat, Request, Settings};
 pub use pipeline::BuildOutcome;
 pub use render::{
     APP_BUNDLE, KATEX_CSS, PAGES_DIR_NAME, RenderedOutput, RenderedPages, RenderedSite,

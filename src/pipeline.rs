@@ -3,16 +3,18 @@
 //! This is the module that turns the individual stages described in
 //! `docs/design.md` into one run. The order is a contract:
 //!
-//! 1. validate the options (input tree and output-directory guards),
+//! 1. validate the input directory,
 //! 2. read the optional `.wikicc.json` configuration from the input root,
-//! 3. scan the input directory, pruning the directories its `exclude` key
-//!    names,
-//! 4. assemble the payload and resolve links and assets,
-//! 5. report every diagnostic on stderr (scan, then config, then build),
-//! 6. apply the `--strict` gate,
-//! 7. summarise the warnings,
-//! 8. render the page and write the artifact,
-//! 9. print the summary line (unless `--quiet`).
+//! 3. merge the command line over the configuration over the built-in
+//!    defaults and guard the output directory,
+//! 4. scan the input directory, pruning the directories the `exclude`
+//!    entries name,
+//! 5. assemble the payload and resolve links and assets,
+//! 6. report every diagnostic on stderr (scan, then config, then build),
+//! 7. apply the `--strict` gate,
+//! 8. summarise the warnings,
+//! 9. render the page and write the artifact,
+//! 10. print the summary line (unless `--quiet`).
 //!
 //! The gate comes before rendering and writing on purpose: a build that fails
 //! on warnings must neither create an artifact nor empty a previous one.
@@ -29,7 +31,7 @@ use std::time::{Duration, Instant};
 
 use crate::config;
 use crate::error::{Error, Result};
-use crate::options::{Options, OutputFormat};
+use crate::options::{self, Options, OutputFormat, Request};
 use crate::render::{RenderedOutput, render_pages, render_site};
 use crate::scan::{self, Severity};
 use crate::site::{self, Stats};
@@ -84,28 +86,34 @@ pub fn strict_message(warnings: usize) -> String {
     }
 }
 
-/// Run the whole pipeline for `options`.
+/// Run the whole pipeline for `request`.
 ///
 /// Diagnostics and the warning summary go to `err`; the summary line goes to
 /// `out` unless `--quiet` was passed. Both sinks are
 /// flushed by their owners, so a caller that owns a buffer sees everything
 /// after the call returns.
-pub fn run(options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> Result<BuildOutcome> {
+pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Result<BuildOutcome> {
     let started = Instant::now();
 
-    options.validate()?;
+    options::validate_input(&request.input)?;
 
     // The configuration is an explicit instruction, so a file that cannot be
     // read or understood aborts the build here, before anything is reported
-    // or written. It is read before the scan because the `exclude` entries
-    // must be in effect while the tree is walked; resolving `home` still
-    // waits for the scan, since it needs the document ids. A `home` that
-    // matches no document only warns.
-    let site_config = config::load(&options.input)?;
-    let report = scan::scan_with(&options.input, &options.out, &site_config.exclude)?;
+    // or written. The command line is merged over it right after the read,
+    // and only then are the output-directory guards applied, because an
+    // `out` that arrived through the file must be guarded exactly like one
+    // typed on the command line. The scan waits for the merge because the
+    // `exclude` entries must be in effect while the tree is walked; resolving
+    // `home` still waits for the scan, since it needs the document ids. A
+    // `home` that matches no document only warns.
+    let site_config = config::load(&request.input)?;
+    let options = Options::resolve(request, &site_config.settings)?;
+    options::validate_paths(&options.input, &options.out)?;
+
+    let report = scan::scan_with(&options.input, &options.out, &options.exclude)?;
 
     let ids: Vec<String> = report.docs.iter().map(|doc| doc.id.clone()).collect();
-    let (home, resolved_diagnostics) = site_config.resolve_home(&ids);
+    let (home, resolved_diagnostics) = config::resolve_home(options.home.as_deref(), &ids);
     let mut config_diagnostics = site_config.diagnostics;
     config_diagnostics.extend(resolved_diagnostics);
 
@@ -165,7 +173,7 @@ pub fn run(options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     };
 
     if !options.quiet {
-        writeln!(out, "{}", outcome.summary(options))?;
+        writeln!(out, "{}", outcome.summary(&options))?;
     }
 
     Ok(outcome)
@@ -185,19 +193,26 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::options::OutputFormat;
+    use crate::options::{OutputFormat, Request, Settings};
 
-    /// Options for one run, built without going through clap.
-    fn options(input: &Path, out: &Path, format: OutputFormat) -> Options {
-        Options {
+    /// A request for one run, built without going through clap.
+    fn request(input: &Path, out: &Path, format: OutputFormat) -> Request {
+        Request {
             input: input.to_path_buf(),
-            out: out.to_path_buf(),
-            format,
-            title: "Fixture".to_string(),
-            strict: false,
+            settings: Settings {
+                out: Some(out.to_path_buf()),
+                format: Some(format),
+                title: Some("Fixture".to_string()),
+                ..Settings::default()
+            },
             force: false,
             quiet: false,
         }
+    }
+
+    /// The resolved [`Options`] of a request, for assertions on the summary.
+    fn resolved(request: &Request) -> Options {
+        Options::resolve(request, &Settings::default()).expect("the request resolves")
     }
 
     /// A directory with one document and one referenced asset.
@@ -215,10 +230,10 @@ mod tests {
     }
 
     /// Run `run` and return `(outcome, stdout, stderr)`.
-    fn execute(options: &Options) -> (Result<BuildOutcome>, String, String) {
+    fn execute(request: &Request) -> (Result<BuildOutcome>, String, String) {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let outcome = run(options, &mut out, &mut err);
+        let outcome = run(request, &mut out, &mut err);
 
         (
             outcome,
@@ -230,31 +245,31 @@ mod tests {
     #[test]
     fn summary_counts_documents_assets_output_and_format() {
         let dir = fixture();
-        let options = options(
+        let request = request(
             dir.path(),
             &dir.path().join("dist"),
             OutputFormat::SingleHtml,
         );
-        let (outcome, stdout, _) = execute(&options);
+        let (outcome, stdout, _) = execute(&request);
         let outcome = outcome.expect("the build succeeds");
 
         assert_eq!(outcome.stats.documents, 1);
         assert_eq!(outcome.stats.assets, 1);
         assert_eq!(
-            outcome.summary(&options),
+            outcome.summary(&resolved(&request)),
             format!(
                 "compiled 1 document, 1 asset -> {} (single-html) in {} ms",
-                options.out.display(),
+                resolved(&request).out.display(),
                 outcome.elapsed.as_millis()
             )
         );
-        assert_eq!(stdout.trim_end(), outcome.summary(&options));
+        assert_eq!(stdout.trim_end(), outcome.summary(&resolved(&request)));
     }
 
     #[test]
     fn summary_uses_plural_forms() {
         let dir = fixture();
-        let options = options(
+        let request = request(
             dir.path(),
             &dir.path().join("dist"),
             OutputFormat::SingleHtml,
@@ -275,10 +290,10 @@ mod tests {
         };
 
         assert_eq!(
-            outcome.summary(&options),
+            outcome.summary(&resolved(&request)),
             format!(
                 "compiled 3 documents, 2 assets -> {} (single-html) in 7 ms",
-                options.out.display()
+                resolved(&request).out.display()
             )
         );
     }
@@ -302,9 +317,9 @@ mod tests {
     fn a_successful_run_writes_the_artifact_and_reports_it() {
         let dir = fixture();
         let out = dir.path().join("dist");
-        let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-        let (outcome, stdout, stderr) = execute(&options);
+        let (outcome, stdout, stderr) = execute(&request);
         let outcome = outcome.expect("the build succeeds");
 
         assert_eq!(outcome.written.files, 1);
@@ -323,14 +338,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         std::fs::write(dir.path().join("a.md"), "# A\n\n[gone](missing.md)\n")
             .expect("write fixture");
-        let mut options = options(
+        let mut quiet_request = request(
             dir.path(),
             &dir.path().join("dist"),
             OutputFormat::SingleHtml,
         );
-        options.quiet = true;
+        quiet_request.quiet = true;
 
-        let (outcome, stdout, stderr) = execute(&options);
+        let (outcome, stdout, stderr) = execute(&quiet_request);
 
         assert!(outcome.is_ok());
         assert_eq!(stdout, "");
@@ -352,20 +367,17 @@ mod tests {
             "# A\n\n[gone](missing.md)\n\n![x](gone.png)\n",
         )
         .expect("write fixture");
-        let options = options(
-            dir.path(),
-            &dir.path().join("dist"),
-            OutputFormat::SingleHtml,
-        );
+        let out = dir.path().join("dist");
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-        let (outcome, _, stderr) = execute(&options);
+        let (outcome, _, stderr) = execute(&request);
 
         assert_eq!(outcome.expect("warnings do not fail").warnings, 2);
         assert!(
             stderr.contains("2 warnings (use --strict to fail)"),
             "{stderr}"
         );
-        assert!(options.out.join(writers::HTML_FILE_NAME).is_file());
+        assert!(out.join(writers::HTML_FILE_NAME).is_file());
     }
 
     #[test]
@@ -373,14 +385,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         std::fs::write(dir.path().join("a.md"), "# A\n\n[gone](missing.md)\n")
             .expect("write fixture");
-        let mut options = options(
-            dir.path(),
-            &dir.path().join("dist"),
-            OutputFormat::SingleHtml,
-        );
-        options.strict = true;
+        let out = dir.path().join("dist");
+        let mut strict_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+        strict_request.settings.strict = Some(true);
 
-        let (outcome, stdout, stderr) = execute(&options);
+        let (outcome, stdout, stderr) = execute(&strict_request);
 
         let error = outcome.expect_err("--strict fails on warnings");
         assert_eq!(error.exit_code(), crate::error::EXIT_FAILURE);
@@ -389,7 +398,7 @@ mod tests {
             "1 warning treated as an error (--strict)"
         );
         assert!(
-            !options.out.exists(),
+            !out.exists(),
             "a failed build must not create the output directory"
         );
         assert_eq!(stdout, "", "a failed build prints no summary");
@@ -400,16 +409,18 @@ mod tests {
     fn strict_mode_leaves_a_previous_artifact_untouched() {
         let dir = fixture();
         let out = dir.path().join("dist");
-        execute(&options(dir.path(), &out, OutputFormat::SingleHtml))
+        execute(&request(dir.path(), &out, OutputFormat::SingleHtml))
             .0
             .expect("the first build succeeds");
         let before = std::fs::read(out.join(writers::HTML_FILE_NAME)).expect("read artifact");
 
         std::fs::write(dir.path().join("b.md"), "# B\n\n[gone](missing.md)\n")
             .expect("write fixture");
-        let mut options = options(dir.path(), &out, OutputFormat::SingleHtml);
-        options.strict = true;
-        execute(&options).0.expect_err("--strict fails on warnings");
+        let mut strict_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+        strict_request.settings.strict = Some(true);
+        execute(&strict_request)
+            .0
+            .expect_err("--strict fails on warnings");
 
         assert_eq!(
             std::fs::read(out.join(writers::HTML_FILE_NAME)).expect("read artifact"),
@@ -422,10 +433,10 @@ mod tests {
     fn a_clean_build_prints_no_format_specific_note() {
         let dir = fixture();
         for format in OutputFormat::ALL {
-            let mut options = options(dir.path(), &dir.path().join(format.as_str()), format);
-            options.quiet = true;
+            let mut format_request = request(dir.path(), &dir.path().join(format.as_str()), format);
+            format_request.quiet = true;
 
-            let (outcome, stdout, stderr) = execute(&options);
+            let (outcome, stdout, stderr) = execute(&format_request);
             let outcome = outcome.expect("the build succeeds");
 
             // `single-html` folds the asset into the page, `html-dir` writes it
@@ -459,9 +470,9 @@ mod tests {
 
         let dir = fixture();
         let out = dir.path().join("dist");
-        let options = options(dir.path(), &out, OutputFormat::Pages);
+        let request = request(dir.path(), &out, OutputFormat::Pages);
 
-        let (outcome, stdout, _) = execute(&options);
+        let (outcome, stdout, _) = execute(&request);
         let outcome = outcome.expect("the build succeeds");
 
         assert!(out.join(writers::HTML_FILE_NAME).is_file());
@@ -483,9 +494,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let missing = dir.path().join("nope");
         let out = dir.path().join("dist");
-        let options = options(&missing, &out, OutputFormat::SingleHtml);
+        let request = request(&missing, &out, OutputFormat::SingleHtml);
 
-        let (outcome, _, _) = execute(&options);
+        let (outcome, _, _) = execute(&request);
 
         assert!(outcome.is_err());
         assert!(!out.exists());
@@ -500,9 +511,9 @@ mod tests {
         )
         .expect("write config");
         let out = dir.path().join("dist");
-        let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-        let (outcome, _, stderr) = execute(&options);
+        let (outcome, _, stderr) = execute(&request);
         outcome.expect("the build succeeds");
 
         assert!(
@@ -528,9 +539,9 @@ mod tests {
         )
         .expect("write config");
         let out = dir.path().join("dist");
-        let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-        let (outcome, _, stderr) = execute(&options);
+        let (outcome, _, stderr) = execute(&request);
         let outcome = outcome.expect("the build succeeds");
 
         assert_eq!(
@@ -553,10 +564,10 @@ mod tests {
         )
         .expect("write config");
         let out = dir.path().join("dist");
-        let mut options = options(dir.path(), &out, OutputFormat::SingleHtml);
-        options.strict = true;
+        let mut strict_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+        strict_request.settings.strict = Some(true);
 
-        let (outcome, stdout, stderr) = execute(&options);
+        let (outcome, stdout, stderr) = execute(&strict_request);
 
         let error = outcome.expect_err("an unknown home is a warning, strict turns it fatal");
         assert_eq!(
@@ -577,9 +588,9 @@ mod tests {
         std::fs::write(dir.path().join(crate::config::CONFIG_FILE_NAME), "{oops")
             .expect("write config");
         let out = dir.path().join("dist");
-        let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-        let (outcome, stdout, stderr) = execute(&options);
+        let (outcome, stdout, stderr) = execute(&request);
 
         let error = outcome.expect_err("broken JSON is a hard error");
         assert!(
@@ -608,13 +619,13 @@ mod tests {
             r#"{"typo": true}"#,
         )
         .expect("write config");
-        let options = options(
+        let request = request(
             dir.path(),
             &dir.path().join("dist"),
             OutputFormat::SingleHtml,
         );
 
-        let (outcome, _, stderr) = execute(&options);
+        let (outcome, _, stderr) = execute(&request);
         outcome.expect("warnings do not fail the build");
 
         let scan_note = stderr
@@ -632,5 +643,227 @@ mod tests {
             stderr.contains("2 warnings (use --strict to fail)"),
             "config warnings join the count: {stderr}"
         );
+    }
+
+    /// A fixture with a drafts and an archive directory, for override tests.
+    fn fixture_with_drafts_and_archive() -> tempfile::TempDir {
+        let dir = fixture();
+        for (name, body) in [("drafts/wip.md", "# Wip\n"), ("archive/old.md", "# Old\n")] {
+            let path = dir.path().join(name);
+            std::fs::create_dir(path.parent().expect("parent")).expect("create directory");
+            std::fs::write(path, body).expect("write fixture");
+        }
+        dir
+    }
+
+    #[test]
+    fn the_command_line_home_overrides_the_configuration() {
+        let dir = fixture();
+        std::fs::write(dir.path().join("second.md"), "# Second\n").expect("write second doc");
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"home": "intro.md"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let mut override_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+        override_request.settings.home = Some("second".to_string());
+
+        let (outcome, _, stderr) = execute(&override_request);
+        outcome.expect("the build succeeds");
+
+        assert!(
+            !stderr.contains("config:"),
+            "a resolvable home is silent: {stderr}"
+        );
+        let artifact =
+            std::fs::read_to_string(out.join(writers::HTML_FILE_NAME)).expect("read artifact");
+        assert!(
+            artifact.contains(r#""home":"second.md""#),
+            "the command line home wins over the configured one"
+        );
+    }
+
+    #[test]
+    fn the_command_line_exclusions_replace_the_configuration() {
+        let dir = fixture_with_drafts_and_archive();
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"exclude": ["drafts"]}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let mut override_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+        override_request.settings.exclude = Some(vec!["archive".to_string()]);
+
+        let (outcome, _, stderr) = execute(&override_request);
+        let outcome = outcome.expect("the build succeeds");
+
+        assert_eq!(
+            outcome.stats.documents, 2,
+            "the configured draft is back, the archive is still out"
+        );
+        assert!(
+            stderr.contains("note: excluded 1 directory"),
+            "only the command line list is pruned: {stderr}"
+        );
+    }
+
+    #[test]
+    fn the_configuration_supplies_the_output_directory() {
+        let dir = fixture();
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"out": "site"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("site");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                title: Some("Fixture".to_string()),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+
+        let (outcome, stdout, _) = execute(&request);
+        let outcome = outcome.expect("the build succeeds");
+
+        assert_eq!(outcome.written.files, 1);
+        assert!(out.join(writers::HTML_FILE_NAME).is_file());
+        assert!(
+            stdout.contains(out.to_string_lossy().as_ref()),
+            "the summary names the configured output directory: {stdout}"
+        );
+    }
+
+    #[test]
+    fn the_configuration_supplies_the_format() {
+        use crate::render::PAGES_DIR_NAME;
+
+        let dir = fixture();
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"format": "pages"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                out: Some(out.clone()),
+                title: Some("Fixture".to_string()),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+
+        let (outcome, stdout, _) = execute(&request);
+        outcome.expect("the build succeeds");
+
+        assert!(out.join(PAGES_DIR_NAME).join("intro.md.json").is_file());
+        assert!(
+            stdout.contains("(pages)"),
+            "the summary names the configured format: {stdout}"
+        );
+    }
+
+    #[test]
+    fn the_configuration_supplies_the_title() {
+        let dir = fixture();
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"title": "From Config"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                out: Some(out.clone()),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+
+        let (outcome, _, _) = execute(&request);
+        outcome.expect("the build succeeds");
+
+        let artifact =
+            std::fs::read_to_string(out.join(writers::HTML_FILE_NAME)).expect("read artifact");
+        assert!(
+            artifact.contains(r#""title":"From Config""#),
+            "the payload carries the configured title"
+        );
+    }
+
+    #[test]
+    fn the_configuration_turns_the_strict_gate_on() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("a.md"), "# A\n\n[gone](missing.md)\n")
+            .expect("write fixture");
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"strict": true}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                out: Some(out.clone()),
+                title: Some("Fixture".to_string()),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+
+        let (outcome, stdout, _) = execute(&request);
+
+        let error = outcome.expect_err("a configured strict gate fails on warnings");
+        assert_eq!(
+            error.to_string(),
+            "1 warning treated as an error (--strict)"
+        );
+        assert!(!out.exists(), "a refused build writes nothing");
+        assert_eq!(stdout, "");
+    }
+
+    #[test]
+    fn the_command_line_turns_the_configured_strict_gate_off() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("a.md"), "# A\n\n[gone](missing.md)\n")
+            .expect("write fixture");
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"strict": true}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                out: Some(out.clone()),
+                title: Some("Fixture".to_string()),
+                strict: Some(false),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+
+        let (outcome, _, stderr) = execute(&request);
+
+        outcome.expect("--strict=false overrides the configured gate");
+        assert!(
+            stderr.contains("1 warning (use --strict to fail)"),
+            "{stderr}"
+        );
+        assert!(out.join(writers::HTML_FILE_NAME).is_file());
     }
 }

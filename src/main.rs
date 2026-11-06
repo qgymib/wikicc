@@ -28,12 +28,12 @@ fn main() {
         return;
     }
 
-    let options = cli.into_options();
+    let request = cli.into_request();
 
     let mut out = io::stdout();
     let mut err = io::stderr();
 
-    if let Err(error) = pipeline::run(&options, &mut out, &mut err) {
+    if let Err(error) = pipeline::run(&request, &mut out, &mut err) {
         eprintln!("error: {error}");
         std::process::exit(error.exit_code());
     }

@@ -3,26 +3,28 @@
 //! The unit tests of `src/config.rs` pin the parsing and the resolution; the
 //! pipeline tests in `src/pipeline.rs` pin the diagnostics order and the
 //! strict gate. This suite walks real builds: a configuration in the input
-//! root must reach the artifact of every output format, and everything the
-//! product promised about the file must hold from the command line's point
-//! of view.
+//! root must reach the artifact of every output format, the command line
+//! must override it value by value, and everything the product promised
+//! about the file must hold from the command line's point of view.
 
 use std::path::Path;
 
 use wikicc::config::{self, CONFIG_FILE_NAME, SiteConfig};
 use wikicc::error::Result;
-use wikicc::options::{Options, OutputFormat};
+use wikicc::options::{OutputFormat, Request, Settings};
 use wikicc::pipeline::{self, BuildOutcome};
 use wikicc::writers::HTML_FILE_NAME;
 
-/// Options for one run, built without going through clap.
-fn options(input: &Path, out: &Path, format: OutputFormat) -> Options {
-    Options {
+/// A request for one run, built without going through clap.
+fn request(input: &Path, out: &Path, format: OutputFormat) -> Request {
+    Request {
         input: input.to_path_buf(),
-        out: out.to_path_buf(),
-        format,
-        title: "Fixture".to_string(),
-        strict: false,
+        settings: Settings {
+            out: Some(out.to_path_buf()),
+            format: Some(format),
+            title: Some("Fixture".to_string()),
+            ..Settings::default()
+        },
         force: false,
         quiet: true,
     }
@@ -37,11 +39,22 @@ fn fixture() -> tempfile::TempDir {
     dir
 }
 
+/// A fixture that also carries a drafts and an archive directory.
+fn fixture_with_side_folders() -> tempfile::TempDir {
+    let dir = fixture();
+    for (name, body) in [("drafts/wip.md", "# Wip\n"), ("archive/old.md", "# Old\n")] {
+        let path = dir.path().join(name);
+        std::fs::create_dir(path.parent().expect("parent")).expect("create directory");
+        std::fs::write(path, body).expect("write fixture");
+    }
+    dir
+}
+
 /// Run `run` and return `(outcome, stdout, stderr)`.
-fn execute(options: &Options) -> (Result<BuildOutcome>, String, String) {
+fn execute(request: &Request) -> (Result<BuildOutcome>, String, String) {
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let outcome = pipeline::run(options, &mut out, &mut err);
+    let outcome = pipeline::run(request, &mut out, &mut err);
 
     (
         outcome,
@@ -62,9 +75,9 @@ fn the_configured_home_reaches_every_format() {
         std::fs::write(dir.path().join(CONFIG_FILE_NAME), r#"{"home": "b"}"#)
             .expect("write config");
         let out = dir.path().join(format.as_str());
-        let options = options(dir.path(), &out, format);
+        let request = request(dir.path(), &out, format);
 
-        let (outcome, _, stderr) = execute(&options);
+        let (outcome, _, stderr) = execute(&request);
         outcome.unwrap_or_else(|error| panic!("{format}: the build succeeds: {error}"));
 
         assert!(
@@ -83,9 +96,9 @@ fn the_configured_home_reaches_every_format() {
 fn a_site_without_a_config_stays_without_a_home_key() {
     let dir = fixture();
     let out = dir.path().join("dist");
-    let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+    let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-    let (outcome, _, _) = execute(&options);
+    let (outcome, _, _) = execute(&request);
     outcome.expect("the build succeeds");
 
     assert!(
@@ -100,9 +113,9 @@ fn an_unknown_home_warns_but_still_builds() {
     std::fs::write(dir.path().join(CONFIG_FILE_NAME), r#"{"home": "gone.md"}"#)
         .expect("write config");
     let out = dir.path().join("dist");
-    let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+    let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-    let (outcome, _, stderr) = execute(&options);
+    let (outcome, _, stderr) = execute(&request);
 
     outcome.expect("a warning does not fail the build");
     assert!(
@@ -117,10 +130,10 @@ fn strict_turns_an_unknown_home_into_a_refused_build() {
     std::fs::write(dir.path().join(CONFIG_FILE_NAME), r#"{"home": "gone.md"}"#)
         .expect("write config");
     let out = dir.path().join("dist");
-    let mut options = options(dir.path(), &out, OutputFormat::SingleHtml);
-    options.strict = true;
+    let mut strict_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+    strict_request.settings.strict = Some(true);
 
-    let (outcome, _, _) = execute(&options);
+    let (outcome, _, _) = execute(&strict_request);
 
     assert!(outcome.is_err(), "--strict upgrades the warning");
     assert!(!out.exists(), "a refused build writes nothing");
@@ -131,9 +144,9 @@ fn a_malformed_config_is_a_hard_error() {
     let dir = fixture();
     std::fs::write(dir.path().join(CONFIG_FILE_NAME), "{oops").expect("write config");
     let out = dir.path().join("dist");
-    let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+    let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-    let (outcome, _, _) = execute(&options);
+    let (outcome, _, _) = execute(&request);
 
     let error = outcome.expect_err("broken JSON aborts the build");
     assert!(
@@ -147,13 +160,13 @@ fn a_malformed_config_is_a_hard_error() {
 fn the_config_file_is_not_reported_as_ignored() {
     let dir = fixture();
     std::fs::write(dir.path().join(CONFIG_FILE_NAME), r#"{"home": "b.md"}"#).expect("write config");
-    let options = options(
+    let request = request(
         dir.path(),
         &dir.path().join("dist"),
         OutputFormat::SingleHtml,
     );
 
-    let (outcome, _, stderr) = execute(&options);
+    let (outcome, _, stderr) = execute(&request);
     outcome.expect("the build succeeds");
 
     assert!(
@@ -180,9 +193,9 @@ fn the_excluded_directory_stays_out_of_every_format() {
         )
         .expect("write config");
         let out = dir.path().join(format.as_str());
-        let options = options(dir.path(), &out, format);
+        let request = request(dir.path(), &out, format);
 
-        let (outcome, _, stderr) = execute(&options);
+        let (outcome, _, stderr) = execute(&request);
         let outcome =
             outcome.unwrap_or_else(|error| panic!("{format}: the build succeeds: {error}"));
 
@@ -218,9 +231,9 @@ fn a_home_inside_an_excluded_directory_falls_back_with_a_warning() {
     )
     .expect("write config");
     let out = dir.path().join("dist");
-    let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+    let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-    let (outcome, _, stderr) = execute(&options);
+    let (outcome, _, stderr) = execute(&request);
     outcome.expect("a warning does not fail the build");
 
     assert!(
@@ -242,9 +255,9 @@ fn a_malformed_exclude_list_aborts_the_build() {
     )
     .expect("write config");
     let out = dir.path().join("dist");
-    let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+    let request = request(dir.path(), &out, OutputFormat::SingleHtml);
 
-    let (outcome, _, _) = execute(&options);
+    let (outcome, _, _) = execute(&request);
 
     let error = outcome.expect_err("an escaping exclusion is a hard error");
     assert!(
@@ -252,6 +265,90 @@ fn a_malformed_exclude_list_aborts_the_build() {
         "unexpected message: {error}"
     );
     assert!(!out.exists(), "a refused build writes nothing");
+}
+
+#[test]
+fn the_configured_out_reaches_the_artifact() {
+    let dir = fixture();
+    std::fs::write(dir.path().join(CONFIG_FILE_NAME), r#"{"out": "site"}"#).expect("write config");
+    let out = dir.path().join("site");
+    let request = Request {
+        input: dir.path().to_path_buf(),
+        settings: Settings {
+            title: Some("Fixture".to_string()),
+            ..Settings::default()
+        },
+        force: false,
+        quiet: true,
+    };
+
+    let (outcome, _, _) = execute(&request);
+    outcome.expect("the build succeeds");
+
+    assert!(out.join(HTML_FILE_NAME).is_file());
+}
+
+#[test]
+fn the_configured_format_reaches_the_artifact() {
+    let dir = fixture();
+    std::fs::write(dir.path().join(CONFIG_FILE_NAME), r#"{"format": "pages"}"#)
+        .expect("write config");
+    let out = dir.path().join("dist");
+    let request = Request {
+        input: dir.path().to_path_buf(),
+        settings: Settings {
+            out: Some(out.clone()),
+            title: Some("Fixture".to_string()),
+            ..Settings::default()
+        },
+        force: false,
+        quiet: true,
+    };
+
+    let (outcome, _, _) = execute(&request);
+    outcome.expect("the build succeeds");
+
+    assert!(out.join("pages").join("a.md.json").is_file());
+    assert!(out.join("search.json").is_file());
+}
+
+#[test]
+fn the_command_line_overrides_the_configured_home_and_exclusions() {
+    let dir = fixture_with_side_folders();
+    std::fs::write(
+        dir.path().join(CONFIG_FILE_NAME),
+        r#"{"home": "a.md", "exclude": ["drafts"]}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+    let mut override_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+    override_request.settings.home = Some("b".to_string());
+    override_request.settings.exclude = Some(vec!["archive".to_string()]);
+
+    let (outcome, _, stderr) = execute(&override_request);
+    let outcome = outcome.expect("the build succeeds");
+
+    assert_eq!(
+        outcome.stats.documents, 3,
+        "the configured draft is back and the archive is out"
+    );
+    assert!(
+        !stderr.contains("config:"),
+        "the command line home resolves silently: {stderr}"
+    );
+    let shell = shell_of(&out);
+    assert!(
+        shell.contains(r#""home":"b.md""#),
+        "the command line home wins over the configured one"
+    );
+    assert!(
+        !shell.contains(r#""id":"archive/old.md""#),
+        "the command line exclusions replace the configured ones"
+    );
+    assert!(
+        shell.contains(r#""id":"drafts/wip.md""#),
+        "the configured draft is no longer excluded"
+    );
 }
 
 #[test]
@@ -265,9 +362,9 @@ fn an_initialized_configuration_builds_without_warnings() {
         assert_eq!(loaded, SiteConfig::default(), "the template is all unset");
 
         let out = dir.path().join(format.as_str());
-        let options = options(dir.path(), &out, format);
+        let request = request(dir.path(), &out, format);
 
-        let (outcome, _, stderr) = execute(&options);
+        let (outcome, _, stderr) = execute(&request);
         outcome.unwrap_or_else(|error| panic!("{format}: the build succeeds: {error}"));
 
         assert!(

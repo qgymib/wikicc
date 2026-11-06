@@ -1,15 +1,14 @@
 //! Command line surface: clap definitions and raw argument collection.
 //!
-//! This module only describes *what the user typed*. Deriving defaults and
-//! validating paths happens in [`crate::options`], so the pipeline never has to
-//! look at clap types.
+//! This module only describes *what the user typed*. Merging it with the
+//! configuration file and deriving defaults happens in [`crate::options`], so
+//! the pipeline never has to look at clap types.
 
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use clap::Parser;
 
-use crate::options::{Options, OutputFormat};
+use crate::options::{Request, Settings};
 
 /// Compile a folder of Markdown documents into an offline HTML reader.
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
@@ -30,27 +29,9 @@ pub struct Cli {
     #[arg(value_name = "INPUT_DIR", required_unless_present = "init_config")]
     pub input: Option<PathBuf>,
 
-    /// Output directory [default: <INPUT_DIR>/dist]
-    #[arg(short, long, value_name = "DIR")]
-    pub out: Option<PathBuf>,
-
-    /// Output format: single-html (one self-contained file), html-dir (page
-    /// plus an assets folder) or pages (static site for GitHub Pages)
-    #[arg(
-        long,
-        value_name = "FMT",
-        default_value_t = OutputFormat::SingleHtml,
-        value_parser = OutputFormat::from_str
-    )]
-    pub format: OutputFormat,
-
-    /// Site title [default: input folder name]
-    #[arg(long, value_name = "TITLE")]
-    pub title: Option<String>,
-
-    /// Treat warnings (broken links, missing assets) as errors
-    #[arg(long)]
-    pub strict: bool,
+    /// Everything `.wikicc.json` can also carry; an explicit flag wins.
+    #[command(flatten)]
+    pub settings: Settings,
 
     /// Overwrite the output directory without confirmation
     #[arg(long)]
@@ -72,9 +53,21 @@ pub struct Cli {
 }
 
 impl Cli {
-    /// Resolve the raw arguments into build [`Options`] (defaults applied, no I/O).
-    pub fn into_options(self) -> Options {
-        Options::from_cli(self)
+    /// Collect the raw arguments into a [`Request`] (no defaults, no I/O).
+    ///
+    /// Only valid for a build invocation: `INPUT_DIR` is missing when
+    /// `--init-config` replaces the build, and the binary dispatches that
+    /// action before reaching here.
+    pub fn into_request(self) -> Request {
+        let input = self
+            .input
+            .expect("INPUT_DIR is set for every build invocation");
+        Request {
+            input,
+            settings: self.settings,
+            force: self.force,
+            quiet: self.quiet,
+        }
     }
 }
 
@@ -83,7 +76,7 @@ mod tests {
     use clap::error::ErrorKind;
 
     use super::*;
-    use crate::options::DEFAULT_OUT_DIR;
+    use crate::options::OutputFormat;
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).expect("arguments should parse")
@@ -98,10 +91,7 @@ mod tests {
         let cli = parse(&["wikicc", "docs"]);
 
         assert_eq!(cli.input, Some(PathBuf::from("docs")));
-        assert_eq!(cli.out, None);
-        assert_eq!(cli.format, OutputFormat::SingleHtml);
-        assert_eq!(cli.title, None);
-        assert!(!cli.strict);
+        assert_eq!(cli.settings, Settings::default());
         assert!(!cli.force);
         assert!(!cli.quiet);
         assert_eq!(cli.init_config, None);
@@ -110,24 +100,80 @@ mod tests {
     #[test]
     fn parses_every_option() {
         let cli = parse(&[
-            "wikicc", "docs", "--out", "build", "--format", "html-dir", "--title", "Handbook",
-            "--strict", "--force", "--quiet",
+            "wikicc",
+            "docs",
+            "--out",
+            "build",
+            "--format",
+            "html-dir",
+            "--title",
+            "Handbook",
+            "--strict",
+            "--home",
+            "intro",
+            "--exclude",
+            "drafts",
+            "--force",
+            "--quiet",
         ]);
 
         assert_eq!(cli.input, Some(PathBuf::from("docs")));
-        assert_eq!(cli.out, Some(PathBuf::from("build")));
-        assert_eq!(cli.format, OutputFormat::HtmlDir);
-        assert_eq!(cli.title.as_deref(), Some("Handbook"));
-        assert!(cli.strict);
+        assert_eq!(cli.settings.out, Some(PathBuf::from("build")));
+        assert_eq!(cli.settings.format, Some(OutputFormat::HtmlDir));
+        assert_eq!(cli.settings.title.as_deref(), Some("Handbook"));
+        assert_eq!(cli.settings.strict, Some(true));
+        assert_eq!(cli.settings.home.as_deref(), Some("intro"));
+        assert_eq!(cli.settings.exclude, Some(vec!["drafts".to_string()]));
         assert!(cli.force);
         assert!(cli.quiet);
+    }
+
+    #[test]
+    fn a_bare_strict_flag_means_true() {
+        let cli = parse(&["wikicc", "docs", "--strict"]);
+
+        assert_eq!(cli.settings.strict, Some(true));
+    }
+
+    #[test]
+    fn strict_false_turns_the_gate_off() {
+        let cli = parse(&["wikicc", "--strict=false", "docs"]);
+
+        assert_eq!(cli.settings.strict, Some(false));
+        assert_eq!(cli.input, Some(PathBuf::from("docs")));
+    }
+
+    #[test]
+    fn strict_without_equals_takes_no_value() {
+        let cli = parse(&["wikicc", "--strict", "--force", "docs"]);
+
+        assert_eq!(cli.settings.strict, Some(true));
+        assert!(cli.force);
+        assert_eq!(cli.input, Some(PathBuf::from("docs")));
+    }
+
+    #[test]
+    fn excludes_are_repeatable() {
+        let cli = parse(&[
+            "wikicc",
+            "docs",
+            "--exclude",
+            "drafts",
+            "--exclude",
+            "archive/old",
+        ]);
+
+        assert_eq!(
+            cli.settings.exclude,
+            Some(vec!["drafts".to_string(), "archive/old".to_string()])
+        );
     }
 
     #[test]
     fn accepts_short_flags() {
         let cli = parse(&["wikicc", "docs", "-o", "build", "-q"]);
 
-        assert_eq!(cli.out, Some(PathBuf::from("build")));
+        assert_eq!(cli.settings.out, Some(PathBuf::from("build")));
         assert!(cli.quiet);
     }
 
@@ -139,7 +185,7 @@ mod tests {
             ("pages", OutputFormat::Pages),
         ] {
             let cli = parse(&["wikicc", "docs", "--format", value]);
-            assert_eq!(cli.format, expected);
+            assert_eq!(cli.settings.format, Some(expected));
         }
     }
 
@@ -197,6 +243,8 @@ mod tests {
             "--format",
             "--title",
             "--strict",
+            "--home",
+            "--exclude",
             "--force",
             "--quiet",
             "--init-config",
@@ -220,35 +268,22 @@ mod tests {
     }
 
     #[test]
-    fn into_options_derives_out_and_title() {
+    fn into_request_collects_the_raw_arguments() {
         let dir = tempfile::tempdir().expect("temp dir");
         let input = dir.path().to_str().expect("utf-8 path").to_string();
 
-        let options = parse(&["wikicc", &input]).into_options();
+        let request = parse(&["wikicc", &input, "--out", "build", "--force", "-q"]).into_request();
 
-        assert_eq!(options.input, dir.path());
-        assert_eq!(options.out, dir.path().join(DEFAULT_OUT_DIR));
+        assert_eq!(request.input, dir.path());
+        assert_eq!(request.settings.out, Some(PathBuf::from("build")));
         assert_eq!(
-            options.title,
-            dir.path()
-                .file_name()
-                .expect("temp dir name")
-                .to_string_lossy()
+            request.settings,
+            Settings {
+                out: Some(PathBuf::from("build")),
+                ..Settings::default()
+            }
         );
-    }
-
-    #[test]
-    fn into_options_keeps_explicit_values() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let input = dir.path().to_str().expect("utf-8 path").to_string();
-
-        let options = parse(&[
-            "wikicc", &input, "--out", "custom", "--title", "My Site", "--format", "html-dir",
-        ])
-        .into_options();
-
-        assert_eq!(options.out, PathBuf::from("custom"));
-        assert_eq!(options.title, "My Site");
-        assert_eq!(options.format, OutputFormat::HtmlDir);
+        assert!(request.force);
+        assert!(request.quiet);
     }
 }

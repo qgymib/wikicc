@@ -17,9 +17,8 @@ use std::path::{Component, Path, PathBuf};
 
 use walkdir::{DirEntry, WalkDir};
 
-use crate::config::normalize_candidate;
 use crate::error::{Error, Result};
-use crate::options::{normalize, path_components};
+use crate::options::{normalize, normalize_candidate, path_components};
 
 /// Recognised Markdown extensions, compared case-insensitively.
 pub const MARKDOWN_EXTENSIONS: [&str; 2] = ["md", "markdown"];

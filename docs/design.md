@@ -39,9 +39,9 @@ scan ──▶ parse ──▶ resolve ──▶ assemble ──▶ render ─�
 
 | Stage | Input → output | Module |
 | --- | --- | --- |
-| validate | raw arguments → `Options` | `cli`, `options` |
+| validate | raw arguments + `.wikicc.json` → merged, guarded `Options` | `cli`, `options`, `config` |
 | config | input root → optional `.wikicc.json` → `SiteConfig` | `config` |
-| scan | directory + `SiteConfig.exclude` → `ScanReport` | `scan` |
+| scan | directory + `Options.exclude` → `ScanReport` | `scan` |
 | parse | `SourceDoc` → HTML, TOC, plain text | `markdown` |
 | resolve | destinations → final addressing, `AssetTable`, diagnostics | `markdown::links`, `assets` |
 | assemble | everything → `SiteBundle` + `SiteBuild` | `site` |
@@ -61,7 +61,8 @@ src/main.rs                 binary: parse arguments, dispatch --init-config, run
                             map errors to exit codes
 src/lib.rs                  library root and re-exports
 src/cli.rs                  clap definitions
-src/options.rs              defaults, lexical path normalization, output-path guards
+src/options.rs              the shared Settings of the CLI and the configuration file,
+                            the CLI-over-file merge, defaults, path guards
 src/error.rs                error type and exit-code mapping
 src/pipeline.rs             stage order, strict gate, summary lines
 src/scan.rs                 discovery, ordering, ids, titles, diagnostics
@@ -79,8 +80,11 @@ tools/make-icon.mjs         packs the rendered icon sizes into docs/logo.ico
 ```
 
 Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` →
-`site` → `render` → `writers` → `pipeline`. `markdown::links` never depends on
-`site`, so link resolution stays testable on its own.
+`site` → `render` → `writers` → `pipeline`. `config` reads only its own file
+and imports `options` (the shared `Settings`) and `scan` (the diagnostic
+type), so it feeds the scan without anything reaching back into it.
+`markdown::links` never depends on `site`, so link resolution stays testable
+on its own.
 
 ## 4. Invariants
 
@@ -161,25 +165,36 @@ These are the boundaries where an internal change becomes observable, so each
 one is stated as a contract rather than left to the implementation.
 
 - **The configuration file.** `.wikicc.json` sits in the input folder root and
-  is optional. It is read once, before the scan (the `exclude` entries must be
-  in effect while the tree is walked; resolving `home` still waits for the
-  document ids), and parsing is strict: an unreadable or unparseable file is
-  a runtime failure, while a `home` that matches no document and an unknown
-  key are warnings the `--strict` gate counts. The resolved id travels in the
-  payload as `home` and in the pages manifest under the same key, omitted
-  when unset, so a site without the file serialises byte-identically to a
-  build that never heard of it. `exclude` lists directories relative to the
-  input folder that are pruned with their subtrees; the pruned directories
-  are reported as a note line, and an entry that escapes the input folder is
-  a runtime failure. A starter file is written by
+  is optional. It carries six keys — `home`, `exclude`, `out`, `format`,
+  `title`, `strict` — exactly the `Settings` shape the command line also
+  expresses, and every value it names is a default the command line
+  overrides. A relative `out` is resolved against the input folder (the
+  folder the file sits in), so the build lands in the same place whatever the
+  working directory. The file is read once, before the scan (the `exclude`
+  entries must be in effect while the tree is walked; resolving `home` still
+  waits for the document ids), and parsing is strict: an unreadable or
+  unparseable file is a runtime failure, while a `home` that matches no
+  document and an unknown key are warnings the `--strict` gate counts. The
+  resolved id travels in the payload as `home` and in the pages manifest
+  under the same key, omitted when unset, so a site without the file
+  serialises byte-identically to a build that never heard of it. `exclude`
+  lists directories relative to the input folder that are pruned with their
+  subtrees; the pruned directories are reported as a note line, and an entry
+  that escapes the input folder is a runtime failure, whatever the source it
+  came from. A starter file is written by
   `wikicc --init-config [DIR]`: the default content (every key unset) goes
   into a directory that already exists, and a file that is already there is
   never overwritten.
-- **CLI surface.** `cli` defines the arguments; `options` turns them into
-  `Options` and owns the output-directory guards (missing and empty are used,
-  a previous artifact is emptied, anything else needs `--force`, and the output
-  directory may not be the input root, its ancestor or the working directory).
-  Three combinations are rejected before anything is written.
+- **CLI surface.** `cli` defines the arguments; `options` owns the shared
+  `Settings` (the shape both the command line and the configuration file
+  express), merges the command line over the file over the built-in defaults
+  into `Options`, and owns the output-directory guards (missing and empty are
+  used, a previous artifact is emptied, anything else needs `--force`, and
+  the output directory may not be the input root, its ancestor or the working
+  directory). Three combinations are rejected before anything is written.
+  `--home` and a repeatable `--exclude` replace the configured values, and
+  `--strict` is three-state: a bare flag turns the gate on, `--strict=false`
+  turns it off.
 - **Exit codes.** `error` maps every failure to `0` (success, possibly with
   warnings), `1` (runtime failure, including `--strict` with warnings) or `2`
   (usage error, reported by `clap`). The mapping is centralised so a new stage

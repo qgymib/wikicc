@@ -1,6 +1,7 @@
 //! Site configuration file: `.wikicc.json` in the input folder root.
 //!
-//! The file is optional and carries two keys:
+//! The file is optional and carries six keys, exactly the settings the
+//! command line can also express ([`Settings`]):
 //!
 //! - `home`: the document the reader shows when it is opened at an empty or
 //!   unknown address. The value is a document id — the path relative to the
@@ -11,6 +12,15 @@
 //!   entire subtrees stay out of the site — drafts, private notes, a scratch
 //!   folder. Entries are `/`-separated directory paths (`\` is read as `/`,
 //!   a leading `./` and a trailing `/` are dropped) and match exactly.
+//! - `out`: the output directory. A relative value is resolved against the
+//!   input folder, so the build lands in the same place no matter which
+//!   working directory the build was started from.
+//! - `format`: the output artifact format, spelled like the `--format` flag.
+//! - `title`: the site title.
+//! - `strict`: whether warnings fail the build, spelled as a JSON boolean.
+//!
+//! Every value the file names is a default: an explicit command line flag
+//! overrides it.
 //!
 //! Failure policy follows the file's role as an explicit build instruction:
 //!
@@ -27,9 +37,8 @@
 //! content — every key unset — into an existing directory and never touches a
 //! file that is already there.
 //!
-//! Pure: [`load`] touches only the configuration file itself, and resolving
-//! [`SiteConfig::resolve_home`] compares strings, so both are unit tested
-//! against plain data.
+//! Pure: [`load`] touches only the configuration file itself, and both it and
+//! the merge in [`crate::options`] are unit tested against plain data.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -38,6 +47,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::error::{Error, Result};
+use crate::options::{OutputFormat, Settings, normalize_candidate, normalize_excludes};
 use crate::scan::Diagnostic;
 
 /// Name of the configuration file, looked up at the input folder root.
@@ -47,58 +57,52 @@ use crate::scan::Diagnostic;
 pub const CONFIG_FILE_NAME: &str = ".wikicc.json";
 
 /// Prefix of every configuration [`Diagnostic`], so messages name their source.
-const DIAGNOSTIC_PREFIX: &str = "config:";
+pub(crate) const DIAGNOSTIC_PREFIX: &str = "config:";
 
 /// The parsed configuration of one build.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SiteConfig {
-    /// The `home` value exactly as written, before it is matched against the
-    /// scanned document ids.
-    pub home: Option<String>,
-    /// The `exclude` entries, normalized (trimmed, `\` read as `/`, a leading
-    /// `./` and a trailing `/` dropped) and deduplicated; empty when unset.
-    pub exclude: Vec<String>,
+    /// The settings the file names; every field is `None` when the file did
+    /// not speak about it.
+    pub settings: Settings,
     /// Messages collected while reading the file, in key order.
     pub diagnostics: Vec<Diagnostic>,
 }
 
-impl SiteConfig {
-    /// Resolve the configured `home` against the scanned document ids.
-    ///
-    /// The value is normalized (surrounding whitespace dropped, `\` read as
-    /// `/`, a leading `./` dropped) and then matched against the ids: first
-    /// verbatim, then with a `.md` and finally a `.markdown` suffix
-    /// completed. The resolution returns the *matched* id, so the payload
-    /// always carries a spelling the reader knows.
-    ///
-    /// A value that matches nothing yields a warning and `None`; the reader
-    /// then falls back to the first document, its behaviour without a
-    /// configuration.
-    pub fn resolve_home(&self, ids: &[String]) -> (Option<String>, Vec<Diagnostic>) {
-        let mut diagnostics = Vec::new();
-        let Some(raw) = &self.home else {
-            return (None, diagnostics);
-        };
+/// Resolve a configured `home` against the scanned document ids.
+///
+/// The value is normalized (surrounding whitespace dropped, `\` read as
+/// `/`, a leading `./` dropped) and then matched against the ids: first
+/// verbatim, then with a `.md` and finally a `.markdown` suffix completed.
+/// The resolution returns the *matched* id, so the payload always carries a
+/// spelling the reader knows.
+///
+/// A value that matches nothing yields a warning and `None`; the reader then
+/// falls back to the first document, its behaviour without a configuration.
+pub fn resolve_home(home: Option<&str>, ids: &[String]) -> (Option<String>, Vec<Diagnostic>) {
+    let mut diagnostics = Vec::new();
+    let Some(raw) = home else {
+        return (None, diagnostics);
+    };
 
-        let candidate = normalize_candidate(raw);
-        let matched = ids
-            .iter()
-            .find(|id| id.as_str() == candidate)
-            .or_else(|| ids.iter().find(|id| **id == format!("{candidate}.md")))
-            .or_else(|| {
-                ids.iter()
-                    .find(|id| **id == format!("{candidate}.markdown"))
-            })
-            .cloned();
+    let candidate = normalize_candidate(raw);
+    let matched = ids
+        .iter()
+        .find(|id| id.as_str() == candidate)
+        .or_else(|| ids.iter().find(|id| **id == format!("{candidate}.md")))
+        .or_else(|| {
+            ids.iter()
+                .find(|id| **id == format!("{candidate}.markdown"))
+        })
+        .cloned();
 
-        match matched {
-            Some(id) => (Some(id), diagnostics),
-            None => {
-                diagnostics.push(Diagnostic::warning(format!(
-                    "{DIAGNOSTIC_PREFIX} home '{candidate}' does not match any document"
-                )));
-                (None, diagnostics)
-            }
+    match matched {
+        Some(id) => (Some(id), diagnostics),
+        None => {
+            diagnostics.push(Diagnostic::warning(format!(
+                "{DIAGNOSTIC_PREFIX} home '{candidate}' does not match any document"
+            )));
+            (None, diagnostics)
         }
     }
 }
@@ -122,7 +126,7 @@ pub fn load(input: &Path) -> Result<SiteConfig> {
         }
     };
 
-    parse(&bytes, &path)
+    parse(&bytes, &path, input)
 }
 
 /// The default configuration content: every key this version knows, unset.
@@ -131,7 +135,7 @@ pub fn load(input: &Path) -> Result<SiteConfig> {
 /// through [`parse`], so the default content can never drift away from what
 /// the loader accepts.
 pub fn template() -> &'static str {
-    "{\n  \"home\": null,\n  \"exclude\": null\n}\n"
+    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"strict\": null\n}\n"
 }
 
 /// Write the default configuration file into `dir` and report it.
@@ -176,7 +180,11 @@ pub fn init(dir: &Path, out: &mut dyn Write) -> Result<()> {
 }
 
 /// Parse the configuration bytes, with a UTF-8 BOM tolerated.
-fn parse(bytes: &[u8], path: &Path) -> Result<SiteConfig> {
+///
+/// `base` is the folder the file lives in: a relative `out` is resolved
+/// against it right here, so the merge in [`crate::options`] sees the same
+/// kind of value a command line `--out` carries.
+fn parse(bytes: &[u8], path: &Path, base: &Path) -> Result<SiteConfig> {
     let text = String::from_utf8_lossy(bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let value: Value = serde_json::from_str(text).map_err(|error| {
@@ -200,18 +208,62 @@ fn parse(bytes: &[u8], path: &Path) -> Result<SiteConfig> {
                         "'home' must be a non-empty string".to_string(),
                     ));
                 }
-                config.home = Some(text);
+                config.settings.home = Some(text);
             }
             ("home", _) => {
                 return Err(Error::InvalidInput("'home' must be a string".to_string()));
             }
             ("exclude", Value::Null) => {}
             ("exclude", Value::Array(entries)) => {
-                config.exclude = normalize_excludes(&entries)?;
+                let mut list = Vec::new();
+                for entry in entries {
+                    let Value::String(raw) = entry else {
+                        return Err(Error::InvalidInput(
+                            "'exclude' entries must be strings".to_string(),
+                        ));
+                    };
+                    list.push(raw);
+                }
+                config.settings.exclude = Some(normalize_excludes(&list)?);
             }
             ("exclude", _) => {
                 return Err(Error::InvalidInput(
                     "'exclude' must be an array of strings".to_string(),
+                ));
+            }
+            ("out", Value::Null) => {}
+            ("out", Value::String(text)) => {
+                if text.trim().is_empty() {
+                    return Err(Error::InvalidInput(
+                        "'out' must be a non-empty directory path".to_string(),
+                    ));
+                }
+                config.settings.out = Some(base.join(text));
+            }
+            ("out", _) => {
+                return Err(Error::InvalidInput("'out' must be a string".to_string()));
+            }
+            ("format", Value::Null) => {}
+            ("format", Value::String(text)) => {
+                config.settings.format = Some(text.parse::<OutputFormat>()?);
+            }
+            ("format", _) => {
+                return Err(Error::InvalidInput("'format' must be a string".to_string()));
+            }
+            ("title", Value::Null) => {}
+            ("title", Value::String(text)) => {
+                config.settings.title = Some(text);
+            }
+            ("title", _) => {
+                return Err(Error::InvalidInput("'title' must be a string".to_string()));
+            }
+            ("strict", Value::Null) => {}
+            ("strict", Value::Bool(flag)) => {
+                config.settings.strict = Some(flag);
+            }
+            ("strict", _) => {
+                return Err(Error::InvalidInput(
+                    "'strict' must be a boolean".to_string(),
                 ));
             }
             (unknown, _) => {
@@ -225,61 +277,17 @@ fn parse(bytes: &[u8], path: &Path) -> Result<SiteConfig> {
     Ok(config)
 }
 
-/// Normalize a `home` value or an `exclude` entry for matching: trimmed,
-/// `/`-separated, without a leading `./`.
-pub(crate) fn normalize_candidate(raw: &str) -> String {
-    let mut candidate = raw.trim().replace('\\', "/");
-    while let Some(rest) = candidate.strip_prefix("./") {
-        candidate = rest.to_string();
-    }
-    candidate
-}
-
-/// Normalize and validate the `exclude` entries.
-///
-/// Each entry becomes a `/`-separated directory path relative to the input
-/// folder: trimmed, `\` read as `/`, a leading `./` and any trailing `/`
-/// dropped. An entry that normalizes to nothing, or that carries an empty,
-/// `.` or `..` component, is a hard error — an exclusion that escapes the
-/// input folder or cannot match any directory would silently do nothing, and
-/// a broken instruction must not look like it worked. Duplicates keep their
-/// first occurrence, so the order the author wrote is the order that counts.
-fn normalize_excludes(entries: &[Value]) -> Result<Vec<String>> {
-    let mut excludes: Vec<String> = Vec::new();
-    for entry in entries {
-        let Value::String(raw) = entry else {
-            return Err(Error::InvalidInput(
-                "'exclude' entries must be strings".to_string(),
-            ));
-        };
-        let candidate = normalize_candidate(raw);
-        let candidate = candidate.trim_end_matches('/');
-        if candidate.is_empty() {
-            return Err(Error::InvalidInput(
-                "'exclude' entries must be non-empty directory paths".to_string(),
-            ));
-        }
-        if candidate
-            .split('/')
-            .any(|component| component.is_empty() || component == "." || component == "..")
-        {
-            return Err(Error::InvalidInput(format!(
-                "'exclude' entry '{candidate}' is not a directory path inside the input folder"
-            )));
-        }
-        if !excludes.iter().any(|known| known == candidate) {
-            excludes.push(candidate.to_string());
-        }
-    }
-    Ok(excludes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Parse a configuration whose relative `out` resolves against `input`.
     fn parse_text(text: &str) -> Result<SiteConfig> {
-        parse(text.as_bytes(), Path::new(".wikicc.json"))
+        parse(
+            text.as_bytes(),
+            Path::new(".wikicc.json"),
+            Path::new("input"),
+        )
     }
 
     fn warning_messages(config: &SiteConfig) -> Vec<String> {
@@ -290,10 +298,6 @@ mod tests {
             .collect()
     }
 
-    fn ids(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| value.to_string()).collect()
-    }
-
     #[test]
     fn a_missing_file_is_the_default_configuration() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -301,7 +305,7 @@ mod tests {
         let config = load(dir.path()).expect("a missing file is not an error");
 
         assert_eq!(config, SiteConfig::default());
-        assert_eq!(config.home, None);
+        assert_eq!(config.settings.home, None);
         assert!(config.diagnostics.is_empty());
     }
 
@@ -309,7 +313,7 @@ mod tests {
     fn home_is_read_verbatim() {
         let config = parse_text(r#"{"home": "guide/intro.md"}"#).expect("valid config");
 
-        assert_eq!(config.home.as_deref(), Some("guide/intro.md"));
+        assert_eq!(config.settings.home.as_deref(), Some("guide/intro.md"));
         assert!(config.diagnostics.is_empty());
     }
 
@@ -318,14 +322,14 @@ mod tests {
         let with_bom = "\u{feff}{\"home\": \"intro.md\"}";
         let config = parse_text(with_bom).expect("BOM is stripped before parsing");
 
-        assert_eq!(config.home.as_deref(), Some("intro.md"));
+        assert_eq!(config.settings.home.as_deref(), Some("intro.md"));
     }
 
     #[test]
     fn a_null_home_is_unset() {
         let config = parse_text(r#"{"home": null}"#).expect("valid config");
 
-        assert_eq!(config.home, None);
+        assert_eq!(config.settings.home, None);
         assert!(config.diagnostics.is_empty());
     }
 
@@ -348,7 +352,7 @@ mod tests {
     fn a_null_exclude_is_unset() {
         let config = parse_text(r#"{"exclude": null}"#).expect("valid config");
 
-        assert!(config.exclude.is_empty());
+        assert_eq!(config.settings.exclude, None);
         assert!(config.diagnostics.is_empty());
     }
 
@@ -356,7 +360,7 @@ mod tests {
     fn an_empty_exclude_list_is_accepted() {
         let config = parse_text(r#"{"exclude": []}"#).expect("valid config");
 
-        assert!(config.exclude.is_empty());
+        assert_eq!(config.settings.exclude, Some(Vec::new()));
         assert!(config.diagnostics.is_empty());
     }
 
@@ -367,7 +371,14 @@ mod tests {
         )
         .expect("valid config");
 
-        assert_eq!(config.exclude, ["guide/drafts", "scratch", "a/b.md"]);
+        assert_eq!(
+            config.settings.exclude,
+            Some(vec![
+                "guide/drafts".to_string(),
+                "scratch".to_string(),
+                "a/b.md".to_string(),
+            ])
+        );
         assert!(config.diagnostics.is_empty());
     }
 
@@ -420,6 +431,104 @@ mod tests {
     }
 
     #[test]
+    fn out_is_resolved_against_the_input_folder() {
+        let config = parse_text(r#"{"out": "site/build"}"#).expect("valid config");
+
+        assert_eq!(
+            config.settings.out,
+            Some(std::path::PathBuf::from("input/site/build"))
+        );
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_null_out_is_unset() {
+        let config = parse_text(r#"{"out": null}"#).expect("valid config");
+
+        assert_eq!(config.settings.out, None);
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn an_empty_out_is_a_hard_error() {
+        for text in [r#"{"out": ""}"#, r#"{"out": "   "}"#] {
+            let error = parse_text(text).expect_err("an empty out is rejected");
+
+            assert_eq!(
+                error.to_string(),
+                "'out' must be a non-empty directory path"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_string_out_is_a_hard_error() {
+        let error = parse_text(r#"{"out": 7}"#).expect_err("a number is not a path");
+
+        assert_eq!(error.to_string(), "'out' must be a string");
+    }
+
+    #[test]
+    fn format_is_parsed_like_the_flag_value() {
+        let config = parse_text(r#"{"format": "pages"}"#).expect("valid config");
+
+        assert_eq!(config.settings.format, Some(OutputFormat::Pages));
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_format_is_a_hard_error() {
+        let error = parse_text(r#"{"format": "pdf"}"#).expect_err("pdf is not a format");
+
+        assert_eq!(
+            error.to_string(),
+            "invalid format 'pdf', expected one of: single-html, html-dir, pages"
+        );
+    }
+
+    #[test]
+    fn a_non_string_format_is_a_hard_error() {
+        let error = parse_text(r#"{"format": 3}"#).expect_err("a number is not a format");
+
+        assert_eq!(error.to_string(), "'format' must be a string");
+    }
+
+    #[test]
+    fn title_is_read_verbatim() {
+        let config = parse_text(r#"{"title": "Handbook"}"#).expect("valid config");
+
+        assert_eq!(config.settings.title.as_deref(), Some("Handbook"));
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_non_string_title_is_a_hard_error() {
+        let error = parse_text(r#"{"title": 5}"#).expect_err("a number is not a title");
+
+        assert_eq!(error.to_string(), "'title' must be a string");
+    }
+
+    #[test]
+    fn strict_is_read_as_a_boolean() {
+        for (text, expected) in [
+            (r#"{"strict": true}"#, Some(true)),
+            (r#"{"strict": false}"#, Some(false)),
+        ] {
+            let config = parse_text(text).expect("valid config");
+
+            assert_eq!(config.settings.strict, expected, "{text}");
+            assert!(config.diagnostics.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_non_boolean_strict_is_a_hard_error() {
+        let error = parse_text(r#"{"strict": "yes"}"#).expect_err("a string is not a flag");
+
+        assert_eq!(error.to_string(), "'strict' must be a boolean");
+    }
+
+    #[test]
     fn a_non_object_root_is_a_hard_error() {
         let error = parse_text("[]").expect_err("an array is not a configuration");
 
@@ -461,7 +570,6 @@ mod tests {
         let config = parse_text(template()).expect("the template is a valid configuration");
 
         assert_eq!(config, SiteConfig::default());
-        assert_eq!(config.home, None);
         assert!(config.diagnostics.is_empty());
     }
 
@@ -534,12 +642,12 @@ mod tests {
 
     #[test]
     fn unknown_keys_warn_but_do_not_stop_the_build() {
-        let config = parse_text(r#"{"title": "x", "home": "b.md"}"#).expect("valid config");
+        let config = parse_text(r#"{"author": "x", "home": "b.md"}"#).expect("valid config");
 
-        assert_eq!(config.home.as_deref(), Some("b.md"));
+        assert_eq!(config.settings.home.as_deref(), Some("b.md"));
         assert_eq!(
             warning_messages(&config),
-            ["warning: config: unknown key 'title' ignored"]
+            ["warning: config: unknown key 'author' ignored"]
         );
     }
 
@@ -556,15 +664,21 @@ mod tests {
         );
     }
 
+    fn ids(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn messages(diagnostics: &[Diagnostic]) -> Vec<String> {
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.to_string())
+            .collect()
+    }
+
     #[test]
     fn home_resolves_to_the_exact_id_first() {
-        let config = SiteConfig {
-            home: Some("guide/intro.md".to_string()),
-            exclude: Vec::new(),
-            diagnostics: Vec::new(),
-        };
-
-        let (home, diagnostics) = config.resolve_home(&ids(&["a.md", "guide/intro.md"]));
+        let (home, diagnostics) =
+            resolve_home(Some("guide/intro.md"), &ids(&["a.md", "guide/intro.md"]));
 
         assert_eq!(home.as_deref(), Some("guide/intro.md"));
         assert!(diagnostics.is_empty());
@@ -573,13 +687,8 @@ mod tests {
     #[test]
     fn home_completes_a_missing_extension() {
         for (value, expected) in [("intro", "intro.md"), ("intro.markdown", "intro.markdown")] {
-            let config = SiteConfig {
-                home: Some(value.to_string()),
-                exclude: Vec::new(),
-                diagnostics: Vec::new(),
-            };
-
-            let (home, diagnostics) = config.resolve_home(&ids(&["intro.md", "intro.markdown"]));
+            let (home, diagnostics) =
+                resolve_home(Some(value), &ids(&["intro.md", "intro.markdown"]));
 
             assert_eq!(home.as_deref(), Some(expected), "home: {value}");
             assert!(diagnostics.is_empty());
@@ -588,15 +697,9 @@ mod tests {
 
     #[test]
     fn home_prefers_the_exact_id_over_a_completed_one() {
-        let config = SiteConfig {
-            home: Some("intro".to_string()),
-            exclude: Vec::new(),
-            diagnostics: Vec::new(),
-        };
-
         // `intro` exists as a folder-less id only in exotic sites; the point
         // is that verbatim wins before any suffix is completed.
-        let (home, _) = config.resolve_home(&ids(&["intro", "intro.md"]));
+        let (home, _) = resolve_home(Some("intro"), &ids(&["intro", "intro.md"]));
 
         assert_eq!(home.as_deref(), Some("intro"));
     }
@@ -608,13 +711,7 @@ mod tests {
             ("./intro.md", "intro.md"),
             ("  intro.md  ", "intro.md"),
         ] {
-            let config = SiteConfig {
-                home: Some(value.to_string()),
-                exclude: Vec::new(),
-                diagnostics: Vec::new(),
-            };
-
-            let (home, _) = config.resolve_home(&ids(&["guide/intro.md", "intro.md"]));
+            let (home, _) = resolve_home(Some(value), &ids(&["guide/intro.md", "intro.md"]));
 
             assert_eq!(home.as_deref(), Some(expected), "home: {value}");
         }
@@ -622,27 +719,18 @@ mod tests {
 
     #[test]
     fn an_unknown_home_warns_and_falls_back_to_none() {
-        let config = SiteConfig {
-            home: Some("gone.md".to_string()),
-            exclude: Vec::new(),
-            diagnostics: Vec::new(),
-        };
-
-        let (home, diagnostics) = config.resolve_home(&ids(&["a.md", "b.md"]));
+        let (home, diagnostics) = resolve_home(Some("gone.md"), &ids(&["a.md", "b.md"]));
 
         assert_eq!(home, None);
         assert_eq!(
-            diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.to_string())
-                .collect::<Vec<_>>(),
+            messages(&diagnostics),
             ["warning: config: home 'gone.md' does not match any document"]
         );
     }
 
     #[test]
     fn a_site_without_a_home_resolves_to_nothing_without_diagnostics() {
-        let (home, diagnostics) = SiteConfig::default().resolve_home(&ids(&["a.md"]));
+        let (home, diagnostics) = resolve_home(None, &ids(&["a.md"]));
 
         assert_eq!(home, None);
         assert!(diagnostics.is_empty());

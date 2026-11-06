@@ -136,7 +136,9 @@ wikicc [OPTIONS] [INPUT_DIR]
   -o, --out <DIR>        Output directory [default: <INPUT_DIR>/dist]
       --format <FMT>     single-html | html-dir | pages [default: single-html]
       --title <TITLE>    Site title [default: input folder name]
-      --strict           Treat warnings (broken links, missing assets) as errors
+      --strict[=<BOOL>]  Treat warnings as errors; --strict=false turns the gate off
+      --home <DOC>       Document the reader opens first; overrides .wikicc.json
+      --exclude <DIR>    Directory to keep out of the site; repeatable, overrides .wikicc.json
       --force            Overwrite the output directory without confirmation
   -q, --quiet            Suppress the summary line
       --init-config [DIR]
@@ -152,6 +154,8 @@ wikicc path/to/docs -o build --title "Handbook"
 wikicc path/to/docs --format html-dir
 wikicc path/to/docs --format pages        # a static site for GitHub Pages
 wikicc path/to/docs --strict              # broken links fail the build
+wikicc path/to/docs --home guide/intro.md # override the configured opening document
+wikicc path/to/docs --exclude drafts      # override the configured exclusions
 wikicc --init-config path/to/docs         # writes path/to/docs/.wikicc.json
 ```
 
@@ -171,12 +175,17 @@ A successful build prints a summary line and reports diagnostics on stderr;
 ### Configuration file
 
 A site can carry an optional `.wikicc.json` in the **input folder root**. The
-file is JSON and knows two keys:
+file is JSON and knows six keys — the same settings the command line takes,
+so each of them can also be overridden by a flag:
 
 | Key | Meaning |
 | --- | --- |
 | `home` | Document the reader opens at an empty or unknown address [default: the first document] |
 | `exclude` | Directories whose entire subtrees stay out of the site [default: none] |
+| `out` | Output directory [default: `<INPUT_DIR>/dist`] |
+| `format` | `single-html`, `html-dir` or `pages` [default: `single-html`] |
+| `title` | Site title [default: the input folder name] |
+| `strict` | Fail the build on warnings [default: `false`] |
 
 `home` is a document id — the path relative to the input folder, `/`
 separated, extension included — and a missing `.md` (or `.markdown`) suffix is
@@ -192,22 +201,43 @@ and a trailing `/` dropped — and match exactly: `"drafts"` prunes the input
 folder's own `drafts` directory, not `guide/drafts`. The build reports how
 many directories were pruned as a note line.
 
+`out` is resolved against the **input folder** — the directory the
+configuration file sits in — so a relative value builds to the same place no
+matter which working directory the build was started from. A command line
+`--out` keeps its own convention: relative to the working directory.
+
 ```json
 {
   "home": "guide/getting-started.md",
-  "exclude": ["drafts", "archive/old"]
+  "exclude": ["drafts", "archive/old"],
+  "out": "site",
+  "format": "pages",
+  "title": "Handbook",
+  "strict": false
 }
 ```
+
+**Every value the file names is a default; an explicit flag wins.**
+
+- `--home` replaces the configured `home`.
+- `--exclude` **replaces** the configured list entirely; repeat the flag for
+  several directories.
+- `--out`, `--format` and `--title` override their configured counterparts.
+- A bare `--strict` turns the gate on and `--strict=false` turns it off,
+  whatever the file says.
+- `--force` and `--quiet` exist only on the command line; the file never
+  asks for a destructive overwrite or a silent build.
 
 - A `home` that matches no document is a warning — the build still succeeds
   and the reader falls back to the first document; `--strict` turns it into a
   failure.
 - An `exclude` entry that escapes the input folder (`..`) or cannot match any
-  directory (empty) fails the build for the same reason a broken `home` would.
+  directory (empty) fails the build for the same reason a broken `home` would,
+  whatever the source it came from.
 - An unreadable or invalid file fails the build: a broken instruction must
   not be silently ignored.
 - Unknown keys warn, so a typo never silently changes nothing.
-- Every output format honours the setting, and a site without a
+- Every output format honours the settings, and a site without a
   `.wikicc.json` builds exactly the artifact it always did.
 
 A starter file can be written with `wikicc --init-config [DIR]` (the current
@@ -217,7 +247,11 @@ key unset:
 ```json
 {
   "home": null,
-  "exclude": null
+  "exclude": null,
+  "out": null,
+  "format": null,
+  "title": null,
+  "strict": null
 }
 ```
 
