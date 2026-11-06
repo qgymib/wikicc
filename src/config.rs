@@ -18,10 +18,16 @@
 //! - unknown keys warn too, so a typo or a key this version does not
 //!   understand never silently changes nothing.
 //!
+//! A starter file can be written with [`init`], which emits the default
+//! content — every key unset — into an existing directory and never touches a
+//! file that is already there.
+//!
 //! Pure: [`load`] touches only the configuration file itself, and resolving
 //! [`SiteConfig::resolve_home`] compares strings, so both are unit tested
 //! against plain data.
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 
 use serde_json::Value;
@@ -109,6 +115,56 @@ pub fn load(input: &Path) -> Result<SiteConfig> {
     };
 
     parse(&bytes, &path)
+}
+
+/// The default configuration content: every key this version knows, unset.
+///
+/// [`init`] writes these exact bytes; a unit test feeds the template back
+/// through [`parse`], so the default content can never drift away from what
+/// the loader accepts.
+pub fn template() -> &'static str {
+    "{\n  \"home\": null\n}\n"
+}
+
+/// Write the default configuration file into `dir` and report it.
+///
+/// The target directory must already exist (a missing directory is more
+/// likely a misspelled path than a place to start a site) and must be a
+/// directory. An existing [`CONFIG_FILE_NAME`] is never overwritten: the
+/// default content would replace instructions the author wrote on purpose,
+/// so the file has to be deleted first. One confirmation line naming the
+/// written path goes to `out`.
+pub fn init(dir: &Path, out: &mut dyn Write) -> Result<()> {
+    if !dir.exists() {
+        return Err(Error::InvalidInput(format!(
+            "target directory not found: {}",
+            dir.display()
+        )));
+    }
+    if !dir.is_dir() {
+        return Err(Error::InvalidInput(format!(
+            "target path is not a directory: {}",
+            dir.display()
+        )));
+    }
+
+    let path = dir.join(CONFIG_FILE_NAME);
+    // `create_new` is the whole overwrite guard: the open fails when the file
+    // is already there, so the check and the write cannot race.
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::AlreadyExists => {
+                Error::InvalidInput(format!("'{}' already exists", path.display()))
+            }
+            _ => Error::Io(error),
+        })?;
+    file.write_all(template().as_bytes())?;
+
+    writeln!(out, "initialized {}", path.display())?;
+    Ok(())
 }
 
 /// Parse the configuration bytes, with a UTF-8 BOM tolerated.
@@ -265,6 +321,82 @@ mod tests {
 
         assert!(
             error.to_string().starts_with("cannot read '"),
+            "unexpected message: {error}"
+        );
+    }
+
+    #[test]
+    fn the_template_is_the_default_configuration() {
+        let config = parse_text(template()).expect("the template is a valid configuration");
+
+        assert_eq!(config, SiteConfig::default());
+        assert_eq!(config.home, None);
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn init_writes_the_template_and_reports_the_path() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut report = Vec::new();
+
+        init(dir.path(), &mut report).expect("init succeeds in an empty directory");
+
+        let path = dir.path().join(CONFIG_FILE_NAME);
+        let written = std::fs::read_to_string(&path).expect("the file exists");
+        assert_eq!(written, template());
+        assert_eq!(
+            String::from_utf8(report).expect("stdout is utf-8"),
+            format!("initialized {}\n", path.display())
+        );
+    }
+
+    #[test]
+    fn init_refuses_to_overwrite_an_existing_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(CONFIG_FILE_NAME);
+        std::fs::write(&path, r#"{"home": "a.md"}"#).expect("write an existing config");
+        let mut report = Vec::new();
+
+        let error = init(dir.path(), &mut report).expect_err("an existing file is never replaced");
+
+        assert_eq!(
+            error.to_string(),
+            format!("'{}' already exists", path.display())
+        );
+        let untouched = std::fs::read_to_string(&path).expect("read the existing file");
+        assert_eq!(untouched, r#"{"home": "a.md"}"#);
+        assert!(report.is_empty(), "a failed init prints nothing");
+    }
+
+    #[test]
+    fn init_rejects_a_missing_directory() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let missing = dir.path().join("nope");
+        let mut report = Vec::new();
+
+        let error = init(&missing, &mut report).expect_err("the directory must exist");
+
+        assert!(
+            error
+                .to_string()
+                .starts_with("target directory not found: "),
+            "unexpected message: {error}"
+        );
+    }
+
+    #[test]
+    fn init_rejects_a_file_as_the_target() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("notes.md");
+        std::fs::write(&file, "# Notes\n").expect("write fixture");
+        let mut report = Vec::new();
+
+        let error = init(&file, &mut report).expect_err("a file is not a directory");
+
+        assert!(
+            error
+                .to_string()
+                .starts_with("target path is not a directory: "),
             "unexpected message: {error}"
         );
     }

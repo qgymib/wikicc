@@ -57,14 +57,15 @@ therefore neither creates an artifact nor empties a previous one.
 ## 3. Module map
 
 ```
-src/main.rs                 binary: parse arguments, run the pipeline, map errors to exit codes
+src/main.rs                 binary: parse arguments, dispatch --init-config, run the pipeline,
+                            map errors to exit codes
 src/lib.rs                  library root and re-exports
 src/cli.rs                  clap definitions
 src/options.rs              defaults, lexical path normalization, output-path guards
 src/error.rs                error type and exit-code mapping
 src/pipeline.rs             stage order, strict gate, summary lines
 src/scan.rs                 discovery, ordering, ids, titles, diagnostics
-src/config.rs               the optional `.wikicc.json` site configuration
+src/config.rs               the optional `.wikicc.json` site configuration and its initializer
 src/markdown/               render orchestration, heading text, slugs, TOC, chapter blocks,
                             highlighting, link resolution, reference definitions
 src/assets.rs               read, MIME, hashing, dedupe
@@ -166,7 +167,10 @@ one is stated as a contract rather than left to the implementation.
   key are warnings the `--strict` gate counts. The resolved id travels in the
   payload as `home` and in the pages manifest under the same key, omitted
   when unset, so a site without the file serialises byte-identically to a
-  build that never heard of it.
+  build that never heard of it. A starter file is written by
+  `wikicc --init-config [DIR]`: the default content (every key unset) goes
+  into a directory that already exists, and a file that is already there is
+  never overwritten.
 - **CLI surface.** `cli` defines the arguments; `options` turns them into
   `Options` and owns the output-directory guards (missing and empty are used,
   a previous artifact is emptied, anything else needs `--force`, and the output

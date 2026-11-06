@@ -88,8 +88,14 @@ pub struct Options {
 
 impl Options {
     /// Derive defaults from raw CLI arguments. Performs no I/O.
+    ///
+    /// Only valid for a build invocation: `INPUT_DIR` is missing when
+    /// `--init-config` replaces the build, and the binary dispatches that
+    /// action before reaching here.
     pub fn from_cli(cli: Cli) -> Self {
-        let input = cli.input;
+        let input = cli
+            .input
+            .expect("INPUT_DIR is set for every build invocation");
         let out = cli.out.unwrap_or_else(|| input.join(DEFAULT_OUT_DIR));
         let title = cli.title.unwrap_or_else(|| default_title(&input));
 
@@ -253,13 +259,14 @@ mod tests {
 
     fn cli_for(input: &Path) -> Cli {
         Cli {
-            input: input.to_path_buf(),
+            input: Some(input.to_path_buf()),
             out: None,
             format: OutputFormat::SingleHtml,
             title: None,
             strict: false,
             force: false,
             quiet: false,
+            init_config: None,
         }
     }
 

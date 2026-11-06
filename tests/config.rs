@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use wikicc::config::CONFIG_FILE_NAME;
+use wikicc::config::{self, CONFIG_FILE_NAME, SiteConfig};
 use wikicc::error::Result;
 use wikicc::options::{Options, OutputFormat};
 use wikicc::pipeline::{self, BuildOutcome};
@@ -160,4 +160,27 @@ fn the_config_file_is_not_reported_as_ignored() {
         !stderr.contains("non-markdown"),
         "the configuration is an input, not an ignored file: {stderr}"
     );
+}
+
+#[test]
+fn an_initialized_configuration_builds_without_warnings() {
+    for format in OutputFormat::ALL {
+        let dir = fixture();
+        let mut report = Vec::new();
+        config::init(dir.path(), &mut report).expect("init succeeds in a fresh site");
+
+        let loaded = config::load(dir.path()).expect("the written file loads");
+        assert_eq!(loaded, SiteConfig::default(), "the template is all unset");
+
+        let out = dir.path().join(format.as_str());
+        let options = options(dir.path(), &out, format);
+
+        let (outcome, _, stderr) = execute(&options);
+        outcome.unwrap_or_else(|error| panic!("{format}: the build succeeds: {error}"));
+
+        assert!(
+            !stderr.contains("config:"),
+            "{format}: the default template is silent: {stderr}"
+        );
+    }
 }

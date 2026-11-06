@@ -131,7 +131,7 @@ statically, so it does not need the VC++ redistributable.
 ### Command line
 
 ```
-wikicc <INPUT_DIR> [OPTIONS]
+wikicc [OPTIONS] [INPUT_DIR]
 
   -o, --out <DIR>        Output directory [default: <INPUT_DIR>/dist]
       --format <FMT>     single-html | html-dir | pages [default: single-html]
@@ -139,6 +139,9 @@ wikicc <INPUT_DIR> [OPTIONS]
       --strict           Treat warnings (broken links, missing assets) as errors
       --force            Overwrite the output directory without confirmation
   -q, --quiet            Suppress the summary line
+      --init-config [DIR]
+                         Write a default .wikicc.json into DIR [default: the
+                         current directory] and exit
   -h, --help             Print help
   -V, --version          Print version
 ```
@@ -149,6 +152,7 @@ wikicc path/to/docs -o build --title "Handbook"
 wikicc path/to/docs --format html-dir
 wikicc path/to/docs --format pages        # a static site for GitHub Pages
 wikicc path/to/docs --strict              # broken links fail the build
+wikicc --init-config path/to/docs         # writes path/to/docs/.wikicc.json
 ```
 
 A successful build prints a summary line and reports diagnostics on stderr;
@@ -193,6 +197,21 @@ sidebar, graph and search see the same document they always did.
 - Unknown keys warn, so a typo never silently changes nothing.
 - Every output format honours the setting, and a site without a
   `.wikicc.json` builds exactly the artifact it always did.
+
+A starter file can be written with `wikicc --init-config [DIR]` (the current
+directory when the value is omitted). It writes the default content — every
+key unset:
+
+```json
+{
+  "home": null
+}
+```
+
+- The target directory must already exist; a missing directory is rejected,
+  not created.
+- An existing `.wikicc.json` is never overwritten — delete it first.
+- `--init-config` cannot be combined with an input directory.
 
 ### Warnings and `--strict`
 

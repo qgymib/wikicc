@@ -21,9 +21,14 @@ use crate::options::{Options, OutputFormat};
     long_about = None
 )]
 pub struct Cli {
-    /// Folder that contains the Markdown documents to compile
-    #[arg(value_name = "INPUT_DIR")]
-    pub input: PathBuf,
+    /// Folder that contains the Markdown documents to compile (required unless `--init-config` was given)
+    //
+    // The value is an `Option` because clap's derive forces a plain
+    // positional to be required, and its debug assertions reject that
+    // alongside a `required_unless*` rule; a one-paragraph doc comment also
+    // keeps the rendered help in its compact layout.
+    #[arg(value_name = "INPUT_DIR", required_unless_present = "init_config")]
+    pub input: Option<PathBuf>,
 
     /// Output directory [default: <INPUT_DIR>/dist]
     #[arg(short, long, value_name = "DIR")]
@@ -54,6 +59,16 @@ pub struct Cli {
     /// Suppress the summary line
     #[arg(short, long)]
     pub quiet: bool,
+
+    /// Write a default `.wikicc.json` into DIR [default: the current directory] and exit
+    #[arg(
+        long,
+        value_name = "DIR",
+        num_args(0..=1),
+        default_missing_value = ".",
+        conflicts_with = "input"
+    )]
+    pub init_config: Option<PathBuf>,
 }
 
 impl Cli {
@@ -82,13 +97,14 @@ mod tests {
     fn parses_minimal_invocation_with_defaults() {
         let cli = parse(&["wikicc", "docs"]);
 
-        assert_eq!(cli.input, PathBuf::from("docs"));
+        assert_eq!(cli.input, Some(PathBuf::from("docs")));
         assert_eq!(cli.out, None);
         assert_eq!(cli.format, OutputFormat::SingleHtml);
         assert_eq!(cli.title, None);
         assert!(!cli.strict);
         assert!(!cli.force);
         assert!(!cli.quiet);
+        assert_eq!(cli.init_config, None);
     }
 
     #[test]
@@ -98,7 +114,7 @@ mod tests {
             "--strict", "--force", "--quiet",
         ]);
 
-        assert_eq!(cli.input, PathBuf::from("docs"));
+        assert_eq!(cli.input, Some(PathBuf::from("docs")));
         assert_eq!(cli.out, Some(PathBuf::from("build")));
         assert_eq!(cli.format, OutputFormat::HtmlDir);
         assert_eq!(cli.title.as_deref(), Some("Handbook"));
@@ -149,6 +165,27 @@ mod tests {
     }
 
     #[test]
+    fn init_config_defaults_to_the_current_directory() {
+        let cli = parse(&["wikicc", "--init-config"]);
+
+        assert_eq!(cli.init_config, Some(PathBuf::from(".")));
+    }
+
+    #[test]
+    fn init_config_takes_an_explicit_directory() {
+        let cli = parse(&["wikicc", "--init-config", "docs"]);
+
+        assert_eq!(cli.init_config, Some(PathBuf::from("docs")));
+    }
+
+    #[test]
+    fn init_config_and_input_are_mutually_exclusive() {
+        let error = parse_error(&["wikicc", "docs", "--init-config"]);
+
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
     fn help_lists_documented_options() {
         let error = parse_error(&["wikicc", "--help"]);
         let help = error.to_string();
@@ -162,6 +199,7 @@ mod tests {
             "--strict",
             "--force",
             "--quiet",
+            "--init-config",
         ] {
             assert!(
                 help.contains(expected),
