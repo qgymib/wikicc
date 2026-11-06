@@ -2227,9 +2227,11 @@ a {
   line-height: 1.6;
 }
 
-/* A hit in the whole document: a wash rather than a badge, because a page can
-   hold dozens of them and the reader is reading, not scanning markers. */
-.search-preview mark.search-hit {
+/* A hit in the whole document — the search panel's preview, and the article a
+   result was opened onto: a wash rather than a badge, because a page can hold
+   dozens of them and the reader is reading, not scanning markers. */
+.search-preview mark.search-hit,
+.doc-body mark.search-hit {
   padding: 0 1px;
   border-radius: 2px;
   background: rgba(76, 141, 255, 0.28);
@@ -2238,32 +2240,38 @@ a {
   font-weight: inherit;
 }
 
-/* The one the preview scrolled to, the row the reader picked: the eye arrives
-   here, so it is the only hit allowed to raise its voice — in yellow, the
-   colour every find bar teaches a reader to read as "this is the one". The
-   class is set in `scrollToHit` and moves with the selection; the earlier
-   `:first-of-type` shade matched the first mark of every paragraph instead
-   and has gone. */
-.search-preview mark.search-hit-active {
+/* The one the page scrolled to, the row the reader picked — in the preview,
+   or in the article a result was opened onto: the eye arrives here, so it is
+   the only hit allowed to raise its voice — in yellow, the colour every find
+   bar teaches a reader to read as "this is the one". The class is set in the
+   shared highlight module's `scrollToSlot` and moves with the selection; the
+   earlier `:first-of-type` shade matched the first mark of every paragraph
+   instead and has gone. */
+.search-preview mark.search-hit-active,
+.doc-body mark.search-hit-active {
   background: rgba(255, 196, 12, 0.42);
   box-shadow: inset 0 -1px 0 rgba(255, 196, 12, 0.85);
 }
 
-::root[data-theme="light"] .search-preview mark.search-hit {
+:root[data-theme="light"] .search-preview mark.search-hit,
+:root[data-theme="light"] .doc-body mark.search-hit {
   background: rgba(76, 141, 255, 0.2);
 }
 
-::root[data-theme="light"] .search-preview mark.search-hit-active {
+:root[data-theme="light"] .search-preview mark.search-hit-active,
+:root[data-theme="light"] .doc-body mark.search-hit-active {
   background: rgba(255, 179, 0, 0.55);
   box-shadow: inset 0 -1px 0 rgba(255, 179, 0, 0.9);
 }
 
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .search-preview mark.search-hit {
+  :root:not([data-theme="dark"]) .search-preview mark.search-hit,
+  :root:not([data-theme="dark"]) .doc-body mark.search-hit {
     background: rgba(76, 141, 255, 0.2);
   }
 
-  :root:not([data-theme="dark"]) .search-preview mark.search-hit-active {
+  :root:not([data-theme="dark"]) .search-preview mark.search-hit-active,
+  :root:not([data-theme="dark"]) .doc-body mark.search-hit-active {
     background: rgba(255, 179, 0, 0.55);
     box-shadow: inset 0 -1px 0 rgba(255, 179, 0, 0.9);
   }

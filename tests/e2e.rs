@@ -987,12 +987,13 @@ fn folding_is_the_article_s_own_furniture() {
 fn a_hit_is_marked_in_the_document_without_shouting() {
     // A document holds dozens of hits, and the reader is reading rather than
     // scanning markers: the wash is quiet, and only the one the reader picked
-    // — the row the preview scrolled to — is allowed to stand out, in a
-    // colour of its own. The old `:first-of-type` shade stood for "the first
-    // mark of every paragraph" rather than the pick, so it has gone.
+    // — the row the preview scrolled to, or the passage a result was opened
+    // onto in the article — is allowed to stand out, in a colour of its own.
+    // The old `:first-of-type` shade stood for "the first mark of every
+    // paragraph" rather than the pick, so it has gone.
     let css = SHELL_CSS;
-    let hit = rule_of(css, ".search-preview mark.search-hit {");
-    let active = rule_of(css, ".search-preview mark.search-hit-active {");
+    let hit = rule_of(css, ".search-preview mark.search-hit,");
+    let active = rule_of(css, ".search-preview mark.search-hit-active,");
 
     assert!(
         declaration(hit, "background").is_some(),
@@ -1011,6 +1012,14 @@ fn a_hit_is_marked_in_the_document_without_shouting() {
     assert!(
         !css.contains(".search-preview mark.search-hit:first-of-type"),
         "the standout belongs to the selection, not the first mark of each paragraph"
+    );
+
+    // The article a result is opened onto wears the same marks: `Enter` marks
+    // the passage there, so the sheet must style the article's marks too.
+    assert!(
+        css.contains(".doc-body mark.search-hit")
+            && css.contains(".doc-body mark.search-hit-active"),
+        "the article a result opens onto wears the same marks"
     );
 }
 

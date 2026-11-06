@@ -21,6 +21,7 @@ import * as Links from "./links.js";
 import * as AssetLinks from "./asset-links.js";
 import * as Search from "./search.js";
 import * as SearchView from "./search-view.js";
+import * as SearchHighlight from "./search-highlight.js";
 import * as DocStore from "./doc-store.js";
 import * as DocList from "./doc-list.js";
 import * as Toc from "./toc.js";
@@ -203,6 +204,30 @@ export function start() {
    */
   var pendingMissing = null;
 
+  /**
+   * The passage a pending navigation has to open at, or `null`.
+   *
+   * A search result names a place no route can carry: the hits live in the
+   * body's text, and an address holds only a chapter. Opening one with
+   * `Enter` therefore navigates by id alone and queues the place here — the
+   * query to mark the article with and the ordinal to walk to — for the
+   * render the navigation causes to consume. One navigation, one queue: like
+   * `pendingMissing` it is taken once and never replayed, so a later
+   * navigation can never inherit a jump that was not its own.
+   */
+  var pendingJump = null;
+
+  /**
+   * The `<mark>` elements the article currently carries for a search jump.
+   *
+   * The marks are the article's until the next navigation: a reader who
+   * arrived at a passage wants to see where they are, and a reader who moves
+   * on wants the page back as authored. Clearing unwraps each mark back into
+   * its text, which also restores the original text the next jump's walk has
+   * to count over.
+   */
+  var searchMarks = [];
+
   var preview = PreviewView.createPreviewView({
     content: content,
     documents: store,
@@ -303,7 +328,10 @@ export function start() {
 
       searchView.setResults(searchResults(query, mode), 0);
     },
-    onSelect: function (id, anchor) {
+    onSelect: function (id, anchor, jump) {
+      // The passage a result names travels outside the route: queue it for
+      // the render this navigation causes, then let the address change.
+      pendingJump = jump || null;
       navigate(id, anchor);
     },
   });
@@ -358,6 +386,9 @@ export function start() {
    * reader stays where they are, exactly as a navigation to nothing would.
    */
   function scrollToAnchorOnly(route) {
+    var jump = pendingJump;
+    pendingJump = null;
+
     var doc = route && route.id ? store.peek(route.id) : null;
     if (!doc) {
       return;
@@ -370,10 +401,20 @@ export function start() {
       if (typeof globalThis.scrollTo === "function") {
         globalThis.scrollTo(0, 0);
       }
-      return;
+    } else {
+      scrollToAnchor(findAnchor(doc, route.anchor));
     }
 
-    scrollToAnchor(findAnchor(doc, route.anchor));
+    // The document is already the right one, so a jump is a marking and a
+    // walk, not a render: the marks a previous arrival left go first, and
+    // the passage the reader just asked for is applied to the body on
+    // screen. A navigation that is not a jump takes the page back as
+    // authored.
+    SearchHighlight.clearSlots(searchMarks);
+    searchMarks = [];
+    if (jump) {
+      applySearchJump(jump);
+    }
   }
 
   /**
@@ -403,6 +444,31 @@ export function start() {
     globalThis.requestAnimationFrame(function () {
       scrollToAnchor(findAnchor(doc, anchor));
       settleAtAnchor(doc, anchor, remaining - 1);
+    });
+  }
+
+  /**
+   * Walk to `jump`'s hit once more after the document has settled.
+   *
+   * The same settling every anchor scroll faces: diagrams replace their
+   * source blocks, images arrive, fonts reflow, and the first scroll can
+   * leave the reader short of the passage. Two frames later the layout is
+   * stable enough to correct it. Environments without
+   * `requestAnimationFrame` — the node tests — keep the single attempt the
+   * jump itself made.
+   */
+  function settleAtHit(slots, ordinal, frames) {
+    var remaining = typeof frames === "number" ? frames : 2;
+    if (
+      remaining <= 0 ||
+      typeof globalThis.requestAnimationFrame !== "function"
+    ) {
+      return;
+    }
+
+    globalThis.requestAnimationFrame(function () {
+      SearchHighlight.scrollToSlot(slots, ordinal);
+      settleAtHit(slots, ordinal, remaining - 1);
     });
   }
 
@@ -597,7 +663,7 @@ export function start() {
    * re-anchor of the document on screen keeps its scroll position, its table
    * sorts and its fold states.
    */
-  function place(route, doc, wanted, changed) {
+  function place(route, doc, wanted, changed, jump) {
     if (changed) {
       renderDocument(doc);
       toc.render(doc.toc, doc.id);
@@ -627,6 +693,16 @@ export function start() {
       }
     }
 
+    // The jump lands last: the body is on screen, an anchor walk above has
+    // had its say, and the reader's newest request is the passage the search
+    // named. Without a jump the page is taken back as authored — the marks
+    // of an arrival do not follow the reader into the reading.
+    SearchHighlight.clearSlots(searchMarks);
+    searchMarks = [];
+    if (jump) {
+      applySearchJump(jump);
+    }
+
     if (!route.known) {
       // Canonicalise the address bar without adding a history entry. Some
       // browsers refuse `replaceState` on `file://`; the page still works.
@@ -643,6 +719,43 @@ export function start() {
     firstRender = false;
   }
 
+  /**
+   * Mark the article with `jump`'s query and bring `jump`'s hit into view.
+   *
+   * The reader pressed `Enter` on a result row: the document is open, and
+   * the place the row described is the only thing left to do. Every
+   * occurrence of the query is wrapped in the same marks the preview wore —
+   * the list, the preview and the article now name the same places — and
+   * the occurrence the row numbered is the one that stands out and takes
+   * the viewport. The marks are remembered so the next navigation can take
+   * them back off: a search's highlights belong to the arrival, not to the
+   * reading that follows.
+   *
+   * Anything that cannot be honoured — a body that never rendered, an
+   * ordinal without a place — is quietly skipped: the document is open and
+   * readable either way.
+   */
+  function applySearchJump(jump) {
+    if (!jump || !jump.query || typeof jump.hit !== "number" || jump.hit < 0) {
+      return;
+    }
+
+    var body = content.querySelector("." + DocBody.BODY_CLASS);
+    if (!body) {
+      return;
+    }
+
+    var slots = SearchHighlight.highlightHits(body, jump.query);
+    slots.forEach(function (slot) {
+      if (slot.mark) {
+        searchMarks.push(slot.mark);
+      }
+    });
+
+    SearchHighlight.scrollToSlot(slots, jump.hit);
+    settleAtHit(slots, jump.hit);
+  }
+
   function render() {
     var route = Router.resolveRoute(globalThis.location.hash, ids, home);
 
@@ -650,6 +763,11 @@ export function start() {
     // take it now, so a later navigation can never replay it.
     var queued = pendingMissing;
     pendingMissing = null;
+
+    // A search jump rides the navigation it asked for: taken once, here, so
+    // the render that follows is the only one that can apply it.
+    var jump = pendingJump;
+    pendingJump = null;
 
     if (!route.id) {
       banner.hide();
@@ -680,7 +798,7 @@ export function start() {
     // navigation has taken the article over by the time it lands.
     var doc = store.peek(route.id);
     if (doc) {
-      place(route, doc, wanted, changed);
+      place(route, doc, wanted, changed, jump);
       return;
     }
 
@@ -699,7 +817,7 @@ export function start() {
         return;
       }
 
-      place(route, loaded, wanted, changed);
+      place(route, loaded, wanted, changed, jump);
     });
   }
 

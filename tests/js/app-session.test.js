@@ -10,7 +10,9 @@
  *   reader to the chapter, even after the freshly inserted markup settles;
  * - a navigation whose address is already showing does *not* re-render, because
  *   the render would throw away the position it was asked to reach;
- * - the document list always highlights the open document, filter or not.
+ * - the document list always highlights the open document, filter or not;
+ * - a search result opened with `Enter` walks the reader to the passage it
+ *   named, and the marks of that arrival go when the reading moves on.
  *
  * The diagram engine and the graph are stubbed: this is not their test, and the
  * real ones need a browser.
@@ -66,6 +68,16 @@ function fakeElement(tagName) {
       if (index >= 0) {
         this.children.splice(index, 1);
       }
+      child.parentNode = null;
+      return child;
+    },
+    replaceChild(next, child) {
+      const index = this.children.indexOf(child);
+      if (index < 0) {
+        return child;
+      }
+      this.children[index] = next;
+      next.parentNode = this;
       child.parentNode = null;
       return child;
     },
@@ -189,10 +201,207 @@ function fakeElement(tagName) {
     },
     set(value) {
       element.__html = String(value);
+      // The browser parses markup into children, and the search jump's
+      // highlight walks those children; the fake parses the same way the
+      // build's own markup asks for. The string stays on `__html` for the
+      // tests that read the markup back.
+      element.children = [];
+      parseInto(element, String(value));
     },
   });
 
   return element;
+}
+
+/**
+ * Parse the tags of `html` into children of `root`.
+ *
+ * Ported from the search panel's own fake, and deliberately just as minimal:
+ * every tag opens or closes, nothing is void, and attributes matter only as
+ * far as the class name. That is exactly what the build emits for a document
+ * body, and anything more would be a parser the tests then have to trust.
+ */
+function parseInto(root, html) {
+  const open = [root];
+  const pattern = /<(\/?)([a-zA-Z0-9]+)([^>]*)>|([^<]+)/g;
+  let match = pattern.exec(html);
+
+  while (match) {
+    if (match[4] !== undefined) {
+      if (match[4]) {
+        open[open.length - 1].appendChild(textNode(decodeText(match[4])));
+      }
+    } else if (match[1]) {
+      if (open.length > 1) {
+        open.pop();
+      }
+    } else {
+      const node = fakeElement(match[2]);
+      const attribute = /([a-zA-Z-]+)="([^"]*)"/g;
+      let found = attribute.exec(match[3] || "");
+
+      while (found) {
+        node.setAttribute(found[1], found[2]);
+        if (found[1] === "class") {
+          node.className = found[2];
+        }
+        found = attribute.exec(match[3] || "");
+      }
+
+      open[open.length - 1].appendChild(node);
+      open.push(node);
+    }
+    match = pattern.exec(html);
+  }
+}
+
+/** The few entities the build writes into a body. */
+function decodeText(value) {
+  return String(value)
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * A text node the way the search jump's highlight meets it.
+ *
+ * `splitText` is the one member the highlight's cutting needs, and the walk
+ * it serves is live: the halves a cut leaves behind are visited where a
+ * browser would visit them, because the slot numbering depends on that
+ * behaviour rather than on a snapshot of it.
+ */
+function textNode(value) {
+  const node = {
+    nodeType: 3,
+    tagName: "#text",
+    children: [],
+    parentNode: null,
+  };
+  let text = String(value);
+
+  Object.defineProperty(node, "textContent", {
+    get() {
+      return text;
+    },
+    set(next) {
+      text = String(next);
+    },
+  });
+
+  Object.defineProperty(node, "nodeValue", {
+    get() {
+      return text;
+    },
+    set(next) {
+      text = String(next);
+    },
+  });
+
+  node.splitText = function (offset) {
+    if (!node.parentNode) {
+      return node;
+    }
+
+    const tail = textNode(text.slice(offset));
+    node.textContent = text.slice(0, offset);
+
+    const parent = node.parentNode;
+    const index = parent.children.indexOf(node);
+    parent.children.splice(index + 1, 0, tail);
+    tail.parentNode = parent;
+
+    return tail;
+  };
+
+  return node;
+}
+
+/**
+ * A walker over the text nodes below `root`, in document order.
+ *
+ * Live, as the browser's own is: nodes that enter the tree while it runs —
+ * the halves `splitText` leaves behind, the text a fresh mark now holds —
+ * are visited where a browser would visit them.
+ */
+function treeWalker(root) {
+  /** The node the walk last returned, or the root before the first ask. */
+  let current = root;
+
+  /** The first text node below `node`, or `null`. */
+  function firstText(node) {
+    for (let index = 0; index < node.children.length; index += 1) {
+      const child = node.children[index];
+      if (child.nodeType === 3) {
+        return child;
+      }
+      const found = firstText(child);
+      if (found) {
+        return found;
+      }
+    }
+
+    return null;
+  }
+
+  /** The next text node from `node`'s position onward, or `null` at the end. */
+  function nextFrom(node) {
+    if (node.nodeType !== 3) {
+      const inner = firstText(node);
+      if (inner) {
+        return inner;
+      }
+    }
+
+    let parent = node.parentNode;
+    while (parent) {
+      const siblings = parent.children;
+      for (
+        let index = siblings.indexOf(node) + 1;
+        index < siblings.length;
+        index += 1
+      ) {
+        if (siblings[index].nodeType === 3) {
+          return siblings[index];
+        }
+        const found = firstText(siblings[index]);
+        if (found) {
+          return found;
+        }
+      }
+
+      node = parent;
+      if (node === root) {
+        return null;
+      }
+      parent = node.parentNode;
+    }
+
+    return null;
+  }
+
+  return {
+    nextNode() {
+      current = nextFrom(current);
+      return current;
+    },
+  };
+}
+
+/** Every `<mark>` below `root`, in document order. */
+function marksOf(root) {
+  const found = [];
+  (function walk(node) {
+    (node.children || []).forEach(function (child) {
+      if (child.tagName === "MARK") {
+        found.push(child);
+      }
+      walk(child);
+    });
+  })(root);
+  return found;
 }
 
 /** The payload the session routes against. */
@@ -276,7 +485,7 @@ function lazyChunks() {
     "pages/guide/intro.md.json?v=h1": {
       id: "guide/intro.md",
       title: "Intro",
-      html: '<h2 id="getting-started">Getting Started</h2><p>body</p>',
+      html: '<h2 id="getting-started">Getting Started</h2><p>intro body</p>',
       toc: [
         {
           id: "getting-started",
@@ -462,7 +671,10 @@ async function withSession(options, body) {
       return fakeElement(tagName);
     },
     createTextNode(value) {
-      return { nodeType: 3, textContent: String(value) };
+      return textNode(value);
+    },
+    createTreeWalker(root) {
+      return treeWalker(root);
     },
     addEventListener(type, handler) {
       if (!doc.listeners[type]) {
@@ -957,6 +1169,100 @@ test("the scope switch widens the search to every document", async () => {
   });
 });
 
+test("Enter on a result opens the article at the passage it names", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const article = session.shell.get("doc-article");
+    const body = article.children[1];
+
+    session.shell.get("search-toggle").fire("click");
+    const input = searchInput(session.shell);
+    input.value = "root";
+    input.fire("input", { target: input });
+    session.runTimers();
+
+    input.fire("keydown", keydown("Enter"));
+
+    // The address was already the document's: the passage is walked to in
+    // place, and a render would have thrown away exactly the article the
+    // reader was asked into.
+    assert.equal(article.children[1], body, "the article is not rebuilt");
+
+    const marks = marksOf(body);
+    assert.equal(marks.length, 1, "the query's occurrence is marked");
+    assert.equal(marks[0].textContent, "root");
+    assert.equal(
+      marks[0].className,
+      "search-hit search-hit-active",
+      "the passage the row named is the one that stands out",
+    );
+    assert.deepEqual(
+      marks[0].scrollCalls,
+      [{ block: "center" }],
+      "the reader is brought to the passage",
+    );
+
+    // The settling walk re-lands on the passage once diagrams and images
+    // have had their say.
+    session.runFrames();
+    assert.ok(
+      marks[0].scrollCalls.length > 1,
+      "the passage is walked to again after the layout settles",
+    );
+  });
+});
+
+test("a navigation after a search takes the marks back off", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    session.shell.get("search-toggle").fire("click");
+    const input = searchInput(session.shell);
+    input.value = "root";
+    input.fire("input", { target: input });
+    session.runTimers();
+    input.fire("keydown", keydown("Enter"));
+
+    const article = session.shell.get("doc-article");
+    const marked = article.children[1];
+    const mark = marksOf(marked)[0];
+    assert.ok(mark, "the arrival carries its marks");
+
+    session.follow("#/doc/guide/intro.md");
+
+    const body = article.children[1];
+    assert.notEqual(body, marked, "the document changed");
+    assert.equal(
+      marksOf(body).length,
+      0,
+      "the reading that follows opens as authored",
+    );
+    assert.equal(mark.parentNode, null, "the mark went back to plain text");
+  });
+});
+
+test("a match with no body occurrence opens the document without marks", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    session.shell.get("search-toggle").fire("click");
+    const input = searchInput(session.shell);
+    input.value = "Index";
+    input.fire("input", { target: input });
+    session.runTimers();
+
+    input.fire("keydown", keydown("Enter"));
+
+    const body = session.shell.get("doc-article").children[1];
+    assert.equal(
+      marksOf(body).length,
+      0,
+      "a title-only match has no passage to mark or walk to",
+    );
+  });
+});
+
 test("a chapter the document does not have opens it from the top", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
@@ -1102,6 +1408,59 @@ test("a pages session fetches the corpus on the first global search", async () =
       }),
       ["guide/intro.md"],
       "the corpus answers the query",
+    );
+  });
+});
+
+test("a pages session lands the search's passage when the document arrives", async () => {
+  await withSession({ hash: "#/doc/index.md", lazy: true }, async (session) => {
+    startSession();
+    await session.settle();
+
+    session.shell.get("search-toggle").fire("click");
+    const input = searchInput(session.shell);
+    input.value = "intro";
+    input.fire("input", { target: input });
+    session.runTimers();
+    await session.settle();
+
+    // The whole-site corpus travels on the first global query, and the
+    // answer names the document the passage lives in.
+    searchParts(session.shell, "search-mode")[0].fire("click");
+    await session.settle();
+    assert.deepEqual(
+      searchParts(session.shell, "search-result-path").map(function (node) {
+        return node.textContent;
+      }),
+      ["guide/intro.md"],
+    );
+
+    input.fire("keydown", keydown("Enter"));
+    session.follow(session.location.hash);
+    await session.settle();
+
+    const article = session.shell.get("doc-article");
+    assert.equal(
+      article.children[0].textContent,
+      "guide/intro.md",
+      "the document the passage lives in is open",
+    );
+    const marks = marksOf(article.children[1]);
+    assert.equal(
+      marks.length,
+      1,
+      "the passage is marked once the fetched document is on screen",
+    );
+    assert.equal(marks[0].textContent, "intro");
+    assert.match(
+      marks[0].className,
+      /search-hit-active/,
+      "the passage the row described is the one that stands out",
+    );
+    assert.deepEqual(
+      marks[0].scrollCalls,
+      [{ block: "center" }],
+      "the reader is brought to the passage",
     );
   });
 });

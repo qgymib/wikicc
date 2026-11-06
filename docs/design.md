@@ -285,8 +285,8 @@ one is stated as a contract rather than left to the implementation.
   (`router.js`, `links.js`, `asset-links.js`, `search.js`, `doc-store.js`,
   `table.js`, `graph.js`, `preview.js`, `toc.js`, `anchor.js`, `diagrams.js`,
   `math.js` versus `table-view.js`, `graph-view.js`, `diagram-view.js`,
-  `math-view.js`, `preview-view.js`, `search-view.js`, `banner.js`,
-  `doc-list.js`), because the
+  `math-view.js`, `preview-view.js`, `search-view.js`, `search-highlight.js`,
+  `banner.js`, `doc-list.js`), because the
   JS test suite runs under `node --test` with no DOM. Anything that touches
   `document` belongs to a view module; a view is a projection of the pure
   functions beneath it, and the controller (`app.js`) is the only module that

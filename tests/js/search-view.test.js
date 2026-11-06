@@ -633,10 +633,16 @@ function build(options) {
         view.setResults(options.answer(query), 0);
       }
     },
-    onSelect(id, anchor) {
-      calls.selections.push({ id: id, anchor: anchor });
+    onSelect(id, anchor, jump) {
+      // The jump is recorded only when it travels, so the assertions on the
+      // paths that never carry one — the preview's links — stay as they were.
+      var call = { id: id, anchor: anchor };
+      if (jump !== undefined) {
+        call.jump = jump;
+      }
+      calls.selections.push(call);
       if (options.onSelect) {
-        options.onSelect(id, anchor);
+        options.onSelect(id, anchor, jump);
       }
     },
   });
@@ -1886,8 +1892,11 @@ test("Enter opens the selected document and closes the panel", () => {
     input.fire("keydown", { key: "Enter" });
 
     // Moving to the second entry is what picks it: `Enter` settles only a
-    // query that has not been asked yet, and this one has been.
-    assert.deepEqual(built.calls.selections, [{ id: "b.md", anchor: null }]);
+    // query that has not been asked yet, and this one has been. The rows
+    // carry no occurrence, so there is no passage to open at.
+    assert.deepEqual(built.calls.selections, [
+      { id: "b.md", anchor: null, jump: null },
+    ]);
     assert.equal(built.view.isOpen(), false);
   });
 });
@@ -1897,7 +1906,7 @@ test("Enter asks for what was typed even when the pause has not come yet", () =>
     var built = build({
       container: page.container,
       answer(query) {
-        return [entry("a.md", "Alpha", query)];
+        return [entry("a.md", "Alpha", query, 0)];
       },
     });
     built.view.open();
@@ -1912,7 +1921,11 @@ test("Enter asks for what was typed even when the pause has not come yet", () =>
       ["alp"],
       "a query still pending is asked now",
     );
-    assert.deepEqual(built.calls.selections, [{ id: "a.md", anchor: null }]);
+    // The jump names the settled answer, not the older list: the passage
+    // that opens is the one the just-landed row described.
+    assert.deepEqual(built.calls.selections, [
+      { id: "a.md", anchor: null, jump: { query: "alp", hit: 0 } },
+    ]);
   });
 });
 
@@ -1986,7 +1999,86 @@ test("double-clicking a result opens it", () => {
     row.fire("click", { preventDefault() {} });
     row.fire("dblclick", { preventDefault() {} });
 
-    assert.deepEqual(built.calls.selections, [{ id: "b.md", anchor: null }]);
+    assert.deepEqual(built.calls.selections, [
+      { id: "b.md", anchor: null, jump: null },
+    ]);
+    assert.equal(built.view.isOpen(), false);
+  });
+});
+
+test("Enter opens the passage the selected row names", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [
+          entry("a.md", "Alpha", "alpha one", 0),
+          entry("a.md", "Alpha", "alpha two", 1),
+          entry("a.md", "Alpha", "alpha three", 2),
+        ];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var input = built.view.input();
+    input.fire("keydown", { key: "ArrowDown" });
+    input.fire("keydown", { key: "ArrowDown" });
+    input.fire("keydown", { key: "Enter" });
+
+    assert.deepEqual(
+      built.calls.selections,
+      [{ id: "a.md", anchor: null, jump: { query: "alpha", hit: 2 } }],
+      "the row the arrows chose is the passage the jump names",
+    );
+    assert.equal(built.view.isOpen(), false);
+  });
+});
+
+test("double-clicking a result opens the passage it names too", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [
+          entry("a.md", "Alpha", "alpha", 0),
+          entry("b.md", "Beta", "beta", 1),
+        ];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "a");
+
+    var row = page.container.findAll(RESULT_CLASS)[1];
+    row.fire("click", { preventDefault() {} });
+    row.fire("click", { preventDefault() {} });
+    row.fire("dblclick", { preventDefault() {} });
+
+    assert.deepEqual(built.calls.selections, [
+      { id: "b.md", anchor: null, jump: { query: "a", hit: 1 } },
+    ]);
+    assert.equal(built.view.isOpen(), false);
+  });
+});
+
+test("a match with no place in the body opens without a passage to land on", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", null, -1)];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    built.view.input().fire("keydown", { key: "Enter" });
+
+    assert.deepEqual(
+      built.calls.selections,
+      [{ id: "a.md", anchor: null, jump: null }],
+      "a title-only match has no occurrence for the article to open at",
+    );
     assert.equal(built.view.isOpen(), false);
   });
 });

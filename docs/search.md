@@ -44,7 +44,11 @@ Selecting is deliberate: click a row (or move with <kbd>↑</kbd>/<kbd>↓</kbd>
 document with **every place the query occurs** marked, the selected one
 standing out. Opening the document is a firmer gesture: **double-click** the
 row, or press <kbd>Enter</kbd>, and the reader navigates to that document at
-that passage.
+that passage — the article opens with the query's occurrences marked the same
+way, the passage you picked standing out. The marks are the arrival's, not the
+reading's: they go when you navigate on. A row whose match is in the title or
+the outline alone has no passage in the body to land on; that document opens
+at its top.
 
 ## Query syntax
 
