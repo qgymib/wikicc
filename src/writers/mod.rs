@@ -223,9 +223,11 @@ pub fn prepare_output_dir(out: &Path, force: bool) -> Result<()> {
 /// `String::replace` once per asset instead would copy the whole page once per
 /// asset, which is the difference between ~5 MB and ~5 MB × N of peak memory.
 ///
-/// A placeholder whose hash is truncated or absent from `assets` is an error:
-/// the page then references a resource the build never registered, and shipping
-/// it would publish a dead `wikicc-asset:` reference.
+/// A prefix followed by fewer than [`HASH_HEX_LEN`] hexadecimal characters is
+/// ordinary document text — a document may describe the placeholder format
+/// itself — and is left in place. A placeholder whose hash is absent from
+/// `assets` is an error: the page then references a resource the build never
+/// registered, and shipping it would publish a dead `wikicc-asset:` reference.
 ///
 /// Returns the expanded page and the number of placeholders replaced.
 pub fn expand_placeholders(
@@ -245,7 +247,12 @@ pub fn expand_placeholders(
         }
 
         let hash_start = start + ASSET_PLACEHOLDER_PREFIX.len();
-        let hash = hash_at(html, hash_start)?;
+        let Some(hash) = hash_at(html, hash_start) else {
+            // The render stage always emits a full hash, so a short run is
+            // document text (for example an inline code span that names the
+            // format); keep it verbatim and look at the next occurrence.
+            continue;
+        };
         let asset = assets.get(hash).ok_or_else(|| {
             Error::Write(format!(
                 "unknown asset placeholder '{ASSET_PLACEHOLDER_PREFIX}{hash}' in the rendered page"
@@ -263,12 +270,14 @@ pub fn expand_placeholders(
     Ok((expanded, replacements))
 }
 
-/// Hash that follows a placeholder prefix, or an error when it is truncated.
+/// Hash that follows a placeholder prefix, or `None` when the text after the
+/// prefix is not a full [`HASH_HEX_LEN`]-character hexadecimal hash.
 ///
-/// The hash is exactly [`HASH_HEX_LEN`] hexadecimal characters, which is what
-/// [`crate::assets::asset_hash`] produces. Anything shorter means the page was
-/// assembled from a different asset naming scheme than the one in this build.
-fn hash_at(html: &str, start: usize) -> Result<&str> {
+/// The render stage only ever emits the complete hash that
+/// [`crate::assets::asset_hash`] produces, so a shorter run is ordinary
+/// document text — a document may discuss the placeholder format itself — and
+/// is reported as absent instead of as an error.
+fn hash_at(html: &str, start: usize) -> Option<&str> {
     let rest = &html[start..];
     let available = rest
         .bytes()
@@ -277,13 +286,10 @@ fn hash_at(html: &str, start: usize) -> Result<&str> {
         .min(HASH_HEX_LEN);
 
     if available < HASH_HEX_LEN {
-        let found: String = rest.chars().take(24).collect();
-        return Err(Error::Write(format!(
-            "malformed asset placeholder '{ASSET_PLACEHOLDER_PREFIX}{found}' in the rendered page"
-        )));
+        return None;
     }
 
-    Ok(&rest[..HASH_HEX_LEN])
+    Some(&rest[..HASH_HEX_LEN])
 }
 
 /// Entries directly inside `dir`, sorted by path so removal is deterministic.
@@ -393,16 +399,36 @@ mod tests {
     }
 
     #[test]
-    fn a_truncated_hash_is_an_error() {
+    fn a_truncated_hash_is_ordinary_text_and_survives_verbatim() {
         let (table, _) = table_with("logo.svg", b"<svg/>");
 
         for html in ["wikicc-asset:", "wikicc-asset:abc", "wikicc-asset:zzzz"] {
-            let error = expand_placeholders(html, &table, mark).expect_err(html);
-            assert!(
-                error.to_string().contains("malformed asset placeholder"),
-                "unexpected message for {html}: {error}"
-            );
+            let (expanded, replacements) =
+                expand_placeholders(html, &table, mark).expect("a short run is not a placeholder");
+
+            assert_eq!(expanded, html, "verbatim for {html}");
+            assert_eq!(replacements, 0, "nothing replaced for {html}");
         }
+    }
+
+    #[test]
+    fn an_inline_code_mention_of_the_format_survives_verbatim() {
+        let (table, hash) = table_with("logo.svg", b"<svg/>");
+        // What the inline code span `wikicc-asset:<hash>` turns into after
+        // HTML escaping: a document may describe the placeholder format itself
+        // (`docs/design.md` does), and the mention must survive while a real
+        // placeholder next to it still expands.
+        let html = format!(
+            "see <code>wikicc-asset:&lt;hash&gt;</code> and <img src=\"wikicc-asset:{hash}\">"
+        );
+
+        let (expanded, replacements) = expand_placeholders(&html, &table, mark).expect("expand");
+
+        assert_eq!(
+            expanded,
+            format!("see <code>wikicc-asset:&lt;hash&gt;</code> and <img src=\"<{hash}>\">")
+        );
+        assert_eq!(replacements, 1);
     }
 
     #[test]

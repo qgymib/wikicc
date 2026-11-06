@@ -1,0 +1,7 @@
+{
+  "home": "README.md",
+  "exclude": ["tests", "target"],
+  "out": "dist",
+  "format": "pages",
+  "title": "wikicc"
+}

@@ -1,0 +1,107 @@
+# Continuous deployment of this repository's own documentation to GitHub
+# Pages. The documentation source is the repository itself: `README.md`,
+# `docs/*.md` and `CHANGELOG.md` are compiled by the newest `wikicc` build
+# into a `pages` static site and published to the `gh-pages` branch, which a
+# one-time "Deploy from a branch" setting in the repository serves.
+#
+# Build settings live in the root `.wikicc.json` (`out`, `format`, `home`,
+# `exclude`, `title`); this workflow only prepares the toolchain, builds the
+# binary and pushes the artifact, so the publishing parameters cannot drift
+# between the command line and CI. The compile step therefore passes nothing
+# but the input directory and `--force`: the output directory may survive a
+# re-run on a warm runner, and CI cannot confirm an interactive prompt.
+#
+# Deployment goes to the `gh-pages` *branch* rather than the artifact-based
+# `actions/deploy-pages` chain, so this workflow needs `contents: write` and
+# nothing else; the Pages write permissions of that other chain are not
+# required here.
+#
+# Quality gates do not run here: `lint.yml` owns every check and
+# `ubuntu.yml`/`windows.yml` own the build legs. A red gate fails the push
+# before this workflow matters, and a red deploy job surfaces a real compile
+# failure of the documentation itself.
+name: Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# `contents: write` lets the deploy action below push the `gh-pages` branch
+# with `GITHUB_TOKEN`. Everything else stays at the default read-only scope.
+permissions:
+  contents: write
+
+# One deployment at a time, queueing runs that land while another is in
+# progress: deployments stay small and fast, and the branch history keeps a
+# linear record of what is published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deploy:
+    name: ubuntu-latest / deploy
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    # Edition 2024 needs Rust 1.85 or newer; `stable` always satisfies it.
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    # A cold release build takes minutes, and the documentation changes far
+    # more often than `Cargo.lock` does. The build directory and the Cargo
+    # caches are keyed on the lockfile hash with a looser restore key, so a
+    # documentation-only push recompiles the binary incrementally and only a
+    # dependency change pays the full compile again.
+    - name: Cache Rust build
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: pages-${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+        restore-keys: |
+          pages-${{ runner.os }}-cargo-
+
+    # `build.rs` shells out to `node` to run the npm-installed esbuild, so the
+    # front-end dependencies have to be present before any cargo command runs.
+    # The version floor matches `engines.node` in `package.json` (the diagram
+    # engine rejects anything older).
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 'lts/*'
+        cache: 'npm'
+
+    - name: Install front-end dependencies
+      run: npm ci
+
+    - name: Build wikicc
+      run: cargo build --release
+
+    # The repository root is the documentation input: `.wikicc.json` carries
+    # every build setting (`out: dist`, `format: pages`, `home: README.md`,
+    # `exclude: tests`), and the scanner itself skips dot directories,
+    # `node_modules` and the output directory, so the command names nothing
+    # else.
+    - name: Compile the documentation
+      run: ./target/release/wikicc . --force
+
+    # Push `dist/` to the `gh-pages` branch: `GITHUB_TOKEN` may write to the
+    # repository it runs in thanks to the `permissions` above. Every deploy
+    # replaces the served site as a whole, so stale files disappear with it,
+    # and one commit per deploy keeps a browsable record of what was served.
+    - name: Deploy to gh-pages
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_branch: gh-pages
+        publish_dir: ./dist
