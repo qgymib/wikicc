@@ -40,8 +40,8 @@ scan ──▶ parse ──▶ resolve ──▶ assemble ──▶ render ─�
 | Stage | Input → output | Module |
 | --- | --- | --- |
 | validate | raw arguments → `Options` | `cli`, `options` |
-| scan | directory → `ScanReport` | `scan` |
 | config | input root → optional `.wikicc.json` → `SiteConfig` | `config` |
+| scan | directory + `SiteConfig.exclude` → `ScanReport` | `scan` |
 | parse | `SourceDoc` → HTML, TOC, plain text | `markdown` |
 | resolve | destinations → final addressing, `AssetTable`, diagnostics | `markdown::links`, `assets` |
 | assemble | everything → `SiteBundle` + `SiteBuild` | `site` |
@@ -161,13 +161,17 @@ These are the boundaries where an internal change becomes observable, so each
 one is stated as a contract rather than left to the implementation.
 
 - **The configuration file.** `.wikicc.json` sits in the input folder root and
-  is optional. It is read once, after the scan (resolving `home` needs the
+  is optional. It is read once, before the scan (the `exclude` entries must be
+  in effect while the tree is walked; resolving `home` still waits for the
   document ids), and parsing is strict: an unreadable or unparseable file is
   a runtime failure, while a `home` that matches no document and an unknown
   key are warnings the `--strict` gate counts. The resolved id travels in the
   payload as `home` and in the pages manifest under the same key, omitted
   when unset, so a site without the file serialises byte-identically to a
-  build that never heard of it. A starter file is written by
+  build that never heard of it. `exclude` lists directories relative to the
+  input folder that are pruned with their subtrees; the pruned directories
+  are reported as a note line, and an entry that escapes the input folder is
+  a runtime failure. A starter file is written by
   `wikicc --init-config [DIR]`: the default content (every key unset) goes
   into a directory that already exists, and a file that is already there is
   never overwritten.

@@ -163,6 +163,98 @@ fn the_config_file_is_not_reported_as_ignored() {
 }
 
 #[test]
+fn the_excluded_directory_stays_out_of_every_format() {
+    for format in OutputFormat::ALL {
+        let dir = fixture();
+        std::fs::create_dir_all(dir.path().join("drafts").join("deep")).expect("create dirs");
+        std::fs::write(dir.path().join("drafts").join("hidden.md"), "# Hidden\n")
+            .expect("write hidden doc");
+        std::fs::write(
+            dir.path().join("drafts").join("deep").join("older.md"),
+            "# Older\n",
+        )
+        .expect("write nested doc");
+        std::fs::write(
+            dir.path().join(CONFIG_FILE_NAME),
+            r#"{"exclude": ["drafts"]}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join(format.as_str());
+        let options = options(dir.path(), &out, format);
+
+        let (outcome, _, stderr) = execute(&options);
+        let outcome =
+            outcome.unwrap_or_else(|error| panic!("{format}: the build succeeds: {error}"));
+
+        assert_eq!(
+            outcome.stats.documents, 2,
+            "{format}: only the two top-level documents compile"
+        );
+        assert!(
+            stderr.contains("note: excluded 1 directory"),
+            "{format}: the note counts pruned directories: {stderr}"
+        );
+        let shell = shell_of(&out);
+        assert!(
+            !shell.contains(r#""id":"drafts/hidden.md""#),
+            "{format}: the payload carries no excluded document"
+        );
+        assert!(
+            shell.contains(r#""id":"a.md""#),
+            "{format}: the kept documents are still there"
+        );
+    }
+}
+
+#[test]
+fn a_home_inside_an_excluded_directory_falls_back_with_a_warning() {
+    let dir = fixture();
+    std::fs::create_dir(dir.path().join("drafts")).expect("create dir");
+    std::fs::write(dir.path().join("drafts").join("hidden.md"), "# Hidden\n")
+        .expect("write hidden doc");
+    std::fs::write(
+        dir.path().join(CONFIG_FILE_NAME),
+        r#"{"home": "drafts/hidden.md", "exclude": ["drafts"]}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+    let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+
+    let (outcome, _, stderr) = execute(&options);
+    outcome.expect("a warning does not fail the build");
+
+    assert!(
+        stderr.contains("config: home 'drafts/hidden.md' does not match any document"),
+        "{stderr}"
+    );
+    assert!(
+        !shell_of(&out).contains(r#""home""#),
+        "the fallback keeps the payload's old shape"
+    );
+}
+
+#[test]
+fn a_malformed_exclude_list_aborts_the_build() {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join(CONFIG_FILE_NAME),
+        r#"{"exclude": ["../outside"]}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+    let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+
+    let (outcome, _, _) = execute(&options);
+
+    let error = outcome.expect_err("an escaping exclusion is a hard error");
+    assert!(
+        error.to_string().contains("'exclude' entry"),
+        "unexpected message: {error}"
+    );
+    assert!(!out.exists(), "a refused build writes nothing");
+}
+
+#[test]
 fn an_initialized_configuration_builds_without_warnings() {
     for format in OutputFormat::ALL {
         let dir = fixture();

@@ -171,27 +171,39 @@ A successful build prints a summary line and reports diagnostics on stderr;
 ### Configuration file
 
 A site can carry an optional `.wikicc.json` in the **input folder root**. The
-file is JSON and currently knows one key:
+file is JSON and knows two keys:
 
 | Key | Meaning |
 | --- | --- |
 | `home` | Document the reader opens at an empty or unknown address [default: the first document] |
+| `exclude` | Directories whose entire subtrees stay out of the site [default: none] |
 
-The value is a document id — the path relative to the input folder, `/`
+`home` is a document id — the path relative to the input folder, `/`
 separated, extension included — and a missing `.md` (or `.markdown`) suffix is
 completed, so `"home": "intro"` addresses `intro.md`. Explicit links are never
 redirected: the setting only decides what the opening page shows, and the
 sidebar, graph and search see the same document they always did.
 
+`exclude` lists directories relative to the input folder; each pruned
+directory takes its documents and subfolders with it, so drafts and private
+notes never reach the payload, the search index or the link graph. Entries
+are normalized like `home` values — trimmed, `\` read as `/`, a leading `./`
+and a trailing `/` dropped — and match exactly: `"drafts"` prunes the input
+folder's own `drafts` directory, not `guide/drafts`. The build reports how
+many directories were pruned as a note line.
+
 ```json
 {
-  "home": "guide/getting-started.md"
+  "home": "guide/getting-started.md",
+  "exclude": ["drafts", "archive/old"]
 }
 ```
 
 - A `home` that matches no document is a warning — the build still succeeds
   and the reader falls back to the first document; `--strict` turns it into a
   failure.
+- An `exclude` entry that escapes the input folder (`..`) or cannot match any
+  directory (empty) fails the build for the same reason a broken `home` would.
 - An unreadable or invalid file fails the build: a broken instruction must
   not be silently ignored.
 - Unknown keys warn, so a typo never silently changes nothing.
@@ -204,7 +216,8 @@ key unset:
 
 ```json
 {
-  "home": null
+  "home": null,
+  "exclude": null
 }
 ```
 

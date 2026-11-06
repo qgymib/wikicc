@@ -1,11 +1,16 @@
 //! Site configuration file: `.wikicc.json` in the input folder root.
 //!
-//! The file is optional and currently carries one key, `home`: the document
-//! the reader shows when it is opened at an empty or unknown address. The
-//! value is a document id — the path relative to the input folder, `/`
-//! separated, extension included — with one lenience: a missing `.md` (or
-//! `.markdown`) suffix is completed, so `"home": "intro"` addresses
-//! `intro.md`.
+//! The file is optional and carries two keys:
+//!
+//! - `home`: the document the reader shows when it is opened at an empty or
+//!   unknown address. The value is a document id — the path relative to the
+//!   input folder, `/` separated, extension included — with one lenience: a
+//!   missing `.md` (or `.markdown`) suffix is completed, so
+//!   `"home": "intro"` addresses `intro.md`.
+//! - `exclude`: a list of directories, relative to the input folder, whose
+//!   entire subtrees stay out of the site — drafts, private notes, a scratch
+//!   folder. Entries are `/`-separated directory paths (`\` is read as `/`,
+//!   a leading `./` and a trailing `/` are dropped) and match exactly.
 //!
 //! Failure policy follows the file's role as an explicit build instruction:
 //!
@@ -50,6 +55,9 @@ pub struct SiteConfig {
     /// The `home` value exactly as written, before it is matched against the
     /// scanned document ids.
     pub home: Option<String>,
+    /// The `exclude` entries, normalized (trimmed, `\` read as `/`, a leading
+    /// `./` and a trailing `/` dropped) and deduplicated; empty when unset.
+    pub exclude: Vec<String>,
     /// Messages collected while reading the file, in key order.
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -123,7 +131,7 @@ pub fn load(input: &Path) -> Result<SiteConfig> {
 /// through [`parse`], so the default content can never drift away from what
 /// the loader accepts.
 pub fn template() -> &'static str {
-    "{\n  \"home\": null\n}\n"
+    "{\n  \"home\": null,\n  \"exclude\": null\n}\n"
 }
 
 /// Write the default configuration file into `dir` and report it.
@@ -197,6 +205,15 @@ fn parse(bytes: &[u8], path: &Path) -> Result<SiteConfig> {
             ("home", _) => {
                 return Err(Error::InvalidInput("'home' must be a string".to_string()));
             }
+            ("exclude", Value::Null) => {}
+            ("exclude", Value::Array(entries)) => {
+                config.exclude = normalize_excludes(&entries)?;
+            }
+            ("exclude", _) => {
+                return Err(Error::InvalidInput(
+                    "'exclude' must be an array of strings".to_string(),
+                ));
+            }
             (unknown, _) => {
                 config.diagnostics.push(Diagnostic::warning(format!(
                     "{DIAGNOSTIC_PREFIX} unknown key '{unknown}' ignored"
@@ -208,14 +225,53 @@ fn parse(bytes: &[u8], path: &Path) -> Result<SiteConfig> {
     Ok(config)
 }
 
-/// Normalize a `home` value for matching: trimmed, `/`-separated, without a
-/// leading `./`.
-fn normalize_candidate(raw: &str) -> String {
+/// Normalize a `home` value or an `exclude` entry for matching: trimmed,
+/// `/`-separated, without a leading `./`.
+pub(crate) fn normalize_candidate(raw: &str) -> String {
     let mut candidate = raw.trim().replace('\\', "/");
     while let Some(rest) = candidate.strip_prefix("./") {
         candidate = rest.to_string();
     }
     candidate
+}
+
+/// Normalize and validate the `exclude` entries.
+///
+/// Each entry becomes a `/`-separated directory path relative to the input
+/// folder: trimmed, `\` read as `/`, a leading `./` and any trailing `/`
+/// dropped. An entry that normalizes to nothing, or that carries an empty,
+/// `.` or `..` component, is a hard error — an exclusion that escapes the
+/// input folder or cannot match any directory would silently do nothing, and
+/// a broken instruction must not look like it worked. Duplicates keep their
+/// first occurrence, so the order the author wrote is the order that counts.
+fn normalize_excludes(entries: &[Value]) -> Result<Vec<String>> {
+    let mut excludes: Vec<String> = Vec::new();
+    for entry in entries {
+        let Value::String(raw) = entry else {
+            return Err(Error::InvalidInput(
+                "'exclude' entries must be strings".to_string(),
+            ));
+        };
+        let candidate = normalize_candidate(raw);
+        let candidate = candidate.trim_end_matches('/');
+        if candidate.is_empty() {
+            return Err(Error::InvalidInput(
+                "'exclude' entries must be non-empty directory paths".to_string(),
+            ));
+        }
+        if candidate
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+        {
+            return Err(Error::InvalidInput(format!(
+                "'exclude' entry '{candidate}' is not a directory path inside the input folder"
+            )));
+        }
+        if !excludes.iter().any(|known| known == candidate) {
+            excludes.push(candidate.to_string());
+        }
+    }
+    Ok(excludes)
 }
 
 #[cfg(test)]
@@ -286,6 +342,81 @@ mod tests {
         let error = parse_text(r#"{"home": 3}"#).expect_err("a number is not a home");
 
         assert_eq!(error.to_string(), "'home' must be a string");
+    }
+
+    #[test]
+    fn a_null_exclude_is_unset() {
+        let config = parse_text(r#"{"exclude": null}"#).expect("valid config");
+
+        assert!(config.exclude.is_empty());
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn an_empty_exclude_list_is_accepted() {
+        let config = parse_text(r#"{"exclude": []}"#).expect("valid config");
+
+        assert!(config.exclude.is_empty());
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn exclude_entries_are_normalized_and_deduplicated() {
+        let config = parse_text(
+            r#"{"exclude": [" guide\\drafts ", "./scratch/", "a/b.md", "guide\\drafts"]}"#,
+        )
+        .expect("valid config");
+
+        assert_eq!(config.exclude, ["guide/drafts", "scratch", "a/b.md"]);
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_non_array_exclude_is_a_hard_error() {
+        let error = parse_text(r#"{"exclude": "drafts"}"#).expect_err("a string is not a list");
+
+        assert_eq!(error.to_string(), "'exclude' must be an array of strings");
+    }
+
+    #[test]
+    fn a_non_string_exclude_entry_is_a_hard_error() {
+        let error = parse_text(r#"{"exclude": [3]}"#).expect_err("a number is not a path");
+
+        assert_eq!(error.to_string(), "'exclude' entries must be strings");
+    }
+
+    #[test]
+    fn an_empty_exclude_entry_is_a_hard_error() {
+        for text in [
+            r#"{"exclude": [""]}"#,
+            r#"{"exclude": ["   "]}"#,
+            r#"{"exclude": ["./"]}"#,
+            r#"{"exclude": ["/"]}"#,
+        ] {
+            let error = parse_text(text).expect_err("an empty entry cannot match anything");
+
+            assert_eq!(
+                error.to_string(),
+                "'exclude' entries must be non-empty directory paths"
+            );
+        }
+    }
+
+    #[test]
+    fn exclude_entries_may_not_escape_or_wander() {
+        for text in [
+            r#"{"exclude": [".."]}"#,
+            r#"{"exclude": ["guide/../drafts"]}"#,
+            r#"{"exclude": ["a//b"]}"#,
+            r#"{"exclude": ["guide/./drafts"]}"#,
+        ] {
+            let error = parse_text(text).expect_err("escaping entries are rejected");
+
+            assert!(
+                error.to_string().starts_with("'exclude' entry '"),
+                "unexpected message: {error}"
+            );
+        }
     }
 
     #[test]
@@ -429,6 +560,7 @@ mod tests {
     fn home_resolves_to_the_exact_id_first() {
         let config = SiteConfig {
             home: Some("guide/intro.md".to_string()),
+            exclude: Vec::new(),
             diagnostics: Vec::new(),
         };
 
@@ -443,6 +575,7 @@ mod tests {
         for (value, expected) in [("intro", "intro.md"), ("intro.markdown", "intro.markdown")] {
             let config = SiteConfig {
                 home: Some(value.to_string()),
+                exclude: Vec::new(),
                 diagnostics: Vec::new(),
             };
 
@@ -457,6 +590,7 @@ mod tests {
     fn home_prefers_the_exact_id_over_a_completed_one() {
         let config = SiteConfig {
             home: Some("intro".to_string()),
+            exclude: Vec::new(),
             diagnostics: Vec::new(),
         };
 
@@ -476,6 +610,7 @@ mod tests {
         ] {
             let config = SiteConfig {
                 home: Some(value.to_string()),
+                exclude: Vec::new(),
                 diagnostics: Vec::new(),
             };
 
@@ -489,6 +624,7 @@ mod tests {
     fn an_unknown_home_warns_and_falls_back_to_none() {
         let config = SiteConfig {
             home: Some("gone.md".to_string()),
+            exclude: Vec::new(),
             diagnostics: Vec::new(),
         };
 

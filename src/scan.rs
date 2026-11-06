@@ -17,6 +17,7 @@ use std::path::{Component, Path, PathBuf};
 
 use walkdir::{DirEntry, WalkDir};
 
+use crate::config::normalize_candidate;
 use crate::error::{Error, Result};
 use crate::options::{normalize, path_components};
 
@@ -137,18 +138,48 @@ impl ScanReport {
 /// Unreadable entries and non-UTF-8 files become warnings so a single bad file
 /// cannot abort the build. Only a failure to read the input root itself is a
 /// hard [`Error`].
+///
+/// Directories named by the configuration's `exclude` key are pruned by
+/// [`scan_with`]; this wrapper scans everything else.
 pub fn scan(input: &Path, out: &Path) -> Result<ScanReport> {
+    scan_with(input, out, &[])
+}
+
+/// [`scan`] with configuration-driven directory exclusions.
+///
+/// Each entry names a directory relative to the input folder and is
+/// normalized like a `home` value — trimmed, `\` read as `/`, a leading
+/// `./` and any trailing `/` dropped — then prunes exactly the directory it
+/// names, subtree included. Entries that normalize to nothing or carry
+/// `.`/`..` components never match: [`crate::config`] rejects those before
+/// they get here, so the lenient behaviour only guards direct callers. The
+/// report counts how many directories the entries actually pruned.
+pub fn scan_with(input: &Path, out: &Path, excludes: &[String]) -> Result<ScanReport> {
+    let excluded: Vec<Vec<String>> = excludes
+        .iter()
+        .filter_map(|entry| directory_components(entry))
+        .collect();
     let out = normalize(out);
     let mut docs: Vec<SourceDoc> = Vec::new();
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut ignored_files = 0usize;
     let mut skipped_links = 0usize;
 
+    let mut excluded_dirs = 0usize;
     let walker = WalkDir::new(input)
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(|entry| keep_entry(entry, &out));
+        .filter_entry(|entry| {
+            if !keep_entry(entry, &out) {
+                return false;
+            }
+            if entry.file_type().is_dir() && is_excluded(entry, input, &excluded) {
+                excluded_dirs += 1;
+                return false;
+            }
+            true
+        });
 
     for entry in walker {
         let entry = match entry {
@@ -221,6 +252,12 @@ pub fn scan(input: &Path, out: &Path) -> Result<ScanReport> {
     docs.sort_by(|left, right| left.id.as_bytes().cmp(right.id.as_bytes()));
 
     // Aggregated diagnostics always land in this order, after traversal ones.
+    if excluded_dirs > 0 {
+        diagnostics.push(Diagnostic::note(format!(
+            "excluded {}",
+            count_phrase(excluded_dirs, "directory", "directories")
+        )));
+    }
     if skipped_links > 0 {
         diagnostics.push(Diagnostic::note(format!(
             "skipped {} (not followed)",
@@ -320,6 +357,46 @@ fn keep_entry(entry: &DirEntry, out: &Path) -> bool {
         return false;
     }
     !is_same_or_descendant(&normalize(entry.path()), out)
+}
+
+/// Components of an `exclude` entry, or `None` when it can never match.
+///
+/// The entry is normalized like a configuration value (trimmed, `\` read as
+/// `/`, a leading `./` and any trailing `/` dropped); entries that come out
+/// empty or carry an empty, `.` or `..` component are ignored —
+/// [`crate::config`] rejects those, so this only guards direct callers. The
+/// components go through [`path_components`], so matching follows the same
+/// platform case rules as every other path comparison in the crate.
+fn directory_components(entry: &str) -> Option<Vec<String>> {
+    let candidate = normalize_candidate(entry);
+    let candidate = candidate.trim_end_matches('/');
+    if candidate.is_empty()
+        || candidate
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return None;
+    }
+    Some(path_components(Path::new(candidate)))
+}
+
+/// Whether a walk entry is one of the excluded directories.
+///
+/// Only directories below the input root can match: the entry's path
+/// relative to the root is compared component by component, in full, so an
+/// entry `drafts` prunes `<input>/drafts` and not `<input>/guide/drafts`.
+fn is_excluded(entry: &DirEntry, input: &Path, excludes: &[Vec<String>]) -> bool {
+    if excludes.is_empty() {
+        return false;
+    }
+    let Ok(relative) = entry.path().strip_prefix(input) else {
+        return false;
+    };
+    let components = path_components(relative);
+
+    excludes
+        .iter()
+        .any(|excluded| excluded.len() == components.len() && *excluded == components)
 }
 
 /// Whether `path` equals `ancestor` or lives below it, comparing components.
@@ -587,6 +664,135 @@ mod tests {
         let report = scan(dir.path(), elsewhere.path()).expect("scan");
 
         assert_eq!(ids(&report), ["keep.md"]);
+    }
+
+    #[test]
+    fn excluded_directories_are_pruned_and_counted() {
+        let dir = site(&[
+            ("keep.md", "# Keep\n"),
+            ("drafts/wip.md", "# Wip\n"),
+            ("drafts/deep/old.md", "# Old\n"),
+            ("guide/drafts/note.md", "# Note\n"),
+        ]);
+        let report = scan_with(
+            dir.path(),
+            &dir.path().join("dist"),
+            &["drafts".to_string()],
+        )
+        .expect("scan");
+
+        assert_eq!(
+            ids(&report),
+            ["guide/drafts/note.md", "keep.md"],
+            "an entry matches exactly the directory it names, not same-named ones below it"
+        );
+        assert_eq!(
+            messages(&report),
+            ["note: excluded 1 directory".to_string()]
+        );
+    }
+
+    #[test]
+    fn nested_exclude_entries_match_only_their_own_path() {
+        let dir = site(&[
+            ("keep.md", "# Keep\n"),
+            ("guide/drafts/note.md", "# Note\n"),
+            ("archive/guide/drafts/note.md", "# Old note\n"),
+        ]);
+        let report = scan_with(
+            dir.path(),
+            &dir.path().join("dist"),
+            &["guide/drafts".to_string()],
+        )
+        .expect("scan");
+
+        assert_eq!(
+            ids(&report),
+            ["archive/guide/drafts/note.md", "keep.md"],
+            "a nested entry prunes only the directory at that relative path"
+        );
+    }
+
+    #[test]
+    fn several_exclude_directories_are_counted_together() {
+        let dir = site(&[
+            ("keep.md", "# Keep\n"),
+            ("drafts/wip.md", "# Wip\n"),
+            ("private/secret.md", "# Secret\n"),
+        ]);
+        let report = scan_with(
+            dir.path(),
+            &dir.path().join("dist"),
+            &["drafts".to_string(), "private".to_string()],
+        )
+        .expect("scan");
+
+        assert_eq!(ids(&report), ["keep.md"]);
+        assert_eq!(
+            messages(&report),
+            ["note: excluded 2 directories".to_string()]
+        );
+    }
+
+    #[test]
+    fn exclude_entries_are_normalized_before_matching() {
+        let dir = site(&[("keep.md", "# Keep\n"), ("drafts/wip.md", "# Wip\n")]);
+
+        for entry in [r"drafts\", "./drafts/", " drafts "] {
+            let report = scan_with(dir.path(), &dir.path().join("dist"), &[entry.to_string()])
+                .expect("scan");
+
+            assert_eq!(ids(&report), ["keep.md"], "entry: {entry}");
+        }
+    }
+
+    #[test]
+    fn excluded_directories_drop_their_non_markdown_files_too() {
+        let dir = site(&[
+            ("keep.md", "# Keep\n"),
+            ("drafts/wip.md", "# Wip\n"),
+            ("drafts/scratch.txt", "text"),
+        ]);
+        let report = scan_with(
+            dir.path(),
+            &dir.path().join("dist"),
+            &["drafts".to_string()],
+        )
+        .expect("scan");
+
+        assert_eq!(ids(&report), ["keep.md"]);
+        assert_eq!(report.ignored_files, 0, "pruned files are not counted");
+        assert_eq!(
+            messages(&report),
+            ["note: excluded 1 directory".to_string()]
+        );
+    }
+
+    #[test]
+    fn unusable_exclude_entries_never_match() {
+        let dir = site(&[("keep.md", "# Keep\n"), ("drafts/wip.md", "# Wip\n")]);
+
+        for entry in ["..", "", "a//b"] {
+            let report = scan_with(dir.path(), &dir.path().join("dist"), &[entry.to_string()])
+                .expect("scan");
+
+            assert_eq!(ids(&report), ["drafts/wip.md", "keep.md"], "entry: {entry}");
+            assert!(messages(&report).is_empty(), "entry: {entry}");
+        }
+    }
+
+    #[test]
+    fn the_input_root_cannot_be_excluded() {
+        // The configuration layer rejects such entries; a direct caller gets
+        // a no-op rather than a silently empty scan.
+        let dir = site(&[("keep.md", "# Keep\n")]);
+
+        for entry in [".", "/", "//"] {
+            let report = scan_with(dir.path(), &dir.path().join("dist"), &[entry.to_string()])
+                .expect("scan");
+
+            assert_eq!(ids(&report), ["keep.md"], "entry: {entry}");
+        }
     }
 
     #[test]

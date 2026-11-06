@@ -4,8 +4,9 @@
 //! `docs/design.md` into one run. The order is a contract:
 //!
 //! 1. validate the options (input tree and output-directory guards),
-//! 2. scan the input directory,
-//! 3. read the optional `.wikicc.json` configuration from the input root,
+//! 2. read the optional `.wikicc.json` configuration from the input root,
+//! 3. scan the input directory, pruning the directories its `exclude` key
+//!    names,
 //! 4. assemble the payload and resolve links and assets,
 //! 5. report every diagnostic on stderr (scan, then config, then build),
 //! 6. apply the `--strict` gate,
@@ -94,13 +95,15 @@ pub fn run(options: &Options, out: &mut dyn Write, err: &mut dyn Write) -> Resul
 
     options.validate()?;
 
-    let report = scan::scan(&options.input, &options.out)?;
-
     // The configuration is an explicit instruction, so a file that cannot be
     // read or understood aborts the build here, before anything is reported
-    // or written; a `home` that matches no document only warns. The file is
-    // read after the scan because resolving `home` needs the document ids.
+    // or written. It is read before the scan because the `exclude` entries
+    // must be in effect while the tree is walked; resolving `home` still
+    // waits for the scan, since it needs the document ids. A `home` that
+    // matches no document only warns.
     let site_config = config::load(&options.input)?;
+    let report = scan::scan_with(&options.input, &options.out, &site_config.exclude)?;
+
     let ids: Vec<String> = report.docs.iter().map(|doc| doc.id.clone()).collect();
     let (home, resolved_diagnostics) = site_config.resolve_home(&ids);
     let mut config_diagnostics = site_config.diagnostics;
@@ -511,6 +514,33 @@ mod tests {
         assert!(
             artifact.contains(r#""home":"intro.md""#),
             "the payload carries the configured home"
+        );
+    }
+
+    #[test]
+    fn the_configuration_excludes_directories_from_the_scan() {
+        let dir = fixture();
+        std::fs::create_dir(dir.path().join("drafts")).expect("create directory");
+        std::fs::write(dir.path().join("drafts").join("wip.md"), "# Wip\n").expect("write draft");
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"exclude": ["drafts"]}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let options = options(dir.path(), &out, OutputFormat::SingleHtml);
+
+        let (outcome, _, stderr) = execute(&options);
+        let outcome = outcome.expect("the build succeeds");
+
+        assert_eq!(
+            outcome.stats.documents, 1,
+            "the excluded draft is not compiled"
+        );
+        assert!(stderr.contains("note: excluded 1 directory"), "{stderr}");
+        assert!(
+            !stderr.contains("config:"),
+            "a usable exclude list is silent: {stderr}"
         );
     }
 
