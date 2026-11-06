@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Entries describe what a user of the binary can observe, not how the change was
 implemented; the rules behind them live in `docs/design.md`.
 
+## [2.0.0] - 2026-11-06
+
+Second release: search becomes a panel with previews, math is typeset, links
+preview on hover, chapters fold, and a site can be built as a static `pages`
+artifact configured by a `.wikicc.json`.
+
+### Added
+
+- A search panel replaces the sidebar search field. It searches the current
+  document (local) or the whole folder (global), lists one row per occurrence
+  with a one-line context, and previews the passage with every hit marked,
+  including hits inside inline code. Enter opens a result at its place in the
+  article; the arrow keys keep the selected row in sight and survive a scope
+  switch.
+- Math typesetting: inline `$…$` and block `$$…$$` formulas are rendered with
+  the bundled KaTeX, offline like everything else.
+- Hover previews cover whole documents: a link to another document previews
+  the document, a link to one of its chapters previews that chapter. A preview
+  opens at once with a loading state; when it cannot be built, the panel shows
+  a failure notice with a retry instead of closing. Scrolling inside the
+  preview never scrolls the article underneath.
+- Chapter folding: an arrow beside a heading folds that chapter — and
+  everything nested under it — down to its title, and unfolds it again. The
+  arrows appear when the pointer is on a heading, and folding is never
+  remembered.
+- The `pages` output format: a static site for an HTTP host such as GitHub
+  Pages. The page carries the reader and a manifest only; each document is a
+  JSON chunk fetched on navigation, and the global search corpus is fetched on
+  first use, so first paint does not grow with the size of the folder.
+- An optional `.wikicc.json` in the input folder root configures the opening
+  document (`home`), excluded directories (`exclude`), the output directory
+  (`out`), the format, the title and `strict`; every command-line flag
+  overrides the file. `wikicc --init-config` writes a starter file without
+  overwriting.
+- `--exclude` keeps directories out of the site from the command line.
+- Inlined `data:` asset links open as blob URLs in a new tab.
+- The link graph can switch between the whole folder (global) and the current
+  document's neighbourhood (local).
+- Destinations of inline images and links may contain spaces.
+
+### Changed
+
+- Multi-character CJK queries match consecutive text only: the characters of
+  a query no longer scatter across the document as separate hits.
+- The search preview shows the passage alone, without a title and path banner,
+  and centers the picked hit.
+- The link graph is tighter: the frame adapts to the content, and nodes and
+  labels are smaller.
+- Release archives are named after the system that built them and the
+  architecture: `wikicc-ubuntu-amd64-v<version>-<sha>.tar.gz` and
+  `wikicc-windows-amd64-v<version>-<sha>.zip`.
+
+### Fixed
+
+- Reference-style links no longer silently degrade to plain text in
+  citation-dense documents.
+- The search preview lands on the right passage after a hit inside a code
+  block.
+- The search field shows a single clear button: the browser's native clear
+  cross is hidden.
+- The reader's bundled JavaScript and CSS are normalized to LF at build time,
+  so two builds of one input stay byte-identical whatever the checkout's line
+  endings.
+
 ## [1.0.0] - 2026-11-03
 
 First stable release: the features the reader offers.

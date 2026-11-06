@@ -1520,7 +1520,7 @@ dependencies = [
 
 [[package]]
 name = "wikicc"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "assert_cmd",
  "base64",
