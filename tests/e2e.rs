@@ -1300,6 +1300,37 @@ fn the_page_carries_the_hover_preview() {
 }
 
 #[test]
+fn the_hover_preview_panel_offers_resize_handles() {
+    // The panel is a window onto a chapter, and a window is resizable: strips
+    // over the right edge, the bottom edge and the corner carry the cursors a
+    // reader recognises. Asserted as a contract because a cursor that never
+    // shows is invisible once it is wrong — the handle is still there, and
+    // still works, and nothing else tells.
+    let css = SHELL_CSS;
+
+    let shared = rule_of(css, ".preview-resize {");
+    assert_eq!(declaration(shared, "position"), Some("absolute"));
+
+    let east = rule_of(css, ".preview-resize[data-dir=\"e\"] {");
+    assert_eq!(declaration(east, "cursor"), Some("ew-resize"));
+    let south = rule_of(css, ".preview-resize[data-dir=\"s\"] {");
+    assert_eq!(declaration(south, "cursor"), Some("ns-resize"));
+    let corner = rule_of(css, ".preview-resize[data-dir=\"se\"] {");
+    assert_eq!(declaration(corner, "cursor"), Some("nwse-resize"));
+
+    // A resize moves a frame, not a selection, so the chapter's text must not
+    // select under the hand — the same suppression a drag of the head gets.
+    let resizing = rule_of(css, ".preview-popover[data-resizing] {");
+    assert_eq!(declaration(resizing, "user-select"), Some("none"));
+
+    // A notice, a loading panel and an error are hints about a link, not
+    // windows onto a chapter: they keep the size their sentence gives them
+    // and wear no handles.
+    let notice = rule_of(css, ".preview-popover[data-missing] .preview-resize,");
+    assert_eq!(declaration(notice, "display"), Some("none"));
+}
+
+#[test]
 fn a_block_reference_addresses_the_anchor_its_document_emits() {
     let bundle = build(&fixture_root(), "Fixture");
     let readme = bundle

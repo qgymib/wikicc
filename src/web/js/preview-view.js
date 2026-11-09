@@ -59,6 +59,15 @@
  * it forgets both the pin and the place, so the next hover is anchored to its
  * own link again.
  *
+ * The size can be taken in hand too: the right edge, the bottom edge and the
+ * bottom-right corner of the frame are handles, each answering one axis — east
+ * the width, south the height, the corner both. A press on one claims the
+ * panel the way a press on the head does, and past the same threshold the
+ * frame follows the hand, bounded by a floor on each dimension and by the edge
+ * of the viewport. The size a resize leaves behind holds until the panel is
+ * closed, because a size the reader chose belongs to the showing they chose it
+ * for. A notice wears no handles: it is a hint about a link, not a window.
+ *
  * The panel is appended to `document.body` and positioned with `position:
  * fixed`, the same way the table filter panel works: the document body clips
  * overflow in places, and a panel nested inside it would be cut off. Only one
@@ -182,6 +191,29 @@ export var DRAG_LABEL = "Drag to move";
  */
 export var DRAGGING_ATTRIBUTE = "data-dragging";
 
+/** Class of the three strips the panel is resized by. */
+export var RESIZE_CLASS = "preview-resize";
+
+/** Attribute naming the axis one strip resizes: `e`, `s` or `se`. */
+export var RESIZE_DIRECTION_ATTRIBUTE = "data-dir";
+
+/**
+ * Attribute marking the popover as being resized.
+ *
+ * The stylesheet reads it for the text-selection suppression a drag gets; as
+ * with the dragging mark, nothing in the module reads it back.
+ */
+export var RESIZE_ATTRIBUTE = "data-resizing";
+
+/** Narrowest the panel may become, on the east edge or at the corner. */
+export var MIN_WIDTH_PX = 240;
+
+/** Shortest the panel may become, on the south edge or at the corner. */
+export var MIN_HEIGHT_PX = 120;
+
+/** The directions the handles resize, in the order the panel builds them. */
+var RESIZE_DIRECTIONS = ["e", "s", "se"];
+
 /** Class of the column holding the title and the path. */
 export var HEAD_TEXT_CLASS = "preview-head-text";
 
@@ -300,6 +332,17 @@ export function createPreviewView(options) {
   // leaves it alone from then on; `close()` forgets it, so the next hover is
   // anchored to its own link again.
   var moved = false;
+  // The resize press in progress: which edge went down, where the pointer
+  // went down, and the geometry the panel had when it did. `null` means no
+  // press is in progress; like a drag, the press becomes a resize only once
+  // the pointer has travelled past the threshold.
+  var resizing = null;
+  // Whether a resize has started applying, so the frame's mark and the
+  // hand-placed flag are written once per gesture, not on every move.
+  var resizingActive = false;
+  // The three handles, each kept with the listener it was built with, because
+  // `dispose` takes both off the page.
+  var resizeHandles = [];
 
   function view() {
     return globalThis;
@@ -443,6 +486,12 @@ export function createPreviewView(options) {
     panel.appendChild(loading);
     panel.appendChild(error);
     panel.appendChild(body);
+    // The handles go on last: they are absolutely positioned strips over the
+    // panel's own edges and must paint above the body's content, or the edge
+    // of a wide table would take the grip away.
+    RESIZE_DIRECTIONS.forEach(function (direction) {
+      panel.appendChild(resizeHandle(direction));
+    });
     document.body.appendChild(panel);
 
     // Entering the panel cancels a pending close; leaving it starts one.
@@ -809,6 +858,199 @@ export function createPreviewView(options) {
       panel.removeAttribute(DRAGGING_ATTRIBUTE);
     }
     unlistenForDrag();
+  }
+
+  /**
+   * One handle: a strip the panel is resized by, wired to the direction it
+   * was built for.
+   *
+   * The direction travels in a closure rather than being read back off the
+   * element: a listener is invoked with `this` unset under a module and the
+   * event's target is the handle only by convention, so the factory is what
+   * keeps the wiring honest. Element and listener are kept on `resizeHandles`
+   * together, because `dispose` takes both off the page.
+   */
+  function resizeHandle(direction) {
+    var element = document.createElement("div");
+    element.className = RESIZE_CLASS;
+    element.setAttribute(RESIZE_DIRECTION_ATTRIBUTE, direction);
+
+    var listener = function (event) {
+      onResizePointerDown(direction, event);
+    };
+    element.addEventListener("pointerdown", listener);
+
+    resizeHandles.push({ element: element, listener: listener });
+
+    return element;
+  }
+
+  /**
+   * A press on a handle: the reader asks to change the panel's size.
+   *
+   * The panel is claimed at once, before a single pixel of movement, the way
+   * a press on the head claims it — a resize crosses the same empty page a
+   * drag does, and a panel that closed mid-gesture would take the gesture's
+   * meaning with it. The geometry the resize works from is read here, at the
+   * press, so every move that follows is a delta against what the panel was,
+   * not against wherever a reflow has taken it.
+   *
+   * The default action is cancelled so the edge of the chapter under the
+   * strip is not selected while the frame follows the hand; the event still
+   * bubbles, so the click a release derives reaches `onPanelClick` as usual.
+   */
+  function onResizePointerDown(direction, event) {
+    if (!event || event.button) {
+      return;
+    }
+
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+
+    setPinned(true);
+    // A new press replaces whatever resize was in progress.
+    endResize();
+
+    var origin = panelOrigin();
+    resizing = {
+      dir: direction,
+      x: event.clientX,
+      y: event.clientY,
+      left: origin.left,
+      top: origin.top,
+      width: panel.offsetWidth || MIN_WIDTH_PX,
+      height: panel.offsetHeight || MIN_HEIGHT_PX,
+    };
+    listenForResize();
+  }
+
+  /**
+   * Watch the whole page for the rest of the gesture, the way a drag is
+   * watched: the pointer regularly leaves the panel mid-resize, and a
+   * listener on the strip would stop following there.
+   */
+  function listenForResize() {
+    var page = windowTarget();
+    if (!page || typeof page.addEventListener !== "function") {
+      return;
+    }
+    page.addEventListener("pointermove", onResizeMove);
+    page.addEventListener("pointerup", onResizeEnd);
+    page.addEventListener("pointercancel", onResizeEnd);
+  }
+
+  function unlistenForResize() {
+    var page = windowTarget();
+    if (!page || typeof page.removeEventListener !== "function") {
+      return;
+    }
+    page.removeEventListener("pointermove", onResizeMove);
+    page.removeEventListener("pointerup", onResizeEnd);
+    page.removeEventListener("pointercancel", onResizeEnd);
+  }
+
+  function onResizeMove(event) {
+    if (!resizing || !event) {
+      return;
+    }
+
+    // Each handle answers one axis: east the width's, south the height's,
+    // the corner both. The axis a handle does not answer reads as no movement
+    // at all, so its share of the threshold never trips on noise alone.
+    var dx = isWidthAxis(resizing.dir) ? event.clientX - resizing.x : 0;
+    var dy = isHeightAxis(resizing.dir) ? event.clientY - resizing.y : 0;
+
+    if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) {
+      return;
+    }
+
+    if (!resizingActive) {
+      resizingActive = true;
+      // A resized panel is placed by hand too: `position()` must not re-anchor
+      // it or rebuild the height a placement capped — not after the open, and
+      // not when a document a panel waits for arrives mid-gesture.
+      moved = true;
+      panel.setAttribute(RESIZE_ATTRIBUTE, "true");
+    }
+
+    applySize(dx, dy);
+  }
+
+  /** Whether `direction` answers the width: east and the corner do. */
+  function isWidthAxis(direction) {
+    return direction === "e" || direction === "se";
+  }
+
+  /** Whether `direction` answers the height: south and the corner do. */
+  function isHeightAxis(direction) {
+    return direction === "s" || direction === "se";
+  }
+
+  /**
+   * Write the size the gesture has reached, clamped to a floor on each axis
+   * and to the edge of the viewport.
+   *
+   * Only the axes the pressed handle answers are written: an east resize
+   * leaves the height to the content and to the placement that capped it, and
+   * a south resize leaves the width alone. The height is written twice, as
+   * `height` and as a `max-height` of the same pixel count, because the
+   * stylesheet's own share of the window would otherwise cap a panel the
+   * reader grew past it — and a chapter shorter than the frame simply ends
+   * the panel early, exactly as it would end a window.
+   */
+  function applySize(dx, dy) {
+    if (isWidthAxis(resizing.dir)) {
+      var viewportWidth =
+        view().innerWidth || document.documentElement.clientWidth;
+      var maxWidth = Math.max(
+        MIN_WIDTH_PX,
+        viewportWidth - resizing.left - MARGIN_PX,
+      );
+      panel.style.width =
+        Math.round(
+          Math.max(MIN_WIDTH_PX, Math.min(resizing.width + dx, maxWidth)),
+        ) + "px";
+    }
+
+    if (isHeightAxis(resizing.dir)) {
+      var viewportHeight =
+        view().innerHeight || document.documentElement.clientHeight;
+      var maxHeight = Math.max(
+        MIN_HEIGHT_PX,
+        viewportHeight - resizing.top - MARGIN_PX,
+      );
+      var height =
+        Math.round(
+          Math.max(MIN_HEIGHT_PX, Math.min(resizing.height + dy, maxHeight)),
+        ) + "px";
+      panel.style.height = height;
+      panel.style.maxHeight = height;
+    }
+  }
+
+  /**
+   * The gesture is over, wherever the pointer was released.
+   *
+   * The panel keeps the size the gesture left and the pin the press put on
+   * it: ending a resize is not a dismissal, exactly as ending a drag is not.
+   */
+  function onResizeEnd() {
+    endResize();
+  }
+
+  /**
+   * Give up the resize: drop the origin, stop watching the page and take the
+   * resizing mark off. Idempotent, because every path that can end a showing
+   * asks for it — a release, a close, a dispose, a new press.
+   */
+  function endResize() {
+    resizing = null;
+    resizingActive = false;
+    if (panel) {
+      panel.removeAttribute(RESIZE_ATTRIBUTE);
+    }
+    unlistenForResize();
   }
 
   /** The destination `link` addresses, or `null` when it is no document link. */
@@ -1195,10 +1437,11 @@ export function createPreviewView(options) {
     clearOpenTimer();
     clearCloseTimer();
     pending = null;
-    // A closed panel is nobody's: the pin goes with the content, and so does
-    // the place the reader dragged it to — the next hover is anchored to its
-    // own link rather than to where the last chapter was read.
+    // A closed panel is nobody's: the pin goes with the content, and so do
+    // the place the reader dragged it to and the size a resize gave it — the
+    // next hover is anchored to its own link at the stylesheet's size.
     endDrag();
+    endResize();
     moved = false;
     setPinned(false);
 
@@ -1223,6 +1466,11 @@ export function createPreviewView(options) {
     path.textContent = "";
     noticeChapter.textContent = "";
     noticeDoc.textContent = "";
+    // The size a resize gave the panel belongs to that showing, as the place
+    // a drag gave it does: the next hover opens at the stylesheet's size.
+    panel.style.width = "";
+    panel.style.height = "";
+    panel.style.maxHeight = "";
   }
 
   /** The document link an event started on, or `null`. */
@@ -1506,6 +1754,15 @@ export function createPreviewView(options) {
     if (head && typeof head.removeEventListener === "function") {
       head.removeEventListener("pointerdown", onHeadPointerDown);
     }
+    resizeHandles.forEach(function (handle) {
+      if (
+        handle.element &&
+        typeof handle.element.removeEventListener === "function"
+      ) {
+        handle.element.removeEventListener("pointerdown", handle.listener);
+      }
+    });
+    resizeHandles = [];
     if (panel && panel.parentNode) {
       panel.parentNode.removeChild(panel);
     }

@@ -35,11 +35,16 @@ import {
   LOADING_LABEL,
   MISSING_ATTRIBUTE,
   MISSING_LABEL,
+  MIN_HEIGHT_PX,
+  MIN_WIDTH_PX,
   PIN_ATTRIBUTE,
   PIN_CLASS,
   PIN_LABEL,
   POPOVER_CLASS,
   PREVIEW_LABEL,
+  RESIZE_ATTRIBUTE,
+  RESIZE_CLASS,
+  RESIZE_DIRECTION_ATTRIBUTE,
   UNPIN_LABEL,
   createPreviewView,
 } from "../../src/web/js/preview-view.js";
@@ -2658,4 +2663,326 @@ test("a release outside the panel ends the drag", () => {
     assert.equal(panel.style.left, left);
     assert.equal(panel.getAttribute(DRAGGING_ATTRIBUTE), null);
   });
+});
+
+/* ---------- resizing the panel by its edges ---------- */
+
+/** The panel's one handle for `direction`, or `null` when it has none. */
+function handleOf(panel, direction) {
+  const found = byClass(panel, RESIZE_CLASS).filter(function (handle) {
+    return handle.getAttribute(RESIZE_DIRECTION_ATTRIBUTE) === direction;
+  });
+
+  return found[0] || null;
+}
+
+/** A press on a resize handle, dispatched on the handle itself. */
+function pressHandle(handle, x, y) {
+  let prevented = false;
+  handle.fire("pointerdown", {
+    target: handle,
+    button: 0,
+    clientX: x,
+    clientY: y,
+    preventDefault() {
+      prevented = true;
+    },
+    stopPropagation() {},
+  });
+
+  return prevented;
+}
+
+/** Open the ordinary preview and hand back its three handles with it. */
+function openResizable(ctx) {
+  const opened = openPreview(ctx);
+  // A real element's style properties read "" before anything writes them;
+  // the stub's style is a plain object, so the axes the view may leave
+  // untouched are seeded to keep the browser's semantics.
+  opened.panel.style.width = "";
+  opened.panel.style.height = "";
+  opened.panel.style.maxHeight = "";
+  opened.panel.offsetWidth = 480;
+  opened.panel.offsetHeight = 200;
+
+  return Object.assign({}, ctx, opened, {
+    east: handleOf(opened.panel, "e"),
+    south: handleOf(opened.panel, "s"),
+    corner: handleOf(opened.panel, "se"),
+  });
+}
+
+test("the panel wears one handle per resizable edge", () => {
+  setup(function (ctx) {
+    const { panel } = openResizable(ctx);
+
+    assert.ok(handleOf(panel, "e"), "the east edge is a handle");
+    assert.ok(handleOf(panel, "s"), "the south edge is a handle");
+    assert.ok(handleOf(panel, "se"), "the corner is a handle");
+    assert.equal(
+      panel.getAttribute(RESIZE_ATTRIBUTE),
+      null,
+      "nothing is being resized yet",
+    );
+  });
+});
+
+test("dragging the east handle changes the width and leaves the height alone", () => {
+  setup(function (ctx) {
+    const { panel, east, fire } = openResizable(ctx);
+
+    pressHandle(east, 100, 110);
+    dragTo(fire, 100 + 57, 110);
+
+    assert.equal(panel.style.width, "537px");
+    assert.equal(
+      panel.style.height,
+      "",
+      "an east resize leaves the height to the content and the placement",
+    );
+    assert.equal(panel.style.maxHeight, "");
+    assert.equal(panel.getAttribute(RESIZE_ATTRIBUTE), "true");
+
+    releasePointer(fire, 157, 110);
+
+    assert.equal(
+      panel.getAttribute(RESIZE_ATTRIBUTE),
+      null,
+      "the resize is over",
+    );
+    assert.equal(
+      panel.style.width,
+      "537px",
+      "the panel keeps the size the gesture left",
+    );
+  });
+});
+
+test("dragging the south handle changes the height and leaves the width alone", () => {
+  setup(function (ctx) {
+    const { panel, south, fire } = openResizable(ctx);
+
+    pressHandle(south, 100, 110);
+    dragTo(fire, 100, 110 + 40);
+
+    assert.equal(panel.style.height, "240px");
+    assert.equal(
+      panel.style.maxHeight,
+      "240px",
+      "the stylesheet's own share of the window must not cap the reader's",
+    );
+    assert.equal(
+      panel.style.width,
+      "",
+      "a south resize leaves the width alone",
+    );
+
+    releasePointer(fire, 100, 150);
+
+    assert.equal(panel.style.height, "240px", "the height stays");
+  });
+});
+
+test("dragging the corner changes both axes at once", () => {
+  setup(function (ctx) {
+    const { panel, corner, fire } = openResizable(ctx);
+
+    pressHandle(corner, 100, 110);
+    dragTo(fire, 100 + 57, 110 + 40);
+
+    assert.equal(panel.style.width, "537px");
+    assert.equal(panel.style.height, "240px");
+    assert.equal(panel.style.maxHeight, "240px");
+
+    releasePointer(fire, 157, 150);
+  });
+});
+
+test("a press on a handle without movement changes nothing", () => {
+  setup(function (ctx) {
+    const { panel, east, fire } = openResizable(ctx);
+
+    pressHandle(east, 100, 110);
+    dragTo(fire, 100 + DRAG_THRESHOLD_PX - 1, 110);
+    releasePointer(fire, 102, 110);
+
+    assert.equal(panel.style.width, "", "a click must not nudge the frame");
+    assert.equal(panel.getAttribute(RESIZE_ATTRIBUTE), null);
+  });
+});
+
+test("a resize cannot shrink the panel below its floor", () => {
+  setup(function (ctx) {
+    const { panel, corner, fire } = openResizable(ctx);
+
+    pressHandle(corner, 100, 110);
+    dragTo(fire, 100 - 5000, 110 - 5000);
+
+    assert.equal(panel.style.width, MIN_WIDTH_PX + "px");
+    assert.equal(panel.style.height, MIN_HEIGHT_PX + "px");
+
+    releasePointer(fire, 0, 0);
+  });
+});
+
+test("a resize cannot carry the panel out of the viewport", () => {
+  setup(function (ctx) {
+    const { panel, east, south, fire } = openResizable(ctx);
+    // The stub is 480 wide and 200 tall, placed at 40/128, in a 1200 x 800
+    // window; the margin the automatic placement keeps is the one a resize
+    // keeps too.
+
+    pressHandle(east, 100, 110);
+    dragTo(fire, 100 + 5000, 110);
+    assert.equal(panel.style.width, "1150px", "1200 - 40 - 10");
+
+    releasePointer(fire, 5100, 110);
+
+    pressHandle(south, 100, 110);
+    dragTo(fire, 100, 110 + 5000);
+    assert.equal(panel.style.height, "662px", "800 - 128 - 10");
+    assert.equal(panel.style.maxHeight, "662px");
+
+    releasePointer(fire, 100, 5100);
+  });
+});
+
+test("a press on a handle claims the panel before it moves a pixel", () => {
+  setup(function (ctx) {
+    const { view, content, panel, east, clock, fire, anchor } =
+      openResizable(ctx);
+    assert.equal(panel.getAttribute(PIN_ATTRIBUTE), null);
+
+    pressHandle(east, 100, 110);
+
+    assert.equal(
+      panel.getAttribute(PIN_ATTRIBUTE),
+      "true",
+      "the press itself claims the panel",
+    );
+
+    // The pointer leaves the link on its way out of the panel: a pinned panel
+    // must not arm the close delay it is guarded against.
+    content.fire("pointerout", { target: anchor, relatedTarget: null });
+    panel.fire("pointerleave", {});
+    fire("scroll", {});
+    assert.deepEqual(
+      clock.delays(),
+      [],
+      "no delay may take a panel mid-resize away",
+    );
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+  });
+});
+
+test("a resized panel keeps its size until it is closed", () => {
+  setup(function (ctx) {
+    const { view, content, panel, corner, clock, fire } = openResizable(ctx);
+
+    pressHandle(corner, 100, 110);
+    dragTo(fire, 100 + 57, 110 + 40);
+    releasePointer(fire, 157, 150);
+
+    // A render, a scroll and the pointer leaving all leave it alone.
+    view.tag(content);
+    content.fire("pointerout", { target: content, relatedTarget: null });
+    fire("scroll", {});
+    panel.fire("pointerleave", {});
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.style.width, "537px");
+    assert.equal(panel.style.height, "240px");
+  });
+});
+
+test("closing a resized panel forgets the size", () => {
+  setup(function (ctx) {
+    const { view, content, panel, corner, clock, fire, anchor } =
+      openResizable(ctx);
+
+    pressHandle(corner, 100, 110);
+    dragTo(fire, 100 + 57, 110 + 40);
+    releasePointer(fire, 157, 150);
+    assert.notEqual(panel.style.width, "", "the resize really took");
+
+    press(buttonOf(panel, CLOSE_CLASS));
+    clock.runAll();
+    assert.equal(view.isOpen(), false);
+    assert.equal(panel.style.width, "");
+    assert.equal(panel.style.height, "");
+    assert.equal(panel.style.maxHeight, "");
+
+    // The next preview is an ordinary one, opened at the stylesheet's size.
+    content.fire("pointerover", { target: anchor, relatedTarget: null });
+    clock.runAll();
+
+    assert.equal(view.isOpen(), true);
+    assert.equal(panel.style.width, "");
+    assert.equal(panel.style.height, "");
+    assert.equal(panel.style.maxHeight, "");
+  });
+});
+
+test("a release outside the panel ends the resize", () => {
+  setup(function (ctx) {
+    const { panel, east, fire } = openResizable(ctx);
+
+    pressHandle(east, 100, 110);
+    dragTo(fire, 100 + 10, 110);
+    releasePointer(fire, 5000, 5000);
+
+    // Nothing listens any more, so a stray move cannot resize a panel nobody
+    // holds.
+    fire("pointermove", { clientX: 900, clientY: 700 });
+
+    assert.equal(panel.style.width, "490px");
+    assert.equal(panel.getAttribute(RESIZE_ATTRIBUTE), null);
+  });
+});
+
+test("a resized panel is not re-anchored when its document arrives", () => {
+  const travelling = travellingStore();
+
+  setup(
+    function ({ view, content, clock, doc, fire }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      const panel = panelOf(doc);
+      assert.equal(
+        panel.getAttribute(LOADING_ATTRIBUTE),
+        "true",
+        "the panel is up before the document is",
+      );
+      panel.style.width = "";
+      panel.style.height = "";
+      panel.style.maxHeight = "";
+      panel.offsetWidth = 480;
+      panel.offsetHeight = 200;
+
+      pressHandle(handleOf(panel, "se"), 100, 110);
+      dragTo(fire, 100 + 57, 110 + 40);
+      releasePointer(fire, 157, 150);
+      assert.equal(panel.style.width, "537px");
+
+      travelling.deliver(payload().get("guide/intro.md"));
+
+      assert.equal(view.isOpen(), true);
+      assert.match(textOf(panel), /Getting Started/);
+      assert.equal(
+        panel.style.width,
+        "537px",
+        "the fill must not re-anchor a panel placed by hand",
+      );
+      assert.equal(panel.style.height, "240px");
+      assert.equal(panel.style.maxHeight, "240px");
+    },
+    { documents: travelling.store },
+  );
 });

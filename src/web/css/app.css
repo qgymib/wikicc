@@ -1282,6 +1282,47 @@ a {
   user-select: none;
 }
 
+/* The resize handles: three strips over the right edge, the bottom edge and
+   the bottom-right corner, each wearing the cursor its axis answers to. They
+   straddle the border so the frame line itself is the grip, and they paint
+   above the body's content so the edge of a wide table cannot take it away.
+   The panel is their positioning context: it is `position: fixed`, so the
+   strips anchor to it. */
+.preview-resize {
+  position: absolute;
+  z-index: 1;
+}
+
+.preview-resize[data-dir="e"] {
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.preview-resize[data-dir="s"] {
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.preview-resize[data-dir="se"] {
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+
+/* While the frame follows the hand along an edge, the chapter's text must not
+   select under it — the same suppression a drag of the head asks for. */
+.preview-popover[data-resizing] {
+  user-select: none;
+}
+
 .preview-head-text {
   flex: 1;
   min-width: 0;
@@ -1523,7 +1564,9 @@ a {
 
 /* Only one of the roles is ever on screen: each state replaces the preview
    body rather than joining it, and the states the panel turns through while a
-   document travels are kept off it until the panel wears their attribute. */
+   document travels are kept off it until the panel wears their attribute. The
+   handles go with the body: a hint about a link is not a window, so the roles
+   that hold no chapter to resize hold no grip either. */
 .preview-popover:not([data-missing]) .preview-missing,
 .preview-popover:not([data-loading]) .preview-loading,
 .preview-popover:not([data-error]) .preview-error {
@@ -1532,7 +1575,10 @@ a {
 
 .preview-popover[data-missing] .preview-scroll,
 .preview-popover[data-loading] .preview-scroll,
-.preview-popover[data-error] .preview-scroll {
+.preview-popover[data-error] .preview-scroll,
+.preview-popover[data-missing] .preview-resize,
+.preview-popover[data-loading] .preview-resize,
+.preview-popover[data-error] .preview-resize {
   display: none;
 }
 
