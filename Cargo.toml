@@ -1,6 +1,6 @@
 [package]
 name = "wikicc"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2024"
 description = "Compile a folder of Markdown documents into a self-contained offline HTML reader"
 license = "GPL-3.0-only"

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Entries describe what a user of the binary can observe, not how the change was
 implemented; the rules behind them live in `docs/design.md`.
 
+## [2.0.1] - 2026-11-09
+
+### Fixed
+
+- Search results and their preview agree: the list is built in reading order,
+  so a hit inside a code block opens at that very block, and the selected row
+  always points at the passage the preview shows.
+- A search hit marks the typed fragment only instead of widening to the whole
+  word: searching `read` marks `read` in `reader` rather than the word. The
+  number of hits is unchanged.
+
+### Changed
+
+- A search result's context line is cut to the width the row really has, so
+  wide characters such as CJK no longer overflow it or end it early; the line
+  follows the panel width and the font size as they change.
+
 ## [2.0.0] - 2026-11-06
 
 Second release: search becomes a panel with previews, math is typeset, links
