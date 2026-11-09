@@ -849,12 +849,25 @@ a {
     background-color 140ms ease;
 }
 
-/* The copied state is the button's own word for what just happened: the same
-   glyph in the accent's colour, the labels the assistive tech reads moved
-   over by the script, and a moment later everything back as it was. */
+/* The copied state is the button's own word for what just happened: the glyph
+   turns from the sheets into a check, the accent's colour takes over, the
+   labels the assistive tech reads move over by the script, and a moment later
+   everything is back as it was. */
 .doc-body .code-copy[data-copied] {
   color: var(--accent);
   border-color: var(--accent-soft);
+}
+
+.code-copy svg .code-copy-check {
+  display: none;
+}
+
+.code-copy[data-copied] svg .code-copy-check {
+  display: block;
+}
+
+.code-copy[data-copied] svg .code-copy-sheets {
+  display: none;
 }
 
 .doc-body .code-block:hover .code-copy,

@@ -383,8 +383,9 @@ var COPY_FEEDBACK_MS = 1600;
 /**
  * The button's glyph, two overlapping sheets, as paths of an SVG in a 24-unit
  * box. It is drawn, not typed — like the fold arrow, so no font decides what
- * a copy looks like — and the stylesheet strokes both paths with the text's
- * own colour.
+ * a copy looks like — and the stylesheet strokes the paths with the text's
+ * own colour. While the copied state lasts, the stylesheet swaps the sheets
+ * for the check: a shape that says what just happened without a word.
  */
 var COPY_ICON_PATHS = [
   // The front sheet.
@@ -392,6 +393,15 @@ var COPY_ICON_PATHS = [
   // The sheet behind it.
   "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
 ];
+
+/** Class shared by the two sheet paths the resting glyph is drawn with. */
+var COPY_SHEETS_CLASS = "code-copy-sheets";
+
+/** Class of the check path that replaces the sheets while the state lasts. */
+var COPY_CHECK_CLASS = "code-copy-check";
+
+/** The check itself, in the same 24-unit box. */
+var COPY_CHECK_PATH = "M5 13l4 4L19 7";
 
 /**
  * The copy buttons of the article's code blocks.
@@ -493,8 +503,14 @@ function createCopyButton(doc) {
   COPY_ICON_PATHS.forEach(function (pathData) {
     var path = doc.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", pathData);
+    path.setAttribute("class", COPY_SHEETS_CLASS);
     svg.appendChild(path);
   });
+
+  var check = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+  check.setAttribute("d", COPY_CHECK_PATH);
+  check.setAttribute("class", COPY_CHECK_CLASS);
+  svg.appendChild(check);
 
   button.appendChild(svg);
 

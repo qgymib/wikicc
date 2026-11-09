@@ -1034,6 +1034,25 @@ fn a_code_block_carries_a_copy_button_on_its_own_corner() {
         Some("var(--accent)"),
         "the copied state speaks in the accent's colour"
     );
+
+    // While the state lasts the glyph is a check, not the sheets: the shape
+    // itself says what happened, in the same stroke and the same box.
+    let check = rule_of(css, ".code-copy svg .code-copy-check {");
+    assert_eq!(
+        declaration(check, "display"),
+        Some("none"),
+        "the resting button draws no check"
+    );
+    let check_shown = rule_of(css, ".code-copy[data-copied] svg .code-copy-check {");
+    assert_eq!(declaration(check_shown, "display"), Some("block"));
+    let sheets_hidden = rule_of(css, ".code-copy[data-copied] svg .code-copy-sheets {");
+    assert_eq!(declaration(sheets_hidden, "display"), Some("none"));
+
+    // The check is the whole announcement: no word rides beside it.
+    assert!(
+        !css.contains(".code-copied-note"),
+        "the copied state is the glyph and the accent, nothing more"
+    );
 }
 
 #[test]
@@ -1044,12 +1063,12 @@ fn copying_is_the_article_s_own_furniture() {
     // the article's typography class.
     let css = SHELL_CSS;
 
-    // The glyph rule is the one exception: it draws nothing until a button
+    // The glyph rules are the one exception: they draw nothing until a button
     // exists, and only the article builds one.
     let scoped: Vec<&str> = css
         .lines()
         .filter(|line| line.contains(".code-copy") || line.contains(".code-block"))
-        .filter(|line| !line.contains(".code-copy svg"))
+        .filter(|line| !line.contains("svg"))
         .collect();
 
     assert!(!scoped.is_empty(), "the sheet has rules for the buttons");

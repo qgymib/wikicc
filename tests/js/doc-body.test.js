@@ -893,15 +893,27 @@ test("every code block the build emitted is wrapped with a labelled button", () 
         assert.equal(button.getAttribute("aria-label"), "Copy code");
         assert.equal(button.getAttribute("title"), "Copy code");
         assert.equal(button.className, COPY_BUTTON_CLASS);
+
+        const glyph = button.children[0];
+        assert.equal(glyph.tagName, "SVG", "the glyph is drawn, not typed");
         assert.equal(
-          button.children[0].tagName,
-          "SVG",
-          "the glyph is drawn, not typed",
+          glyph.children.filter(function (path) {
+            return path.getAttribute("class") === "code-copy-sheets";
+          }).length,
+          2,
+          "two sheets make the resting glyph",
         );
         assert.equal(
-          button.children[0].children.length,
-          2,
-          "two sheets make the glyph",
+          glyph.children.filter(function (path) {
+            return path.getAttribute("class") === "code-copy-check";
+          }).length,
+          1,
+          "a check waits to say the success",
+        );
+        assert.equal(
+          button.children.length,
+          1,
+          "the glyph is the button's whole content: the check is the word",
         );
       }
 
