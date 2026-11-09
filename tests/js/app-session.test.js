@@ -1138,6 +1138,48 @@ test("the search panel starts local, reading the document in view", async () => 
   });
 });
 
+test("the tail budget follows the panel's layout when it has one", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    // The panel's own width is what the caller measures before the first row
+    // exists: 708 leaves 400 for the context column, which at the 12.5px the
+    // stylesheet sets is 32 units the engine cuts the tail by. The row that
+    // first query renders answers no width at all (the fake DOM has no
+    // layout), so the next query falls back to the engine's own budget — and
+    // both answers still come back whole.
+    session.shell.get("search-panel").clientWidth = 708;
+
+    session.shell.get("search-toggle").fire("click");
+
+    const input = searchInput(session.shell);
+    input.value = "root";
+    input.fire("input", { target: input });
+    session.runTimers();
+
+    const first = searchParts(session.shell, "search-result-context");
+    assert.equal(first.length, 1, "the first query answers");
+    assert.equal(
+      first[0].children.length,
+      3,
+      "the context holds the passage with its marked hit, cut to the budget",
+    );
+
+    searchParts(session.shell, "search-mode")[0].fire("click");
+    input.value = "intro";
+    input.fire("input", { target: input });
+    session.runTimers();
+
+    const second = searchParts(session.shell, "search-result-context");
+    assert.equal(second.length, 1, "the second query answers too");
+    assert.equal(
+      second[0].children.length,
+      3,
+      "the second query reads the row, finds no layout and answers still",
+    );
+  });
+});
+
 test("the scope switch widens the search to every document", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();

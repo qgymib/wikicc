@@ -208,17 +208,17 @@ export function search(index, query) {
 export var SNIPPET_LEAD = 20;
 
 /**
- * Characters of text kept after a hit, before the ellipsis.
+ * Display-width units of text kept after a hit, before the ellipsis.
  *
- * The two sides together cut about one line of the panel at its widest —
- * around a hundred and twenty-five Chinese characters — so a wide screen
- * reads a full line of context where the window used to stop well short of
- * the row's edge, and a narrower screen loses only the tail to the ellipsis.
- * Every row keeps the same single-line height however wide the panel is.
- * Latin script packs roughly twice as many characters into that line, so a
- * Latin row fills about half of it; the window is measured in characters
- * because the alternative — measuring the rendered row — would put layout
- * questions inside the engine.
+ * One unit is the advance of one full-width character — one em — and Latin
+ * script packs roughly two characters into it: a CJK row holds a hundred
+ * characters where a Latin row holds about two hundred, and both fill the
+ * line the result row cuts its context at. The row measures its own line in
+ * the same units and hands the budget back through a `tailUnits` option, so
+ * a wider dialog or a different typeface follows the layout the reader has
+ * instead of this estimate — which stays as the answer for a caller that
+ * renders without a layout to read. Measuring in units, not pixels, keeps
+ * layout questions outside the engine.
  */
 export var SNIPPET_TAIL = 100;
 
@@ -540,7 +540,9 @@ function locateFrom(value, words, from) {
  * caller draws as an ellipsis. They are kept apart from the text itself so a
  * document that really contains "\u2026" cannot be confused with a truncation.
  *
- * `options.radius` is how many characters are kept on each side.
+ * `options.radius` is how many characters are kept on each side; a
+ * `tailUnits` option instead widens the tail by display width — the row's
+ * own measure of the line it renders into.
  */
 export function matchSnippet(text, query, options) {
   var value = String(text === null || text === undefined ? "" : text);
@@ -553,35 +555,91 @@ export function matchSnippet(text, query, options) {
 }
 
 /**
+ * Whether the code renders as a full-width glyph.
+ *
+ * The ranges are the CJK and Hangul scripts, their punctuation and the
+ * fullwidth forms — the characters that advance one em. A surrogate stays
+ * half a unit: the supplementary CJK blocks a surrogate pair names are rare
+ * in a snippet, and under-measuring one only costs the row a character of
+ * tail.
+ */
+function isWideCode(code) {
+  return (
+    (code >= 0x1100 && code <= 0x11ff) ||
+    (code >= 0x2e80 && code <= 0x9fff) ||
+    (code >= 0xa960 && code <= 0xa97f) ||
+    (code >= 0xac00 && code <= 0xd7ff) ||
+    (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0xff01 && code <= 0xff60) ||
+    (code >= 0xffe0 && code <= 0xffe6)
+  );
+}
+
+/**
+ * The offset a tail of `budget` display-width units reaches, counting one
+ * unit per full-width character and half a unit per any other. One character
+ * is always kept: a budget too small for even the character at the cut still
+ * shows it, where an empty tail would read as a hit without any context.
+ */
+function widthTail(text, end, budget) {
+  var at = end;
+  var used = 0;
+  while (at < text.length) {
+    var units = isWideCode(text.charCodeAt(at)) ? 1 : 0.5;
+    if (used > 0 && used + units > budget) {
+      break;
+    }
+    used += units;
+    at += 1;
+  }
+  return at;
+}
+
+/**
  * The text around the range that begins at `start` and runs `length` far.
  *
  * `matchSnippet` finds its range and cuts around it; `occurrences` is handed
  * the ranges already — one per place the query occurs — and cuts around each,
  * so the cut lives here for both. It is the same cut whatever the caller: a
  * short lead before the hit and a long tail behind it — together about one
- * row line of the widest panel, with the hit kept where a one-line cut can
- * never take it — moved to a word boundary where one is close enough to
- * reach, with the two flags saying whether text was dropped at that end.
- * A `radius` option still cuts symmetrically, which is what the tests use to
- * exercise the boundary logic at small sizes.
+ * row line, with the hit kept where a one-line cut can never take it — moved
+ * to a word boundary where one is close enough to reach, with the two flags
+ * saying whether text was dropped at that end.
+ *
+ * The tail is measured in display-width units — one per full-width character,
+ * half per Latin one — so a row of either script fills the same line. A
+ * `tailUnits` option carries the budget the caller measured off the row it
+ * renders (column width over font size); the default is `SNIPPET_TAIL`. A
+ * `lead`/`tail`/`radius` option still cuts by plain characters, which is
+ * what the tests use to exercise the boundary logic at small sizes.
  */
 function cutAround(text, start, length, options) {
+  var byCharacter =
+    options &&
+    (typeof options.tail === "number" || typeof options.radius === "number");
   var lead =
     options && typeof options.lead === "number"
       ? Math.max(0, options.lead)
       : options && typeof options.radius === "number"
         ? Math.max(0, options.radius)
         : SNIPPET_LEAD;
-  var tail =
-    options && typeof options.tail === "number"
-      ? Math.max(0, options.tail)
-      : options && typeof options.radius === "number"
-        ? Math.max(0, options.radius)
-        : SNIPPET_TAIL;
 
   var end = start + length;
   var from = Math.max(0, start - lead);
-  var to = Math.min(text.length, end + tail);
+  var to;
+  if (byCharacter) {
+    var tail =
+      typeof options.tail === "number"
+        ? Math.max(0, options.tail)
+        : Math.max(0, options.radius);
+    to = Math.min(text.length, end + tail);
+  } else {
+    var budget =
+      options && typeof options.tailUnits === "number"
+        ? Math.max(0, options.tailUnits)
+        : SNIPPET_TAIL;
+    to = widthTail(text, end, budget);
+  }
 
   // A window that begins or ends inside a word would read as a typo, so the
   // cut moves to the word boundary when one is close enough to reach — and

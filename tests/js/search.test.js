@@ -238,6 +238,55 @@ test("the default window keeps whole lines of CJK around the hit", () => {
   assert.equal(snippet.after, tail.slice(0, 100));
 });
 
+test("the default window is measured in width, so Latin rows fill the line", () => {
+  // Latin script packs about twice as many characters into one row line as
+  // Han script does: the window is measured in display-width units — one per
+  // full-width character, half per Latin one — so a Latin passage fills the
+  // row the way a CJK passage does instead of stopping at half of it.
+  const latin = [];
+  for (let i = 0; i < 260; i += 1) {
+    latin.push(`w${String(i).padStart(3, "0")}`);
+  }
+  const words = latin.join(" ");
+  const snippet = search.matchSnippet(`${words} needle ${words}`, "needle");
+
+  assert.equal(snippet.hit, "needle");
+  assert.ok(snippet.before.length > 0, "some lead-in survives");
+  assert.ok(snippet.before.length <= 20, "the lead-in stays short");
+  assert.ok(snippet.after.length >= 180, "the tail fills the line");
+  assert.equal(snippet.trimmedStart, true);
+  assert.equal(snippet.trimmedEnd, true);
+});
+
+test("the tail budget can be injected in width units", () => {
+  // The caller measures the row it renders — column width over font size —
+  // and hands the engine the budget in display-width units, so the window
+  // follows the panel it actually renders in. Han characters are one unit
+  // each, which makes the semantics directly observable.
+  const lead = "前".repeat(30);
+  const tail = "后".repeat(60);
+  const cjk = search.matchSnippet(`${lead}探针${tail}`, "探针", {
+    tailUnits: 12,
+  });
+
+  assert.equal(cjk.hit, "探针");
+  assert.equal(cjk.before, lead.slice(-20), "the lead keeps its length");
+  assert.equal(cjk.after, tail.slice(0, 12));
+});
+
+test("an injected width budget holds about twice as many Latin characters", () => {
+  // Half a unit per Latin character: a budget of ten units holds about twenty
+  // of them, snapped to the word boundary the cut lands on.
+  const words = `${"word ".repeat(80)}needle ${"word ".repeat(80)}`;
+  const latin = search.matchSnippet(words, "needle", { tailUnits: 10 });
+
+  assert.equal(latin.hit, "needle");
+  assert.ok(
+    latin.after.length >= 10 && latin.after.length <= 25,
+    `tail holds one word either side of twenty characters: ${latin.after.length}`,
+  );
+});
+
 test("one side of the window can be widened without the other", () => {
   const snippet = search.matchSnippet(
     "前前前前前前前前中中后后后后后后后后",

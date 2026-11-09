@@ -293,9 +293,10 @@ export function start() {
    * a panel still covering the page.
    */
   var searchButton = document.getElementById("search-toggle");
+  var searchPanel = document.getElementById("search-panel");
 
   var searchView = SearchView.createSearchView({
-    container: document.getElementById("search-panel"),
+    container: searchPanel,
     // The button asks the panel to open and to close; the view leaves the
     // button's own presses alone so the click below decides which.
     toggle: searchButton,
@@ -884,7 +885,50 @@ export function start() {
    * the corpus of the pages format is still on its way, which the caller
    * shows as a wait rather than as an empty answer.
    */
+  /**
+   * The tail budget the result rows render into, in display-width units.
+   *
+   * One unit is one em of the context line, so the budget is the column
+   * width over the font size. An already-rendered row is the exact measure —
+   * its context column is the space a tail fills beside the path column —
+   * and before the first row exists, the panel's width stands in for one,
+   * less the row's padding, the column gap and the widest path column the
+   * stylesheet gives. Anything that cannot be read — a shell without a
+   * panel, a test DOM with no layout — hands back nothing, and the engine
+   * cuts with its own default.
+   */
+  function snippetTailUnits() {
+    if (!searchPanel || !searchPanel.querySelector) {
+      return null;
+    }
+
+    var context = searchPanel.querySelector("." + SearchView.CONTEXT_CLASS);
+    var width = context
+      ? context.clientWidth
+      : searchPanel.clientWidth - 34 - 14 - 260;
+    if (!width || width <= 0 || !isFinite(width)) {
+      return null;
+    }
+
+    var fontSize = 12.5;
+    if (context && typeof getComputedStyle === "function") {
+      var parsed = parseFloat(getComputedStyle(context).fontSize);
+      if (parsed > 0 && isFinite(parsed)) {
+        fontSize = parsed;
+      }
+    }
+
+    var units = Math.round(width / fontSize);
+    return units > 0 ? units : null;
+  }
+
   function searchResults(query, mode) {
+    // The tail is cut to the line the list actually renders: the budget is
+    // read off the panel on every query, so a resize or a typeface change
+    // follows on the next answer. No budget keeps the engine's default.
+    var tailUnits = snippetTailUnits();
+    var cuts = tailUnits ? { tailUnits: tailUnits } : undefined;
+
     if (mode === SearchView.GLOBAL_MODE) {
       if (!index) {
         return null;
@@ -895,7 +939,7 @@ export function start() {
         return [];
       }
 
-      return Search.occurrences(corpusDocs || docs, everywhere, query);
+      return Search.occurrences(corpusDocs || docs, everywhere, query, cuts);
     }
 
     var local = localSearch();
@@ -908,7 +952,7 @@ export function start() {
       return [];
     }
 
-    return Search.occurrences([store.peek(currentId)], here, query);
+    return Search.occurrences([store.peek(currentId)], here, query, cuts);
   }
 
   /* ---------- layout controls ---------- */
