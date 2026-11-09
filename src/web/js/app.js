@@ -608,13 +608,15 @@ export function start() {
 
     // The shared document-body render: markup in, tables enhanced in the same
     // breath and still before insertion, so the first paint already carries
-    // the sortable headers, filter buttons and chapter fold arrows. Folding is
-    // asked for here and nowhere else: the search preview would read the arrow
-    // as a press outside its dialog, and the hover preview is a window onto a
-    // chapter rather than a place to read one.
+    // the sortable headers, filter buttons, code copy buttons and chapter
+    // fold arrows. Folding is asked for here and nowhere else: the search
+    // preview would read the arrow as a press outside its dialog, and the
+    // hover preview is a window onto a chapter rather than a place to read
+    // one.
     var body = DocBody.createDocBody(doc.html, {
       enhanceTables: true,
       collapsible: true,
+      codeCopy: true,
     });
 
     mountArticle();

@@ -14,13 +14,22 @@
  * puts a node where it is asked, and an event fires at the element a click
  * landed on, so the handler's delegation is exercised the way a reader's click
  * exercises it.
+ *
+ * The copy half runs through the same fake DOM: the buttons are wrapped and
+ * pressed the way a reader's press arrives, the veteran `execCommand` route
+ * answers at once as it does in a browser, the asynchronous clipboard API is
+ * stubbed the way `graph-view.test.js` installs its globals, and the revert
+ * of the copied state runs through fake timers, which are drained before the
+ * runtime's own come back.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   BODY_CLASS,
+  CODE_BLOCK_CLASS,
   COLLAPSIBLE_CLASS,
+  COPY_BUTTON_CLASS,
   TOGGLE_CLASS,
   chapterRanges,
   createDocBody,
@@ -47,6 +56,7 @@ function fakeElement(tagName, owner) {
     innerHTML: "",
     ownerDocument: owner || null,
     classList: null,
+    style: {},
     appendChild(child) {
       this.children.push(child);
       child.parentNode = this;
@@ -57,6 +67,17 @@ function fakeElement(tagName, owner) {
       if (index >= 0) {
         this.children.splice(index, 1);
       }
+      child.parentNode = null;
+      return child;
+    },
+    /** The copy wrapper takes the block's own place among the siblings. */
+    replaceChild(next, child) {
+      const index = this.children.indexOf(child);
+      if (index < 0) {
+        return child;
+      }
+      this.children[index] = next;
+      next.parentNode = this;
       child.parentNode = null;
       return child;
     },
@@ -84,6 +105,10 @@ function fakeElement(tagName, owner) {
     removeAttribute(name) {
       delete this.attributes[name];
     },
+    /** A textarea answers select, the way the copy's veteran route asks. */
+    select() {
+      this.selected = true;
+    },
     get firstChild() {
       return this.children[0] || null;
     },
@@ -109,12 +134,27 @@ function fakeElement(tagName, owner) {
     },
     querySelectorAll(selector) {
       this.queries.push(String(selector));
-      if (String(selector) !== "h1,h2,h3,h4,h5,h6") {
-        return [];
+      if (String(selector) === "h1,h2,h3,h4,h5,h6") {
+        return this.children.filter(function (child) {
+          return /^H[1-6]$/.test(child.tagName);
+        });
       }
-      return this.children.filter(function (child) {
-        return /^H[1-6]$/.test(child.tagName);
-      });
+      if (String(selector) === "pre.code") {
+        const found = [];
+        (function walk(node) {
+          (node.children || []).forEach(function (child) {
+            if (
+              child.tagName === "PRE" &&
+              String(child.className).split(" ").indexOf("code") !== -1
+            ) {
+              found.push(child);
+            }
+            walk(child);
+          });
+        })(this);
+        return found;
+      }
+      return [];
     },
     closest(selector) {
       const wanted = String(selector).replace(/^\./, "");
@@ -158,6 +198,7 @@ function fakeDocument() {
   const doc = {
     created: [],
     createdNS: [],
+    commands: [],
     createElement(tagName) {
       const element = fakeElement(tagName, doc);
       doc.created.push(element);
@@ -168,7 +209,23 @@ function fakeDocument() {
       doc.createdNS.push(element);
       return element;
     },
+    /** The copy command's veteran route, as a real document answers it. */
+    execCommand(command) {
+      doc.commands.push(String(command));
+      return true;
+    },
   };
+
+  // `document.body` is there the moment a page is; the fake builds its own
+  // the first time something asks, so the tests that never copy pay nothing.
+  Object.defineProperty(doc, "body", {
+    get() {
+      if (!doc.pageBody) {
+        doc.pageBody = fakeElement("body", doc);
+      }
+      return doc.pageBody;
+    },
+  });
 
   return doc;
 }
@@ -251,6 +308,88 @@ function allHidden(elements) {
   return elements.every(function (element) {
     return element.hasAttribute("hidden");
   });
+}
+
+/**
+ * Append a code block to `body`, shaped the way the build emits one.
+ *
+ * A fenced block carries a language class on its `code`; an indented one
+ * does not. The text ends in the newline the build always writes.
+ */
+function addCodeBlock(body, doc, code, language) {
+  const pre = doc.createElement("pre");
+  pre.className = "code";
+  const codeElement = doc.createElement("code");
+  if (language) {
+    codeElement.className = "language-" + language;
+  }
+  codeElement.textContent = code;
+  pre.appendChild(codeElement);
+  body.appendChild(pre);
+  return pre;
+}
+
+/** The copy button beside `pre` in its wrapper, or `null` when unwrapped. */
+function copyButtonOfBlock(pre) {
+  const wrapper = pre.parentNode;
+  if (!wrapper || !wrapper.classList.contains(CODE_BLOCK_CLASS)) {
+    return null;
+  }
+  const found = wrapper.children.filter(function (child) {
+    return child.classList.contains(COPY_BUTTON_CLASS);
+  });
+  return found[0] || null;
+}
+
+/**
+ * Install a fake global for as long as the synchronous `work` runs, restore
+ * after.
+ *
+ * The same gesture-scoped swap `graph-view.test.js` makes for its globals:
+ * nothing installed here may outlive the test that asked for it.
+ */
+function installGlobal(name, value) {
+  const previous = globalThis[name];
+  Object.defineProperty(globalThis, name, {
+    value: value,
+    configurable: true,
+    writable: true,
+  });
+  return previous;
+}
+
+/**
+ * Run `work` with the fake timers installed, then settle what it scheduled.
+ *
+ * The runtime's own `setTimeout` is back before this returns — the test
+ * runner schedules its own bookkeeping through the same globals, so a
+ * replacement that outlives the work would swallow it and keep the process
+ * alive for ever. Only the timers that already exist run: the copied state's
+ * revert is the leftover of the press, not work anyone is waiting for.
+ */
+function withTimers(work) {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const queue = [];
+  let ids = 0;
+
+  installGlobal("setTimeout", function (callback) {
+    queue.push({ callback: callback });
+    return ++ids;
+  });
+  installGlobal("clearTimeout", function () {});
+
+  try {
+    work();
+  } finally {
+    installGlobal("setTimeout", realSetTimeout);
+    installGlobal("clearTimeout", realClearTimeout);
+
+    const pending = queue.splice(0, queue.length);
+    for (const timer of pending) {
+      timer.callback();
+    }
+  }
 }
 
 /* ---------- the body itself ---------- */
@@ -704,6 +843,334 @@ test("a new document's body opens fully expanded", () => {
     },
     function (body, doc) {
       nestedOutline(body, doc, fresh);
+    },
+  );
+});
+
+/* ---------- the code copy buttons ---------- */
+
+test("fillDocBody leaves the code blocks alone unless asked", () => {
+  const out = {};
+
+  withBody(
+    function (body) {
+      fillDocBody(body, "<ignored/>", { enhanceTables: false });
+
+      assert.equal(out.pre.parentNode, body, "the block stands where it was");
+      assert.deepEqual(body.queries, [], "no walk without the option");
+      assert.equal(copyButtonOfBlock(out.pre), null, "no button was added");
+    },
+    function (body, doc) {
+      out.pre = addCodeBlock(body, doc, "let x = 1;\n", "js");
+    },
+  );
+});
+
+test("every code block the build emitted is wrapped with a labelled button", () => {
+  const out = {};
+
+  withBody(
+    function (body) {
+      fillDocBody(body, "<ignored/>", { codeCopy: true });
+
+      for (const pre of [out.fenced, out.indented]) {
+        const wrapper = pre.parentNode;
+        assert.equal(
+          wrapper.classList.contains(CODE_BLOCK_CLASS),
+          true,
+          "the block lives in a wrapper now",
+        );
+        assert.equal(
+          wrapper.children.indexOf(pre),
+          0,
+          "the pre is the wrapper's first element",
+        );
+
+        const button = copyButtonOfBlock(pre);
+        assert.ok(button, "the block carries a copy button");
+        assert.equal(button.tagName, "BUTTON");
+        assert.equal(button.getAttribute("type"), "button");
+        assert.equal(button.getAttribute("aria-label"), "Copy code");
+        assert.equal(button.getAttribute("title"), "Copy code");
+        assert.equal(button.className, COPY_BUTTON_CLASS);
+        assert.equal(
+          button.children[0].tagName,
+          "SVG",
+          "the glyph is drawn, not typed",
+        );
+        assert.equal(
+          button.children[0].children.length,
+          2,
+          "two sheets make the glyph",
+        );
+      }
+
+      assert.equal(out.math.parentNode, body, "a formula is not a code block");
+      assert.equal(
+        body.children.length,
+        3,
+        "each wrapper took its block's own place among the children",
+      );
+    },
+    function (body, doc) {
+      out.fenced = addCodeBlock(body, doc, "let x = 1;\n", "js");
+      out.indented = addCodeBlock(body, doc, "let y = 2;\n", null);
+      out.math = doc.createElement("pre");
+      out.math.className = "math";
+      body.appendChild(out.math);
+    },
+  );
+});
+
+test("pressing the button copies the code without its trailing newline", () => {
+  const out = {};
+
+  withBody(
+    function (body, doc) {
+      fillDocBody(body, "<ignored/>", { codeCopy: true });
+
+      const button = copyButtonOfBlock(out.pre);
+      press(body, button);
+
+      assert.deepEqual(doc.commands, ["copy"], "the veteran command copied");
+      const areas = doc.created.filter(function (element) {
+        return element.tagName === "TEXTAREA";
+      });
+      assert.equal(areas.length, 1, "one textarea carried the text");
+      assert.equal(
+        areas[0].value,
+        "let x = 1;",
+        "the block's trailing newline does not ride along",
+      );
+      assert.equal(areas[0].getAttribute("readonly"), "");
+      assert.ok(areas[0].selected, "the textarea was selected for the command");
+      assert.equal(
+        doc.body.children.indexOf(areas[0]),
+        -1,
+        "the textarea is gone again",
+      );
+
+      assert.equal(button.getAttribute("data-copied"), "");
+      assert.equal(button.getAttribute("aria-label"), "Copied");
+      assert.equal(button.getAttribute("title"), "Copied");
+
+      // The revert timer is real here; dismiss it so it cannot outlive the
+      // test and hold the runner for its full span.
+      globalThis.clearTimeout(button.__wikiccCopyTimer);
+    },
+    function (body, doc) {
+      out.pre = addCodeBlock(body, doc, "let x = 1;\n", "js");
+    },
+  );
+});
+
+test("the copied state reverts on its own", () => {
+  const out = {};
+
+  withBody(
+    function (body) {
+      fillDocBody(body, "<ignored/>", { codeCopy: true });
+
+      const button = copyButtonOfBlock(out.pre);
+
+      withTimers(function () {
+        press(body, button);
+        assert.equal(
+          button.hasAttribute("data-copied"),
+          true,
+          "the press said what it did",
+        );
+      });
+
+      assert.equal(
+        button.hasAttribute("data-copied"),
+        false,
+        "a moment later the button is back as it was",
+      );
+      assert.equal(button.getAttribute("aria-label"), "Copy code");
+      assert.equal(button.getAttribute("title"), "Copy code");
+    },
+    function (body, doc) {
+      out.pre = addCodeBlock(body, doc, "let x = 1;\n", "js");
+    },
+  );
+});
+
+test("the clipboard API is the route a page that has it offers first", async () => {
+  const out = {};
+  const writes = [];
+
+  withBody(
+    function (body) {
+      const previous = installGlobal("navigator", {
+        clipboard: {
+          writeText: function (text) {
+            writes.push(text);
+            return Promise.resolve();
+          },
+        },
+      });
+
+      try {
+        fillDocBody(body, "<ignored/>", { codeCopy: true });
+        out.button = copyButtonOfBlock(out.pre);
+        press(body, out.button);
+      } finally {
+        installGlobal("navigator", previous);
+      }
+    },
+    function (body, doc) {
+      out.pre = addCodeBlock(body, doc, "let x = 1;\n", "js");
+    },
+  );
+
+  // The asynchronous write settles a turn later than the press; the
+  // macrotask waits out every microtask, so the feedback is on by now.
+  await new Promise(function (resolve) {
+    setImmediate(resolve);
+  });
+
+  assert.deepEqual(
+    writes,
+    ["let x = 1;"],
+    "the asynchronous clipboard got the text",
+  );
+  assert.equal(
+    out.button.getAttribute("data-copied"),
+    "",
+    "and the button said so once it had",
+  );
+
+  // The revert timer is real; dismiss it so it cannot outlive the test.
+  globalThis.clearTimeout(out.button.__wikiccCopyTimer);
+});
+
+test("a click that misses the button copies nothing", () => {
+  const out = {};
+
+  withBody(
+    function (body, doc) {
+      fillDocBody(body, "<ignored/>", { codeCopy: true });
+
+      // The code itself is selectable text; only the button takes a press.
+      body.fire("click", { target: out.pre });
+      body.fire("click", { target: out.code });
+
+      assert.deepEqual(doc.commands, [], "no copy left the page");
+      assert.equal(
+        copyButtonOfBlock(out.pre).hasAttribute("data-copied"),
+        false,
+        "and the button never claimed one",
+      );
+    },
+    function (body, doc) {
+      out.pre = addCodeBlock(body, doc, "let x = 1;\n", "js");
+      out.code = out.pre.children[0];
+    },
+  );
+});
+
+test("an empty block takes no copy", () => {
+  const out = {};
+
+  withBody(
+    function (body, doc) {
+      fillDocBody(body, "<ignored/>", { codeCopy: true });
+
+      press(body, copyButtonOfBlock(out.pre));
+
+      assert.deepEqual(doc.commands, [], "there is nothing to write");
+      assert.equal(
+        copyButtonOfBlock(out.pre).hasAttribute("data-copied"),
+        false,
+        "and the button does not claim otherwise",
+      );
+    },
+    function (body, doc) {
+      out.pre = addCodeBlock(body, doc, "", "js");
+    },
+  );
+});
+
+test("a body filled twice does not wrap its blocks twice", () => {
+  withBody(
+    function (body) {
+      fillDocBody(body, "<ignored/>", { codeCopy: true });
+      fillDocBody(body, "<ignored/>", { codeCopy: true });
+
+      const blocks = body.querySelectorAll("pre.code");
+      assert.equal(blocks.length, 1, "the block is still one");
+      assert.equal(
+        blocks[0].parentNode.children.length,
+        2,
+        "the wrapper holds the block and one button",
+      );
+    },
+    function (body, doc) {
+      addCodeBlock(body, doc, "let x = 1;\n", "js");
+    },
+  );
+});
+
+test("folding a chapter hides its code blocks with their buttons", () => {
+  const out = {};
+
+  withBody(
+    function (body) {
+      fillDocBody(body, "<ignored/>", { codeCopy: true, collapsible: true });
+
+      const wrapper = out.pre.parentNode;
+      assert.equal(wrapper.classList.contains(CODE_BLOCK_CLASS), true);
+
+      press(body, toggleOf(out.heading));
+      assert.equal(
+        wrapper.hasAttribute("hidden"),
+        true,
+        "the fold hides the wrapper — block and button together",
+      );
+
+      press(body, toggleOf(out.heading));
+      assert.equal(
+        wrapper.hasAttribute("hidden"),
+        false,
+        "and brings them back",
+      );
+    },
+    function (body, doc) {
+      out.heading = addHeading(body, doc, 2, "one");
+      addParagraph(body, doc, "alpha");
+      out.pre = addCodeBlock(body, doc, "let x = 1;\n", "js");
+    },
+  );
+});
+
+test("pressing a copy button leaves the chapters as they are", () => {
+  const out = {};
+
+  withBody(
+    function (body, doc) {
+      fillDocBody(body, "<ignored/>", { codeCopy: true, collapsible: true });
+
+      const arrow = toggleOf(out.heading);
+      assert.ok(arrow, "the chapter is foldable");
+
+      press(body, copyButtonOfBlock(out.pre));
+
+      assert.equal(
+        arrow.getAttribute("aria-expanded"),
+        "true",
+        "the copy is not a fold",
+      );
+      assert.equal(out.pre.parentNode.hasAttribute("hidden"), false);
+      assert.deepEqual(doc.commands, ["copy"], "the copy went out as asked");
+
+      // The revert timer is real; dismiss it so it cannot outlive the test.
+      globalThis.clearTimeout(copyButtonOfBlock(out.pre).__wikiccCopyTimer);
+    },
+    function (body, doc) {
+      out.heading = addHeading(body, doc, 2, "one");
+      addParagraph(body, doc, "alpha");
+      out.pre = addCodeBlock(body, doc, "let x = 1;\n", "js");
     },
   );
 });

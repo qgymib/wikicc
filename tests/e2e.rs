@@ -984,6 +984,105 @@ fn folding_is_the_article_s_own_furniture() {
 }
 
 #[test]
+fn a_code_block_carries_a_copy_button_on_its_own_corner() {
+    // The button is quiet furniture: it hangs off the block's corner, hidden
+    // until the pointer is on the block or the keyboard is on the button, and
+    // its reach does not travel with the code the `pre` scrolls sideways.
+    let css = SHELL_CSS;
+
+    // The wrapper takes over the block's own margin, so a document that
+    // cannot copy is spaced exactly like one that can.
+    let wrapper = rule_of(css, ".doc-body .code-block {");
+    assert_eq!(declaration(wrapper, "position"), Some("relative"));
+    assert_eq!(declaration(wrapper, "margin"), Some("1.3em 0"));
+
+    let block = rule_of(css, ".doc-body .code-block pre {");
+    assert_eq!(declaration(block, "margin"), Some("0"));
+
+    let button = rule_of(css, ".doc-body .code-copy {");
+    assert_eq!(declaration(button, "position"), Some("absolute"));
+    assert_eq!(declaration(button, "top"), Some("8px"));
+    assert_eq!(declaration(button, "right"), Some("8px"));
+    assert_eq!(
+        declaration(button, "user-select"),
+        Some("none"),
+        "a reader selecting the code by hand never picks up the button's label"
+    );
+    assert_eq!(
+        declaration(button, "opacity"),
+        Some("0"),
+        "the button is not there until the block is looked at"
+    );
+    assert_eq!(
+        declaration(button, "visibility"),
+        Some("hidden"),
+        "and an invisible button is not a click target either"
+    );
+
+    let shown = rule_of(css, ".doc-body .code-block:hover .code-copy,");
+    assert_eq!(declaration(shown, "opacity"), Some("1"));
+    assert_eq!(declaration(shown, "visibility"), Some("visible"));
+
+    assert!(
+        css.contains(".doc-body .code-copy:focus-visible"),
+        "the keyboard reveals the button the way the pointer does"
+    );
+
+    let copied = rule_of(css, ".doc-body .code-copy[data-copied] {");
+    assert_eq!(
+        declaration(copied, "color"),
+        Some("var(--accent)"),
+        "the copied state speaks in the accent's colour"
+    );
+}
+
+#[test]
+fn copying_is_the_article_s_own_furniture() {
+    // The hover preview and the search preview are windows onto a document,
+    // not places to work on one, so neither carries the buttons. They are kept
+    // out by scope, not by a runtime test: every rule of the feature hangs off
+    // the article's typography class.
+    let css = SHELL_CSS;
+
+    // The glyph rule is the one exception: it draws nothing until a button
+    // exists, and only the article builds one.
+    let scoped: Vec<&str> = css
+        .lines()
+        .filter(|line| line.contains(".code-copy") || line.contains(".code-block"))
+        .filter(|line| !line.contains(".code-copy svg"))
+        .collect();
+
+    assert!(!scoped.is_empty(), "the sheet has rules for the buttons");
+    for line in scoped {
+        // The print block speaks for the whole sheet — a printed page has no
+        // buttons at all — so its plain selector is the documented exception.
+        let indented = line.starts_with("  ");
+        assert!(
+            line.contains(".doc-body") || indented,
+            "the copy button is the article's own furniture: {line}"
+        );
+    }
+
+    // Printed paper cannot take a copy back, and the buttons are not content.
+    // The sheet has more than one print block — the banner's early one takes
+    // itself off the page too — so the last one is the sheet-wide block the
+    // arrows leave with.
+    let print_at = css.rfind("@media print").expect("a print block");
+    let print = media_block(&css[print_at..], "print");
+    assert!(
+        print.contains(".code-copy {"),
+        "the print rules take the buttons off the page"
+    );
+    assert!(
+        print[print.find(".code-copy {").expect("button rule")..]
+            .split('}')
+            .next()
+            .is_some_and(|rule| declaration(rule, "display") == Some("none")),
+        "a printed page carries no copy buttons"
+    );
+}
+
+#[test]
 fn a_hit_is_marked_in_the_document_without_shouting() {
     // A document holds dozens of hits, and the reader is reading rather than
     // scanning markers: the wash is quiet, and only the one the reader picked
@@ -1138,6 +1237,8 @@ fn the_engines_and_the_reader_are_embedded_in_one_script() {
         "wikicc-payload",      // the bootstrap reads the embedded payload
         "data-wikicc-table",   // the table enhancer is bundled
         "table-filter-toggle", // ... with its per-column filter buttons
+        "code-block",          // the code copy enhancer is bundled
+        "code-copy",           // ... with a button on every code block
         "graph-node",          // the link graph renderer is bundled
         "startOnLoad",         // the diagram engine is configured
         "data-processed",      // ... and mermaid itself is present

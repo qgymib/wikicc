@@ -26,6 +26,8 @@ their chapter outline.
   previews that document on hover. A chapter that does not exist is reported
   as a broken reference and explained by the reader.
 - **Tables**: sorting and Excel-style per-column filtering.
+- **Code blocks**: a button on every code block copies its text to the
+  clipboard; inline code, diagrams and formulas are left alone.
 - **Theme** toggle (light/dark) and a layout that stays usable down to phone
   width.
 

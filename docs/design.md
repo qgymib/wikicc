@@ -244,9 +244,10 @@ one is stated as a contract rather than left to the implementation.
   instead of degrading silently.
 - **Chapter folding is a declared option of the shared body.** `doc-body.js`
   owns both halves of a whole-document render, and each is the caller's
-  declaration rather than the module's guess: the article enhances its tables
-  *and* folds its chapters, the hover preview enhances the tables and folds
-  nothing, and the search preview does neither — the filter panel would be read
+  declaration rather than the module's guess: the article enhances its tables,
+  folds its chapters and arms its code blocks, the hover preview enhances the
+  tables and folds nothing, and the search preview does none of these — the
+  filter panel would be read
   as a press outside the dialog, and a fold arrow inside it would answer a click
   that already belongs to the list. Chapters are taken from the rendered DOM,
   not from the payload's outline, so a heading an author wrote as raw HTML is
@@ -256,6 +257,18 @@ one is stated as a contract rather than left to the implementation.
   rebuilt for another document opens whole; a navigation into a folded chapter
   reopens the chapters that hold it before scrolling, because nothing scrolls to
   a hidden element.
+- **Code copying is a declared option of the same body.** The article arms its
+  code blocks the way it folds its chapters — the caller declares it, the
+  previews never do — and each block is wrapped in a `div` that also carries
+  the button. The wrapper takes the block's own place among the body's
+  children, so the fold's index model is untouched and a folded chapter hides
+  block and button together. The copy reads the `code` element the build emits
+  and drops the trailing newline the build always writes, goes through the
+  asynchronous clipboard API when the page has one, and falls back to
+  `execCommand` over a selected, invisible textarea for the offline double
+  click; a clipboard that refuses both routes changes nothing, and a copied
+  state the button says out loud (the accent, the labels) reverts on its own
+  a moment later.
 - **Math is typeset by the bundled KaTeX.** The build emits the LaTeX source of
   `$$…$$` blocks and `$…$` spans as placeholder elements (`pre.math`,
   `code.math-inline`), and the reader typesets them with the engine after

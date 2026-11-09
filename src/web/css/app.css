@@ -798,6 +798,94 @@ a {
   }
 }
 
+/* ---------- code block copying ---------- */
+
+/* The copy button of the article's code blocks.
+
+   The script wraps every code block in a `div` that also carries the button,
+   so the button can hang off the block's own corner — absolutely positioned
+   against the wrapper, it stays where it is while the code inside the `pre`
+   scrolls sideways — and so a fold that hides a chapter hides block and
+   button together. The wrapper takes over the block's margin and the `pre`
+   inside it flows flush, so a document that cannot copy is spaced exactly
+   like one that can.
+
+   Like the fold arrows, the button is hidden until the pointer is on the
+   block or the keyboard is on the button; `visibility` follows the fade, so
+   an invisible button is never a click target. `user-select` is off: a
+   reader who selects the code by hand and copies it themselves must never
+   pick up the button's own label with it. */
+.doc-body .code-block {
+  position: relative;
+  margin: 1.3em 0;
+}
+
+.doc-body .code-block pre {
+  margin: 0;
+}
+
+.doc-body .code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-code);
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  /* Hidden until the pointer is on the block, or the keyboard is on the
+     button: a page of code with a button on every block would be a toolbar,
+     and this is not one. */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 140ms ease, visibility 140ms ease, color 140ms ease,
+    background-color 140ms ease;
+}
+
+/* The copied state is the button's own word for what just happened: the same
+   glyph in the accent's colour, the labels the assistive tech reads moved
+   over by the script, and a moment later everything back as it was. */
+.doc-body .code-copy[data-copied] {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+}
+
+.doc-body .code-block:hover .code-copy,
+.doc-body .code-copy:focus-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.doc-body .code-copy:hover,
+.doc-body .code-copy:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.doc-body .code-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Two sheets, one glyph: the button keeps the fold arrow's stroke, so the
+   two read as the same furniture of the reading column. */
+.code-copy svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* ---------- mermaid diagrams ---------- */
 
 /* Until the engine runs, the block is the diagram source: keep it readable and
@@ -2861,6 +2949,12 @@ a {
      and a page printed from a folded document keeps the chapter it shows:
      paper has no pointer to unfold one. */
   .chapter-toggle {
+    display: none;
+  }
+
+  /* Paper cannot take a copy back either: the buttons are screen furniture,
+     and a printed page carries the code alone. */
+  .code-copy {
     display: none;
   }
 

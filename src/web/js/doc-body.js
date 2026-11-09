@@ -8,8 +8,8 @@
  *
  * - the markup goes into an element *before* the element is on screen, and
  *   the enhancements inside it — the tables' sort and filter controls, the
- *   chapters' collapse arrows — are applied in the same breath, so the first
- *   paint already carries them;
+ *   code blocks' copy buttons, the chapters' collapse arrows — are applied in
+ *   the same breath, so the first paint already carries them;
  * - the diagrams are drawn only *after* the element is in the document,
  *   because the engine measures its labels with the layout, which a detached
  *   subtree does not have. The math is typeset in the same step: its engine
@@ -17,13 +17,16 @@
  *   callers symmetrical.
  *
  * Which enhancements a body gets is the caller's declaration, not this
- * module's guess: the article enhances both, the hover preview enhances the
- * tables and folds nothing, and the search preview deliberately enhances
- * neither — the filter panel its buttons open is parented to `document.body`,
- * outside the dialog, which the search panel would read as a press outside
- * itself, and a collapse arrow inside the dialog would answer a click that is
- * already the list's. The options keep those decisions where they belong, at
- * the call site, instead of hiding special cases in here.
+ * module's guess: the article enhances its tables, folds its chapters and
+ * arms its code blocks' copy buttons, the hover preview enhances the tables
+ * and does nothing else, and the search preview deliberately enhances
+ * nothing — the filter panel the sort buttons open is parented to
+ * `document.body`, outside the dialog, which the search panel would read as a
+ * press outside itself, a collapse arrow inside the dialog would answer a
+ * click that is already the list's, and a preview is a window onto a
+ * document, not a place to work on one. The options keep those decisions
+ * where they belong, at the call site, instead of hiding special cases in
+ * here.
  *
  * Insertion itself stays with the caller — the article replaces a column,
  * the search preview appends under a banner, the hover preview refills a
@@ -42,6 +45,12 @@ export var COLLAPSIBLE_CLASS = "chapter-collapsible";
 
 /** Class of the arrow that folds one chapter, and the attribute the DOM uses. */
 export var TOGGLE_CLASS = "chapter-toggle";
+
+/** Class of the wrapper that carries a code block and its copy button. */
+export var CODE_BLOCK_CLASS = "code-block";
+
+/** Class of the button that copies one code block. */
+export var COPY_BUTTON_CLASS = "code-copy";
 
 /** Heading tags a chapter can be carried by, in document order. */
 var HEADING_TAGS = ["H1", "H2", "H3", "H4", "H5", "H6"];
@@ -143,7 +152,7 @@ export function enhanceChapters(body) {
   body.classList.add(COLLAPSIBLE_CLASS);
 
   body.addEventListener("click", function (event) {
-    var button = toggleOf(event);
+    var button = buttonOf(event, TOGGLE_CLASS);
     if (!button) {
       return;
     }
@@ -338,35 +347,305 @@ function createToggle(doc) {
   return button;
 }
 
-/** The fold arrow `event` landed on, if it landed on one. */
-function toggleOf(event) {
+/**
+ * The button of `class` that `event` landed on, if it landed on one.
+ *
+ * Both delegations the body carries — the fold arrows and the copy buttons —
+ * read the same way, so one walk answers for them.
+ */
+function buttonOf(event, className) {
   var target = event && event.target;
   if (!target) {
     return null;
   }
   if (typeof target.closest === "function") {
-    return target.closest("." + TOGGLE_CLASS) || null;
+    return target.closest("." + className) || null;
   }
   return String(target.className || "")
     .split(" ")
-    .indexOf(TOGGLE_CLASS) !== -1
+    .indexOf(className) !== -1
     ? target
     : null;
+}
+
+/* ---------- code block copying ---------- */
+
+/** Selector for the code blocks the build emits; the DOM layer queries with it. */
+var CODE_SELECTOR = "pre.code";
+
+/** Labels the button wears, in the language the rest of the reader is written in. */
+var COPY_LABEL = "Copy code";
+var COPIED_LABEL = "Copied";
+
+/** How long the copied state stays on the button, in milliseconds. */
+var COPY_FEEDBACK_MS = 1600;
+
+/**
+ * The button's glyph, two overlapping sheets, as paths of an SVG in a 24-unit
+ * box. It is drawn, not typed — like the fold arrow, so no font decides what
+ * a copy looks like — and the stylesheet strokes both paths with the text's
+ * own colour.
+ */
+var COPY_ICON_PATHS = [
+  // The front sheet.
+  "M11 9h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z",
+  // The sheet behind it.
+  "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
+];
+
+/**
+ * The copy buttons of the article's code blocks.
+ *
+ * Every code block the build emitted — `pre.code`, the fenced and the
+ * indented alike; a diagram or a formula never carries the class — is wrapped
+ * in a `div` that also holds the button. The wrapper exists so the button can
+ * hang off the block's corner and stay there while the code inside the `pre`
+ * scrolls sideways, and so a fold that hides a chapter hides block and button
+ * together. The swap is even: the wrapper takes the `pre`'s own place among
+ * the body's children, so the chapter ranges the folding computes — always
+ * after this — count exactly what the markup carried.
+ *
+ * The click is delegated to the body, one listener for every block, and the
+ * copy reaches the clipboard through the asynchronous API when the page has
+ * one, falling back to the veteran `execCommand` route for the reader on a
+ * page or an engine where it is missing or refused. A clipboard that refuses
+ * both routes changes nothing: the button stays what it was, and the text is
+ * still under the reader's eyes to select.
+ */
+export function enhanceCodeCopy(body) {
+  if (!body || typeof body.querySelectorAll !== "function") {
+    return [];
+  }
+
+  var blocks = codeBlocksOf(body);
+  if (!blocks.length) {
+    return [];
+  }
+
+  var doc = body.ownerDocument || globalThis.document;
+  var buttons = [];
+
+  blocks.forEach(function (block) {
+    var parent = block.parentNode;
+    if (!parent) {
+      return;
+    }
+
+    var wrapper = doc.createElement("div");
+    wrapper.className = CODE_BLOCK_CLASS;
+    var button = createCopyButton(doc);
+
+    parent.replaceChild(wrapper, block);
+    wrapper.appendChild(block);
+    wrapper.appendChild(button);
+    buttons.push(button);
+  });
+
+  body.addEventListener("click", function (event) {
+    var button = buttonOf(event, COPY_BUTTON_CLASS);
+    if (!button) {
+      return;
+    }
+    copyBlock(button);
+  });
+
+  return buttons;
+}
+
+/**
+ * The code blocks of `body` that do not carry a button yet.
+ *
+ * `pre.code` is what the build emits for a code block and nothing else, and
+ * the wrapper check keeps a body that is filled twice from wrapping an
+ * already wrapped block a second time.
+ */
+function codeBlocksOf(body) {
+  var found = body.querySelectorAll(CODE_SELECTOR) || [];
+  var blocks = [];
+
+  for (var index = 0; index < found.length; index += 1) {
+    var parent = found[index].parentNode;
+    if (
+      parent &&
+      parent.classList &&
+      parent.classList.contains(CODE_BLOCK_CLASS)
+    ) {
+      continue;
+    }
+    blocks.push(found[index]);
+  }
+
+  return blocks;
+}
+
+/** Build the copy button of one code block. */
+function createCopyButton(doc) {
+  var button = doc.createElement("button");
+  button.className = COPY_BUTTON_CLASS;
+  button.setAttribute("type", "button");
+  button.setAttribute("aria-label", COPY_LABEL);
+  button.setAttribute("title", COPY_LABEL);
+
+  var svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+
+  COPY_ICON_PATHS.forEach(function (pathData) {
+    var path = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathData);
+    svg.appendChild(path);
+  });
+
+  button.appendChild(svg);
+
+  return button;
+}
+
+/** Copy the code the button's block carries, and say so when it worked. */
+function copyBlock(button) {
+  var text = codeTextOf(button);
+  if (!text) {
+    return;
+  }
+
+  writeClipboard(text, function (copied) {
+    if (copied) {
+      markCopied(button);
+    }
+  });
+}
+
+/**
+ * The text a copy button copies: its block's code, without the newline the
+ * build ends every block with.
+ *
+ * The wrapper's first child is the `pre`, and the `code` inside it is the
+ * only child the build gives the `pre`; the text comes from that element, so
+ * the button's own label can never ride along with the copy.
+ */
+function codeTextOf(button) {
+  var wrapper = button.parentNode;
+  var pre = wrapper && wrapper.children ? wrapper.children[0] : null;
+  if (!pre) {
+    return "";
+  }
+
+  var code = pre.children && pre.children[0];
+  var text =
+    code && typeof code.textContent === "string"
+      ? code.textContent
+      : typeof pre.textContent === "string"
+        ? pre.textContent
+        : "";
+
+  return text.replace(/\n$/, "");
+}
+
+/**
+ * Write `text` to the clipboard, by whatever route the page offers.
+ *
+ * The asynchronous clipboard API is the modern route, but a reader may sit on
+ * a page or an engine that has none or refuses it — a document opened by a
+ * double click is offline by design — so the `execCommand` copy over a
+ * selected, invisible textarea is kept as the way back. `done` answers with
+ * whether the text was written, at once when the veteran route carried it
+ * and a turn later when the asynchronous one did.
+ */
+function writeClipboard(text, done) {
+  var clip = globalThis.navigator && globalThis.navigator.clipboard;
+
+  if (clip && typeof clip.writeText === "function") {
+    clip.writeText(text).then(
+      function () {
+        done(true);
+      },
+      function () {
+        done(legacyCopy(text));
+      },
+    );
+    return;
+  }
+
+  done(legacyCopy(text));
+}
+
+/** The `execCommand` route: a selected, off-screen textarea the command copies. */
+function legacyCopy(text) {
+  var doc = globalThis.document;
+  if (
+    !doc ||
+    !doc.body ||
+    typeof doc.createElement !== "function" ||
+    typeof doc.execCommand !== "function"
+  ) {
+    return false;
+  }
+
+  var area = doc.createElement("textarea");
+  area.setAttribute("readonly", "");
+  area.value = text;
+  // Off-screen yet rendered: a textarea that is not on the page cannot be
+  // selected, and one that lands in the flow can move the page as it arrives.
+  area.style.position = "fixed";
+  area.style.top = "-1000px";
+  area.style.opacity = "0";
+
+  doc.body.appendChild(area);
+  area.select();
+
+  var copied = false;
+  try {
+    copied = doc.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+
+  doc.body.removeChild(area);
+
+  return copied === true;
+}
+
+/** Put the button in its copied state, and take it back out a moment later. */
+function markCopied(button) {
+  if (button.__wikiccCopyTimer) {
+    globalThis.clearTimeout(button.__wikiccCopyTimer);
+  }
+
+  button.setAttribute("data-copied", "");
+  button.setAttribute("aria-label", COPIED_LABEL);
+  button.setAttribute("title", COPIED_LABEL);
+
+  button.__wikiccCopyTimer = globalThis.setTimeout(function () {
+    button.__wikiccCopyTimer = null;
+    button.removeAttribute("data-copied");
+    button.setAttribute("aria-label", COPY_LABEL);
+    button.setAttribute("title", COPY_LABEL);
+  }, COPY_FEEDBACK_MS);
 }
 
 /**
  * Fill an existing element with a document's markup.
  *
  * `options.enhanceTables` says whether the tables in the markup gain the sort
- * and filter controls of the article, and `options.collapsible` whether its
- * chapters gain the arrow that folds them. The work happens here, right after
- * the markup exists and — for a caller that has not inserted the element yet —
- * before it is on screen.
+ * and filter controls of the article, `options.codeCopy` whether its code
+ * blocks gain the button that copies them, and `options.collapsible` whether
+ * its chapters gain the arrow that folds them. The work happens here, right
+ * after the markup exists and — for a caller that has not inserted the
+ * element yet — before it is on screen.
+ *
+ * The copy buttons go in first: each wrapper takes its block's own place
+ * among the body's children, and the chapter ranges the folding computes read
+ * the body after the swap, so the two enhancements agree on what a chapter
+ * holds.
  *
  * Returns `body`, so a call can sit at the head of an expression.
  */
 export function fillDocBody(body, html, options) {
   body.innerHTML = html;
+
+  if (options && options.codeCopy) {
+    enhanceCodeCopy(body);
+  }
 
   if (options && options.enhanceTables) {
     TableView.enhanceTables(body);
@@ -384,8 +663,9 @@ export function fillDocBody(body, html, options) {
  *
  * `options.extraClass` names what the container is — the search preview's
  * `search-document`, for one — and goes in front, so the class string reads
- * "what it is, and that it typesets like the article". `options.enhanceTables`
- * and `options.collapsible` are handed to `fillDocBody` untouched.
+ * "what it is, and that it typesets like the article". `options.enhanceTables`,
+ * `options.codeCopy` and `options.collapsible` are handed to `fillDocBody`
+ * untouched.
  */
 export function createDocBody(html, options) {
   var body = document.createElement("div");
