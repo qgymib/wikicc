@@ -276,6 +276,17 @@ one is stated as a contract rather than left to the implementation.
   The search corpus of the split format is fetched once, on the first global
   search; the local scope reads the document in view, which is already in
   hand, so the default scope costs nothing.
+- **The hover preview never covers its link.** `preview-view.js` places the
+  panel below the link when the window holds it, above it when only the space
+  over the link does, and shrunk onto the roomier side when neither side
+  does — and every placement writes the same invariant with an inline
+  `max-height`: the panel ends one gap short of the link it describes, or
+  starts one gap past it. The height is measured once, before the placement,
+  and the layout may disagree afterwards — a late font, a table's controls,
+  anything the panel gains after the read — so the cap is what turns that
+  growth into scrolling inside the body instead of the bottom edge crossing
+  the link. `tests/js/preview-view.test.js` holds the invariant for all three
+  placements, including a panel that grows after it was measured.
 - **The opening document.** `router.js` resolves the address with one
   fallback chain: a known id, then the site's configured `home` (the
   payload's `home` key, honoured only when it names a known document), then

@@ -106,6 +106,18 @@ var SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 var MARGIN_PX = 10;
 
 /**
+ * Shortest height the panel keeps when no side of the viewport can hold it.
+ *
+ * A link near the middle of a short window leaves the panel no side tall
+ * enough for its whole self; the panel then lays itself on the roomier side
+ * and shrinks to the space there. Below this floor a shrink would produce a
+ * sliver no reader could use, so the panel keeps this height instead — a
+ * window that cramped is the one case where covering the link is accepted,
+ * because a panel too small to read helps nobody.
+ */
+var MIN_SHRUNK_HEIGHT_PX = 120;
+
+/**
  * How far the pointer must travel before a press on the head is a drag.
  *
  * A hand on a mouse button is never perfectly still, so a zero threshold would
@@ -557,7 +569,18 @@ export function createPreviewView(options) {
    * Place the panel next to `link` and keep it inside the viewport.
    *
    * Below the link by default; above it when there is no room, which is the
-   * common case for a link near the bottom of a long paragraph.
+   * common case for a link near the bottom of a long paragraph. When neither
+   * side holds the whole panel — a link near the middle of a short window —
+   * the panel lays itself on the roomier side and shrinks to the space there,
+   * so the link it describes stays on screen beside it rather than under it.
+   *
+   * Every placement writes the same invariant with a `max-height`: the panel
+   * never crosses the link it describes. The height was measured a moment
+   * ago and the layout may disagree later — a late font, a table's controls,
+   * anything the panel gains after this read — so each branch caps the panel
+   * at the space its own placement leaves, and content that grows after the
+   * measurement scrolls inside the body instead of pushing the bottom edge
+   * over the link.
    */
   function position(link) {
     // A panel the reader has moved is theirs: anchoring it again would undo
@@ -565,6 +588,11 @@ export function createPreviewView(options) {
     if (moved) {
       return;
     }
+
+    // Measure at the panel's natural height. A height a previous showing was
+    // shrunk to belongs to that showing; this one decides afresh, and the
+    // cleanup here is what keeps consecutive placings from compounding.
+    panel.style.maxHeight = "";
 
     var rect = link.getBoundingClientRect();
     var width = panel.offsetWidth || 480;
@@ -578,10 +606,31 @@ export function createPreviewView(options) {
     var above = rect.top - GAP_PX - height;
     var top = below;
     if (height && below + height > viewportHeight - MARGIN_PX) {
-      top =
-        above >= MARGIN_PX
-          ? above
-          : Math.max(MARGIN_PX, viewportHeight - height - MARGIN_PX);
+      if (above >= MARGIN_PX) {
+        top = above;
+        // The panel fits above as measured; the cap below keeps it there if
+        // it grows afterwards. It is the measured height exactly — a floor
+        // would let the bottom edge cross the link, which is the one thing
+        // this placement may never do.
+        panel.style.maxHeight = Math.max(0, rect.top - GAP_PX - top) + "px";
+      } else {
+        // Neither side holds the whole panel. The old fallback pinned the
+        // panel to the bottom edge, which could park it right over the link
+        // the reader is pointing at. The panel takes the roomier side
+        // instead and shrinks to the space there; the body scrolls, so the
+        // chapter stays reachable at the reduced height.
+        var roomBelow = viewportHeight - MARGIN_PX - below;
+        var roomAbove = rect.top - GAP_PX - MARGIN_PX;
+        if (roomAbove >= roomBelow) {
+          top = MARGIN_PX;
+          panel.style.maxHeight =
+            Math.max(MIN_SHRUNK_HEIGHT_PX, roomAbove) + "px";
+        } else {
+          top = below;
+          panel.style.maxHeight =
+            Math.max(MIN_SHRUNK_HEIGHT_PX, roomBelow) + "px";
+        }
+      }
     }
 
     var left = Math.min(
