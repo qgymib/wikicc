@@ -45,8 +45,10 @@ document with **every place the query occurs** marked, the selected one
 standing out. Opening the document is a firmer gesture: **double-click** the
 row, or press <kbd>Enter</kbd>, and the reader navigates to that document at
 that passage — the article opens with the query's occurrences marked the same
-way, the passage you picked standing out. The marks are the arrival's, not the
-reading's: they go when you navigate on. A row whose match is in the title or
+way, the passage you picked standing out. A mark covers what you typed and no
+more: query `instal` and "installation" is marked over its first six letters
+alone, the tail of the word left unmarked. The marks are the arrival's, not
+the reading's: they go when you navigate on. A row whose match is in the title or
 the outline alone has no passage in the body to land on; that document opens
 at its top.
 

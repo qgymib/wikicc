@@ -333,22 +333,6 @@ function isLowSurrogate(code) {
 }
 
 /**
- * The character at `index` of `text`, or `""` past its end.
- *
- * A single UTF-16 unit is a character of a regular expression only when it is
- * a whole code point: a lone surrogate half cannot be retyped through `\u`,
- * and a character outside the BMP is two units and has to be taken together.
- */
-function codePointAt(text, index) {
-  if (index >= text.length) {
-    return "";
-  }
-
-  var code = text.codePointAt(index);
-  return String.fromCodePoint(code);
-}
-
-/**
  * Where `term` is first found in `text` as a whole word or the start of one.
  *
  * A word the reader typed exactly wins over a longer word it merely begins —
@@ -401,8 +385,9 @@ function indexOfTerm(text, term, whole, from) {
  * The earliest exact hit of any term is chosen first, so a snippet shows a
  * word the reader typed as typed; only when no term appears as a whole word
  * does the prefix pass run, and then only for queries the engine would have
- * matched that way. The returned length is the whole word the hit begins, so a
- * prefix hit is highlighted as the word it stands for, not as its fragment.
+ * matched that way. The returned length is the length of the term itself, so
+ * a prefix hit is highlighted as what the reader typed — the rest of the word
+ * it begins stays unmarked.
  */
 function locate(text, query) {
   var haystack = String(text === null || text === undefined ? "" : text);
@@ -431,22 +416,7 @@ function locate(text, query) {
   }
 
   consider(false);
-  if (!best) {
-    return null;
-  }
-
-  // Widen a prefix hit to the word it starts, so highlighting matches what the
-  // reader sees instead of stopping mid-word. The parameter is a code point
-  // rather than a UTF-16 unit: a surrogate half would be retyped as U+FFFD,
-  // and a character outside the BMP would never look like a break.
-  var end = best.start + best.length;
-  var code = codePointAt(haystack, end);
-  while (code && !VALUE_END.test(code)) {
-    end += code.length;
-    code = codePointAt(haystack, end);
-  }
-
-  return { start: best.start, length: end - best.start };
+  return best;
 }
 
 /**
@@ -455,12 +425,12 @@ function locate(text, query) {
  * The search panel reads a whole document now, so the reader sees every place
  * the words appear rather than one cut-out paragraph; this is that list. The
  * hits are taken in reading order: a hit starts at a word boundary, matches
- * case-insensitively, and a prefix hit is widened to the word it begins — so
- * what is highlighted here reads exactly like the context the same query
- * produced in the result list. An earlier prefix hit is never given up for a
- * later whole word: the enumeration walks the text, it does not search for
- * the most literal place first, and every occurrence the scan passes is one
- * the result list names.
+ * case-insensitively, and a prefix hit runs exactly the length of the term
+ * typed — so what is highlighted here reads exactly like the context the
+ * same query produced in the result list. An earlier prefix hit is never
+ * given up for a later whole word: the enumeration walks the text, it does
+ * not search for the most literal place first, and every occurrence the scan
+ * passes is one the result list names.
  *
  * Overlaps are merged rather than nested: a word can begin inside a longer
  * word already highlighted ("cat" inside "catalogue" that "cata" began), and
@@ -511,13 +481,14 @@ export function matchRanges(text, query) {
  *
  * The scan walks the text in reading order and stops at the first place a
  * word can begin — a whole word and a prefix of one are the same place here:
- * the first word-boundary match the scan meets *is* the next occurrence,
- * widened to the word it stands in when it is not complete. Whole-first
- * picking, `locate`'s single-shot rule, is deliberately not repeated here:
- * `matchRanges` walks the text hit by hit, and letting a later whole word
- * pull the scan past an earlier prefix hit would drop every occurrence in
- * between — the result list would number fewer places than the preview
- * marks, and the two would no longer describe the same passage.
+ * the first word-boundary match the scan meets *is* the next occurrence, and
+ * it runs exactly the length of the term that matched, so the highlight
+ * covers what the reader typed and never the rest of the word it begins.
+ * Whole-first picking, `locate`'s single-shot rule, is deliberately not
+ * repeated here: `matchRanges` walks the text hit by hit, and letting a
+ * later whole word pull the scan past an earlier prefix hit would drop every
+ * occurrence in between — the result list would number fewer places than
+ * the preview marks, and the two would no longer describe the same passage.
  *
  * Only positions the scan has not passed are considered, which is what lets
  * `matchRanges` consume the text once instead of re-scanning it per hit. The
@@ -542,23 +513,10 @@ function locateFrom(value, words, from) {
         continue;
       }
 
-      var end = start + term.length;
-      var length = term.length;
-      // A prefix hit covers the whole word it begins, so the highlight reads
-      // like the word the reader sees rather than stopping mid-word.
-      if (
-        end < value.length &&
-        !VALUE_END.test(String.fromCodePoint(value.codePointAt(end)))
-      ) {
-        var code = codePointAt(value, end);
-        while (code && !VALUE_END.test(code)) {
-          end += code.length;
-          code = codePointAt(value, end);
-        }
-        length = end - start;
-      }
-      if (best === null || length > best.length) {
-        best = { start: start, length: length };
+      // A prefix hit runs exactly the length the reader typed: the mark must
+      // stop where the query stops, not stretch over the rest of the word.
+      if (best === null || term.length > best.length) {
+        best = { start: start, length: term.length };
       }
     }
     if (best) {

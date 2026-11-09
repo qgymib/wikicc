@@ -130,11 +130,11 @@ test("a snippet cuts the text around the hit and says what it dropped", () => {
   assert.equal(snippet.trimmedEnd, true);
 });
 
-test("a prefix hit is highlighted as the whole word it begins", () => {
-  const snippet = search.matchSnippet("read the introduction first", "introd");
+test("a prefix hit is highlighted only as the fragment typed", () => {
+  const snippet = search.matchSnippet("hold the glinting gear", "glint");
 
-  assert.equal(snippet.hit, "introduction");
-  assert.equal(snippet.after, " first");
+  assert.equal(snippet.hit, "glint");
+  assert.equal(snippet.after, "ing gear");
 });
 
 test("a hit is only recognised at the start of a word", () => {
@@ -268,36 +268,47 @@ test("a hit is only recognised at the start of a word", () => {
   ]);
 });
 
-test("a prefix hit covers the whole word it begins", () => {
-  // "introd" prefixes "introduction" but not "intro", which is the other way
-  // round — so only the longer word is highlighted here.
-  assert.deepEqual(search.matchRanges("introduction and intro", "introd"), [
-    { start: 0, length: 12 },
+test("a prefix hit is marked only over the fragment typed", () => {
+  // "glintin" prefixes "glinting" but not "glint", which is the other way
+  // round — so only the longer word is found here, and only the typed
+  // fragment of it is highlighted.
+  assert.deepEqual(search.matchRanges("glinting and glint", "glintin"), [
+    { start: 0, length: 7 },
   ]);
-  // "intro" also prefixes "introduction" here, so both words the reader sees
-  // are hits, in the order the text holds them: the enumeration walks the
-  // text and never trades an earlier prefix hit for a later whole word.
-  assert.deepEqual(search.matchRanges("introduction and intro", "intro"), [
-    { start: 0, length: 12 },
-    { start: 17, length: 5 },
-  ]);
-  assert.deepEqual(search.matchRanges("intro and introduction", "intro"), [
+  // "glint" prefixes "glinting" here, so both words the reader sees are
+  // hits, in the order the text holds them: the enumeration walks the text
+  // and never trades an earlier prefix hit for a later whole word.
+  assert.deepEqual(search.matchRanges("glinting and glint", "glint"), [
     { start: 0, length: 5 },
-    { start: 10, length: 12 },
+    { start: 13, length: 5 },
+  ]);
+  assert.deepEqual(search.matchRanges("glint and glinting", "glint"), [
+    { start: 0, length: 5 },
+    { start: 10, length: 5 },
   ]);
 });
 
 test("a prefix hit is kept even when a whole word follows it", () => {
-  // Reading order is the enumeration's only order: "reading" at the head is
-  // widened and kept, "reader" and "read" follow it, and no later whole word
-  // pulls the scan past the hits in front of it. A whole-first pick here once
-  // dropped every prefix hit between two whole words, which made the result
-  // list number fewer places than the preview marked and the two disagree
-  // about the place a row names.
-  assert.deepEqual(search.matchRanges("reading the reader read", "read"), [
-    { start: 0, length: 7 },
-    { start: 12, length: 6 },
-    { start: 19, length: 4 },
+  // Reading order is the enumeration's only order: "glinting" at the head is
+  // kept, "glints" and "glint" follow it, and no later whole word pulls the
+  // scan past the hits in front of it. A whole-first pick here once dropped
+  // every prefix hit between two whole words, which made the result list
+  // number fewer places than the preview marked and the two disagree about
+  // the place a row names.
+  assert.deepEqual(search.matchRanges("glinting the glints glint", "glint"), [
+    { start: 0, length: 5 },
+    { start: 13, length: 5 },
+    { start: 20, length: 5 },
+  ]);
+});
+
+test("the mark of a prefix hit stops where the query stops", () => {
+  // Searching "glint" still finds "glinting", but the mark covers only what
+  // the reader typed — the tail of the word stays unmarked in the list and
+  // in the preview alike.
+  assert.deepEqual(search.matchRanges("glinting glint", "glint"), [
+    { start: 0, length: 5 },
+    { start: 9, length: 5 },
   ]);
 });
 
@@ -311,9 +322,10 @@ test("a word hidden behind an earlier hit is never highlighted", () => {
   ]);
   // The prefix word is a hit of its own and comes first, in the order the
   // text holds it; what its interior hides — a "cat" that would start inside
-  // "catalogue" — is never a hit of its own.
+  // "catalogue" — is never a hit of its own, and the highlight covers only
+  // the fragment the reader typed.
   assert.deepEqual(search.matchRanges("catalogue and cat", "cat"), [
-    { start: 0, length: 9 },
+    { start: 0, length: 3 },
     { start: 14, length: 3 },
   ]);
 });
@@ -443,16 +455,16 @@ test("a document's occurrences stay together in the order the ids arrive", () =>
   );
 });
 
-test("a prefix query widens each occurrence to the word it begins", () => {
-  const local = [doc("intro.md", "Intro", "introduction and intro")];
-  const entries = search.occurrences(local, ["intro.md"], "introd");
+test("a prefix query highlights only the fragment typed", () => {
+  const local = [doc("glint.md", "Glint", "glinting and glint")];
+  const entries = search.occurrences(local, ["glint.md"], "glintin");
 
   assert.equal(
     entries.length,
     1,
     "the tail of a longer word is not a hit of its own",
   );
-  assert.equal(entries[0].snippet.hit, "introduction");
+  assert.equal(entries[0].snippet.hit, "glintin");
 });
 
 test("a word hidden inside a longer one is not an occurrence", () => {
