@@ -454,10 +454,13 @@ function locate(text, query) {
  *
  * The search panel reads a whole document now, so the reader sees every place
  * the words appear rather than one cut-out paragraph; this is that list. The
- * rules are `locate`'s, applied over and over: a hit starts at a word
- * boundary, matches case-insensitively, and a prefix hit is widened to the
- * word it begins — so what is highlighted here reads exactly like the context
- * the same query produced in the result list.
+ * hits are taken in reading order: a hit starts at a word boundary, matches
+ * case-insensitively, and a prefix hit is widened to the word it begins — so
+ * what is highlighted here reads exactly like the context the same query
+ * produced in the result list. An earlier prefix hit is never given up for a
+ * later whole word: the enumeration walks the text, it does not search for
+ * the most literal place first, and every occurrence the scan passes is one
+ * the result list names.
  *
  * Overlaps are merged rather than nested: a word can begin inside a longer
  * word already highlighted ("cat" inside "catalogue" that "cata" began), and
@@ -504,7 +507,17 @@ export function matchRanges(text, query) {
 }
 
 /**
- * The earliest hit of any of `words` in `value` at or after `from`.
+ * The first hit of any of `words` in `value` at or after `from`.
+ *
+ * The scan walks the text in reading order and stops at the first place a
+ * word can begin — a whole word and a prefix of one are the same place here:
+ * the first word-boundary match the scan meets *is* the next occurrence,
+ * widened to the word it stands in when it is not complete. Whole-first
+ * picking, `locate`'s single-shot rule, is deliberately not repeated here:
+ * `matchRanges` walks the text hit by hit, and letting a later whole word
+ * pull the scan past an earlier prefix hit would drop every occurrence in
+ * between — the result list would number fewer places than the preview
+ * marks, and the two would no longer describe the same passage.
  *
  * Only positions the scan has not passed are considered, which is what lets
  * `matchRanges` consume the text once instead of re-scanning it per hit. The
@@ -514,46 +527,46 @@ export function matchRanges(text, query) {
  * the scan has already passed the "o" — would then be found inside a longer
  * word and highlighted as though the author had written it.
  *
- * The widening to the whole word runs only on the first pass: a larger
- * `whole` flag means "hit must be a complete word", so the end is not touched.
+ * When several words of one query begin at the same place, the longest wins,
+ * which is what a highlight of that place covers.
  */
 function locateFrom(value, words, from) {
-  var best = null;
-
-  function consider(whole) {
-    words.forEach(function (term) {
-      var start = indexOfTerm(value, term, whole, from);
-      if (start === -1) {
-        return;
+  for (var start = Math.max(0, from || 0); start < value.length; start += 1) {
+    var best = null;
+    for (var index = 0; index < words.length; index += 1) {
+      var term = words[index];
+      if (start + term.length > value.length) {
+        continue;
       }
+      if (!matchesAt(value, start, term) || !startsWord(value, start)) {
+        continue;
+      }
+
+      var end = start + term.length;
+      var length = term.length;
+      // A prefix hit covers the whole word it begins, so the highlight reads
+      // like the word the reader sees rather than stopping mid-word.
       if (
-        best === null ||
-        start < best.start ||
-        (start === best.start && term.length > best.length)
+        end < value.length &&
+        !VALUE_END.test(String.fromCodePoint(value.codePointAt(end)))
       ) {
-        best = { start: start, length: term.length };
+        var code = codePointAt(value, end);
+        while (code && !VALUE_END.test(code)) {
+          end += code.length;
+          code = codePointAt(value, end);
+        }
+        length = end - start;
       }
-    });
+      if (best === null || length > best.length) {
+        best = { start: start, length: length };
+      }
+    }
+    if (best) {
+      return best;
+    }
   }
 
-  consider(true);
-  if (best) {
-    return best;
-  }
-
-  consider(false);
-  if (!best) {
-    return null;
-  }
-
-  var end = best.start + best.length;
-  var code = codePointAt(value, end);
-  while (code && !VALUE_END.test(code)) {
-    end += code.length;
-    code = codePointAt(value, end);
-  }
-
-  return { start: best.start, length: end - best.start };
+  return null;
 }
 
 /**

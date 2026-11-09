@@ -274,15 +274,30 @@ test("a prefix hit covers the whole word it begins", () => {
   assert.deepEqual(search.matchRanges("introduction and intro", "introd"), [
     { start: 0, length: 12 },
   ]);
-  // "intro" is a prefix of "introduction" rather than the other way round, so
-  // only the word that really is "intro" is highlighted — until the widening
-  // pass runs, which a complete word always satisfies first.
+  // "intro" also prefixes "introduction" here, so both words the reader sees
+  // are hits, in the order the text holds them: the enumeration walks the
+  // text and never trades an earlier prefix hit for a later whole word.
   assert.deepEqual(search.matchRanges("introduction and intro", "intro"), [
+    { start: 0, length: 12 },
     { start: 17, length: 5 },
   ]);
   assert.deepEqual(search.matchRanges("intro and introduction", "intro"), [
     { start: 0, length: 5 },
     { start: 10, length: 12 },
+  ]);
+});
+
+test("a prefix hit is kept even when a whole word follows it", () => {
+  // Reading order is the enumeration's only order: "reading" at the head is
+  // widened and kept, "reader" and "read" follow it, and no later whole word
+  // pulls the scan past the hits in front of it. A whole-first pick here once
+  // dropped every prefix hit between two whole words, which made the result
+  // list number fewer places than the preview marked and the two disagree
+  // about the place a row names.
+  assert.deepEqual(search.matchRanges("reading the reader read", "read"), [
+    { start: 0, length: 7 },
+    { start: 12, length: 6 },
+    { start: 19, length: 4 },
   ]);
 });
 
@@ -294,11 +309,13 @@ test("a word hidden behind an earlier hit is never highlighted", () => {
     { start: 0, length: 5 },
     { start: 6, length: 5 },
   ]);
-  assert.deepEqual(
-    search.matchRanges("catalogue and cat", "cat"),
-    [{ start: 14, length: 3 }],
-    "the tail of a longer word is not a hit",
-  );
+  // The prefix word is a hit of its own and comes first, in the order the
+  // text holds it; what its interior hides — a "cat" that would start inside
+  // "catalogue" — is never a hit of its own.
+  assert.deepEqual(search.matchRanges("catalogue and cat", "cat"), [
+    { start: 0, length: 9 },
+    { start: 14, length: 3 },
+  ]);
 });
 
 test("hits ignore case", () => {

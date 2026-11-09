@@ -14,6 +14,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import * as search from "../../src/web/js/search.js";
 import {
   CLEAR_LABEL,
   DOCUMENT_CLASS,
@@ -958,6 +959,55 @@ test("a hit inside a code block is not marked", () => {
     var marks = page.container.findAll(HIT_CLASS);
     assert.equal(marks.length, 1, "the code block is left as written");
     assert.equal(marks[0].parentNode.tagName, "P");
+  });
+});
+
+test("the list's ordinals name the same places the preview's slots do", () => {
+  withPage(function (page) {
+    // A document whose prefix hits ("reader") sit in front of a whole word
+    // ("read"): the enumeration must keep all of them, and the list must
+    // number exactly the places the preview marked — one row per place, the
+    // row's snippet and the slot behind its ordinal naming the same word.
+    // A whole-first pick of the next occurrence once dropped the prefix hits
+    // in between, and the list then numbered fewer places than the preview
+    // held, so a picked row scrolled the preview to a different place.
+    var html =
+      "<p>the reader opens the reader</p>\n<p>then read the rest</p>\n";
+    // The document's searchable text, as the build writes it: the paragraphs
+    // joined with one space.
+    var text = "the reader opens the reader then read the rest";
+    var siteDocs = [{ id: "a.md", title: "A", text: text, toc: [] }];
+    var engine = search.createSearch(siteDocs);
+    var rows = search.occurrences(
+      siteDocs,
+      search.search(engine, "read"),
+      "read",
+    );
+
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "A", html) },
+      answer() {
+        return rows;
+      },
+    });
+    built.view.open();
+    type(built.view, page, "read");
+
+    assert.equal(rows.length, 3, "every occurrence is its own row");
+    var marks = page.container.findAll(HIT_CLASS);
+    assert.equal(
+      marks.length,
+      rows.length,
+      "the preview holds one slot per row",
+    );
+    rows.forEach(function (row, ordinal) {
+      assert.equal(
+        textOf(marks[ordinal]),
+        row.snippet.hit,
+        "row " + ordinal + " and slot " + ordinal + " are the same place",
+      );
+    });
   });
 });
 
