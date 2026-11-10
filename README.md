@@ -145,6 +145,8 @@ wikicc [OPTIONS] [INPUT_DIR]
       --strict[=<BOOL>]  Treat warnings as errors; --strict=false turns the gate off
       --home <DOC>       Document the reader opens first; overrides .wikicc.json
       --exclude <DIR>    Directory to keep out of the site; repeatable, overrides .wikicc.json
+      --favicon <FILE>   Favicon file relative to the input folder; overrides
+                         .wikicc.json [default: the wikicc logo]
       --force            Overwrite the output directory without confirmation
   -q, --quiet            Suppress the summary line
       --init-config [DIR]
@@ -162,6 +164,7 @@ wikicc path/to/docs --format pages        # a static site for GitHub Pages
 wikicc path/to/docs --strict              # broken links fail the build
 wikicc path/to/docs --home guide/intro.md # override the configured opening document
 wikicc path/to/docs --exclude drafts      # override the configured exclusions
+wikicc path/to/docs --favicon assets/icon.png
 wikicc --init-config path/to/docs         # writes path/to/docs/.wikicc.json
 ```
 
@@ -181,7 +184,7 @@ A successful build prints a summary line and reports diagnostics on stderr;
 ### Configuration file
 
 A site can carry an optional `.wikicc.json` in the **input folder root**. The
-file is JSON and knows six keys — the same settings the command line takes,
+file is JSON and knows keys — the same settings the command line takes,
 so each of them can also be overridden by a flag:
 
 | Key | Meaning |
@@ -191,6 +194,7 @@ so each of them can also be overridden by a flag:
 | `out` | Output directory [default: `<INPUT_DIR>/dist`] |
 | `format` | `single-html`, `html-dir` or `pages` [default: `single-html`] |
 | `title` | Site title [default: the input folder name] |
+| `favicon` | Favicon file relative to the input folder [default: the wikicc logo] |
 | `strict` | Fail the build on warnings [default: `false`] |
 
 `home` is a document id — the path relative to the input folder, `/`
@@ -212,6 +216,14 @@ configuration file sits in — so a relative value builds to the same place no
 matter which working directory the build was started from. A command line
 `--out` keeps its own convention: relative to the working directory.
 
+`favicon` is a file path relative to the input folder (`\` is read as `/`, a
+leading `./` is dropped; an absolute path is taken as it is). Every page
+carries it as its `<link rel="icon">`: the icon travels through the same
+content-addressed asset system as the documents' images, inlined as a data
+URI by `single-html` and written to `assets/` by the other two formats.
+Without the key the reader carries the wikicc logo, which is embedded into
+the executable at build time.
+
 ```json
 {
   "home": "guide/getting-started.md",
@@ -219,6 +231,7 @@ matter which working directory the build was started from. A command line
   "out": "site",
   "format": "pages",
   "title": "Handbook",
+  "favicon": "assets/icon.png",
   "strict": false
 }
 ```
@@ -228,7 +241,8 @@ matter which working directory the build was started from. A command line
 - `--home` replaces the configured `home`.
 - `--exclude` **replaces** the configured list entirely; repeat the flag for
   several directories.
-- `--out`, `--format` and `--title` override their configured counterparts.
+- `--out`, `--format`, `--title` and `--favicon` override their configured
+  counterparts.
 - A bare `--strict` turns the gate on and `--strict=false` turns it off,
   whatever the file says.
 - `--force` and `--quiet` exist only on the command line; the file never
@@ -240,6 +254,10 @@ matter which working directory the build was started from. A command line
 - An `exclude` entry that escapes the input folder (`..`) or cannot match any
   directory (empty) fails the build for the same reason a broken `home` would,
   whatever the source it came from.
+- A `favicon` that is empty after normalization or escapes the input folder
+  fails the build the same way, and a configured favicon file that cannot be
+  read fails the build too: the icon is an explicit instruction, not
+  something to silently replace with the default.
 - An unreadable or invalid file fails the build: a broken instruction must
   not be silently ignored.
 - Unknown keys warn, so a typo never silently changes nothing.
@@ -257,6 +275,7 @@ key unset:
   "out": null,
   "format": null,
   "title": null,
+  "favicon": null,
   "strict": null
 }
 ```

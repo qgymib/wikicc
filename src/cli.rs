@@ -113,6 +113,8 @@ mod tests {
             "intro",
             "--exclude",
             "drafts",
+            "--favicon",
+            "assets/icon.png",
             "--force",
             "--quiet",
         ]);
@@ -124,6 +126,7 @@ mod tests {
         assert_eq!(cli.settings.strict, Some(true));
         assert_eq!(cli.settings.home.as_deref(), Some("intro"));
         assert_eq!(cli.settings.exclude, Some(vec!["drafts".to_string()]));
+        assert_eq!(cli.settings.favicon.as_deref(), Some("assets/icon.png"));
         assert!(cli.force);
         assert!(cli.quiet);
     }
@@ -245,6 +248,7 @@ mod tests {
             "--strict",
             "--home",
             "--exclude",
+            "--favicon",
             "--force",
             "--quiet",
             "--init-config",

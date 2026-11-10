@@ -22,7 +22,10 @@ use wikicc::render::{PAGES_DIR_NAME, SEARCH_FILE_NAME};
 use wikicc::scan::scan;
 use wikicc::site::build_site;
 use wikicc::writers::{ASSETS_DIR_NAME, HTML_FILE_NAME};
-use wikicc::{APP_BUNDLE, RenderedSite, SHELL_CSS, SiteBundle, render_site, theme_css};
+use wikicc::{
+    APP_BUNDLE, DEFAULT_FAVICON, DEFAULT_FAVICON_NAME, RenderedSite, SHELL_CSS, SiteBundle,
+    asset_hash, render_site, theme_css,
+};
 
 /// Prefix of the opaque asset placeholder the writers replace.
 const ASSET_PREFIX: &str = "wikicc-asset:";
@@ -39,13 +42,23 @@ fn fixture_root() -> PathBuf {
 }
 
 /// Scan `root` and assemble its payload, exactly as the binary does.
+///
+/// The favicon is registered the way the pipeline does, so the page mirrors
+/// what the binary renders.
 fn build(root: &Path, title: &str) -> SiteBundle {
     let report = scan(root, &root.join("dist")).expect("scan");
-    build_site(title, root, &report.docs).bundle
+    let mut build = build_site(title, root, &report.docs);
+    build.register_favicon(DEFAULT_FAVICON_NAME, DEFAULT_FAVICON);
+    build.bundle
+}
+
+/// The placeholder the registered default favicon carries in a page.
+fn favicon_href() -> String {
+    format!("{ASSET_PREFIX}{}", asset_hash(DEFAULT_FAVICON))
 }
 
 fn render(bundle: &SiteBundle) -> RenderedSite {
-    render_site(bundle).expect("the shell renders")
+    render_site(bundle, &favicon_href()).expect("the shell renders")
 }
 
 /// Payload text embedded in a rendered page.
@@ -1677,7 +1690,7 @@ fn the_default_format_writes_one_self_contained_page() {
     assert!(output.status.success(), "{}", stderr_of(&output));
     let stdout = stdout_of(&output);
     assert!(
-        stdout.contains("compiled 3 documents, 1 asset"),
+        stdout.contains("compiled 3 documents, 2 assets"),
         "unexpected summary: {stdout}"
     );
     assert!(
@@ -1690,6 +1703,10 @@ fn the_default_format_writes_one_self_contained_page() {
     let page = String::from_utf8(files[0].1.clone()).expect("the page is utf-8");
 
     assert!(page.starts_with("<!DOCTYPE html>"));
+    assert!(
+        page.contains(r#"<link rel="icon""#),
+        "the head carries the favicon link"
+    );
     for marker in [
         "<script src=",
         "<link rel=\"stylesheet\"",
@@ -1737,8 +1754,8 @@ fn every_format_writes_its_documented_artifacts() {
     assert!(names.contains(&HTML_FILE_NAME), "paths: {names:?}");
     assert_eq!(
         names.len(),
-        2,
-        "one page plus one deduplicated asset: {names:?}"
+        3,
+        "one page plus the two deduplicated assets, the fixture logo and the favicon: {names:?}"
     );
     let asset = names
         .iter()
@@ -1753,6 +1770,10 @@ fn every_format_writes_its_documented_artifacts() {
     assert!(
         page.contains(asset),
         "the page must address {asset} by its relative path"
+    );
+    assert!(
+        page.contains(r#"<link rel="icon" href="assets/"#),
+        "the favicon is a sibling file of the page"
     );
 
     let multi_format = tempfile::tempdir().expect("temp dir");
@@ -1776,8 +1797,8 @@ fn every_format_writes_its_documented_artifacts() {
             .iter()
             .filter(|name| name.starts_with(&format!("{ASSETS_DIR_NAME}/")))
             .count(),
-        1,
-        "one deduplicated asset: {names:?}"
+        2,
+        "the fixture logo and the favicon: {names:?}"
     );
 
     let page = files
@@ -1788,6 +1809,10 @@ fn every_format_writes_its_documented_artifacts() {
     assert!(
         page.contains(r#""mode":"pages""#),
         "the shell payload names the pages mode"
+    );
+    assert!(
+        page.contains(r#"<link rel="icon" href="assets/"#),
+        "the favicon is a sibling file of the shell"
     );
     assert!(
         !page.contains("wikicc-asset:"),

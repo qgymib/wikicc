@@ -111,6 +111,10 @@ pub struct Settings {
     /// Directory whose entire subtree stays out of the site; repeatable, overrides `.wikicc.json`
     #[arg(long, value_name = "DIR")]
     pub exclude: Option<Vec<String>>,
+
+    /// Favicon file relative to the input folder; overrides `.wikicc.json` [default: the wikicc logo]
+    #[arg(long, value_name = "FILE")]
+    pub favicon: Option<String>,
 }
 
 /// The raw build intent: what the command line said, before any default.
@@ -156,6 +160,10 @@ pub struct Options {
     /// The `exclude` entries, normalized (trimmed, `\` read as `/`, a leading
     /// `./` and a trailing `/` dropped) and deduplicated; empty when unset.
     pub exclude: Vec<String>,
+    /// The `favicon` value, normalized (trimmed, `\` read as `/`, a leading
+    /// `./` and a trailing `/` dropped) to a file path relative to the input
+    /// folder; `None` uses the embedded default logo.
+    pub favicon: Option<String>,
 }
 
 impl Options {
@@ -165,8 +173,9 @@ impl Options {
     /// Pure: no I/O and no filesystem access. A configuration `out` was
     /// already resolved against the input folder when the file was read, so
     /// both sources carry the same kind of value here. A `home` that is empty
-    /// after normalization and an `exclude` entry that escapes the input
-    /// folder are hard errors, whatever the source.
+    /// after normalization, an `exclude` entry that escapes the input folder
+    /// and a `favicon` that is empty after normalization or escapes the
+    /// input folder are hard errors, whatever the source.
     pub fn resolve(request: &Request, file: &Settings) -> Result<Self> {
         let cli = &request.settings;
         let input = &request.input;
@@ -185,6 +194,10 @@ impl Options {
             .clone()
             .or_else(|| file.exclude.clone())
             .unwrap_or_default();
+        let favicon = match cli.favicon.clone().or_else(|| file.favicon.clone()) {
+            Some(raw) => Some(normalize_favicon(&raw)?),
+            None => None,
+        };
 
         Ok(Self {
             input: input.clone(),
@@ -204,6 +217,7 @@ impl Options {
             quiet: request.quiet,
             home,
             exclude: normalize_excludes(&exclude)?,
+            favicon,
         })
     }
 
@@ -407,6 +421,35 @@ pub(crate) fn normalize_excludes(entries: &[String]) -> Result<Vec<String>> {
     Ok(excludes)
 }
 
+/// Normalize a `favicon` value of either source.
+///
+/// The value becomes a `/`-separated file path relative to the input folder:
+/// trimmed, `\` read as `/`, a leading `./` and a trailing `/` dropped. A
+/// value that normalizes to nothing, or that carries an empty, `.` or `..`
+/// component, is a hard error: the favicon is a file inside the input folder,
+/// and a path that escapes it or cannot name one must not silently build a
+/// site that carries the default icon instead.
+pub(crate) fn normalize_favicon(raw: &str) -> Result<String> {
+    let candidate = normalize_candidate(raw);
+    let candidate = candidate.trim_end_matches('/');
+
+    if candidate.is_empty() {
+        return Err(Error::InvalidInput(
+            "'favicon' must be a non-empty file path".to_string(),
+        ));
+    }
+    if candidate
+        .split('/')
+        .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return Err(Error::InvalidInput(format!(
+            "'favicon' value '{candidate}' is not a file path inside the input folder"
+        )));
+    }
+
+    Ok(candidate.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,6 +566,7 @@ mod tests {
         assert!(!options.strict);
         assert!(options.home.is_none());
         assert!(options.exclude.is_empty());
+        assert!(options.favicon.is_none());
     }
 
     #[test]
@@ -535,6 +579,7 @@ mod tests {
             strict: Some(true),
             home: Some("intro".to_string()),
             exclude: Some(vec!["drafts".to_string()]),
+            favicon: Some("assets/icon.png".to_string()),
         };
 
         let options = resolve_cli(dir.path(), settings).expect("valid settings");
@@ -545,6 +590,7 @@ mod tests {
         assert!(options.strict);
         assert_eq!(options.home.as_deref(), Some("intro"));
         assert_eq!(options.exclude, ["drafts"]);
+        assert_eq!(options.favicon.as_deref(), Some("assets/icon.png"));
     }
 
     #[test]
@@ -557,6 +603,7 @@ mod tests {
             strict: Some(true),
             home: Some("intro.md".to_string()),
             exclude: Some(vec!["drafts".to_string()]),
+            favicon: Some("assets/file.png".to_string()),
         };
 
         let options = resolve_file(dir.path(), file).expect("valid settings");
@@ -567,6 +614,7 @@ mod tests {
         assert!(options.strict);
         assert_eq!(options.home.as_deref(), Some("intro.md"));
         assert_eq!(options.exclude, ["drafts"]);
+        assert_eq!(options.favicon.as_deref(), Some("assets/file.png"));
     }
 
     #[test]
@@ -581,6 +629,7 @@ mod tests {
                 strict: Some(false),
                 home: Some("cli.md".to_string()),
                 exclude: Some(vec!["cli-drafts".to_string()]),
+                favicon: Some("cli.png".to_string()),
             },
             force: false,
             quiet: false,
@@ -592,6 +641,7 @@ mod tests {
             strict: Some(true),
             home: Some("file.md".to_string()),
             exclude: Some(vec!["file-drafts".to_string()]),
+            favicon: Some("file.png".to_string()),
         };
 
         let options = Options::resolve(&request, &file).expect("valid settings");
@@ -602,6 +652,7 @@ mod tests {
         assert!(!options.strict);
         assert_eq!(options.home.as_deref(), Some("cli.md"));
         assert_eq!(options.exclude, ["cli-drafts"]);
+        assert_eq!(options.favicon.as_deref(), Some("cli.png"));
     }
 
     #[test]
@@ -718,6 +769,74 @@ mod tests {
 
         assert_eq!(cli_error.to_string(), "'home' must be a non-empty string");
         assert_eq!(file_error.to_string(), "'home' must be a non-empty string");
+    }
+
+    #[test]
+    fn favicon_values_are_normalized_like_candidate_paths() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let settings = Settings {
+            favicon: Some(r" assets\icons\icon.png/ ".to_string()),
+            ..Settings::default()
+        };
+
+        let options = resolve_cli(dir.path(), settings).expect("valid settings");
+
+        assert_eq!(options.favicon.as_deref(), Some("assets/icons/icon.png"));
+    }
+
+    #[test]
+    fn an_empty_favicon_is_a_hard_error_whatever_the_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cli = Settings {
+            favicon: Some("   ".to_string()),
+            ..Settings::default()
+        };
+        let file = Settings {
+            favicon: Some(String::new()),
+            ..Settings::default()
+        };
+
+        let cli_error = resolve_cli(dir.path(), cli).expect_err("an empty favicon is rejected");
+        let file_error = resolve_file(dir.path(), file).expect_err("an empty favicon is rejected");
+
+        assert_eq!(
+            cli_error.to_string(),
+            "'favicon' must be a non-empty file path"
+        );
+        assert_eq!(
+            file_error.to_string(),
+            "'favicon' must be a non-empty file path"
+        );
+    }
+
+    #[test]
+    fn an_escaping_favicon_is_a_hard_error_whatever_the_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cli = Settings {
+            favicon: Some("../outside.png".to_string()),
+            ..Settings::default()
+        };
+        let file = Settings {
+            favicon: Some("assets/../icon.png".to_string()),
+            ..Settings::default()
+        };
+
+        let cli_error = resolve_cli(dir.path(), cli).expect_err("an escaping favicon is rejected");
+        let file_error =
+            resolve_file(dir.path(), file).expect_err("an escaping favicon is rejected");
+
+        assert!(
+            cli_error
+                .to_string()
+                .contains("is not a file path inside the input folder"),
+            "unexpected message: {cli_error}"
+        );
+        assert!(
+            file_error
+                .to_string()
+                .contains("is not a file path inside the input folder"),
+            "unexpected message: {file_error}"
+        );
     }
 
     #[test]

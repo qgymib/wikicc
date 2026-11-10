@@ -23,6 +23,7 @@ use std::path::Path;
 
 use wikicc::scan::scan;
 use wikicc::site::{SiteBuild, build_site};
+use wikicc::{DEFAULT_FAVICON, DEFAULT_FAVICON_NAME, asset_hash};
 
 /// The site title the fixture is built under.
 const SITE_TITLE: &str = "随手记";
@@ -85,7 +86,10 @@ fn reported_site() -> (tempfile::TempDir, SiteBuild) {
     );
 
     let report = scan(dir.path(), &dir.path().join("dist")).expect("scan");
-    let build = build_site(SITE_TITLE, dir.path(), &report.docs);
+    let mut build = build_site(SITE_TITLE, dir.path(), &report.docs);
+    // The favicon is registered the way the pipeline does, so the page mirrors
+    // what the binary renders.
+    build.register_favicon(DEFAULT_FAVICON_NAME, DEFAULT_FAVICON);
 
     (dir, build)
 }
@@ -257,7 +261,8 @@ fn the_route_anchor_survives_percent_decoding_as_the_block_id() {
 
 /// The rendered page for the reported site, for the checks that need the shell.
 fn page_of(build: &SiteBuild) -> String {
-    wikicc::render_site(&build.bundle)
+    let favicon = format!("wikicc-asset:{}", asset_hash(DEFAULT_FAVICON));
+    wikicc::render_site(&build.bundle, &favicon)
         .expect("the shell renders")
         .html
 }

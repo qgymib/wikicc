@@ -14,6 +14,7 @@ use wikicc::render::{
 use wikicc::scan::scan;
 use wikicc::site::{SiteBuild, build_site};
 use wikicc::writers::{self, ASSETS_DIR_NAME, HTML_FILE_NAME, WriteReport};
+use wikicc::{DEFAULT_FAVICON, DEFAULT_FAVICON_NAME, asset_hash};
 
 /// Reference prefixes a `single-html` artifact may still contain.
 ///
@@ -39,21 +40,35 @@ fn fixture_root() -> PathBuf {
 }
 
 /// Scan the fixture and assemble its payload, exactly as the binary does.
+///
+/// The favicon is registered the way the pipeline does, so the writers see the
+/// same asset table a real build carries.
 fn fixture_build() -> SiteBuild {
     let root = fixture_root();
     let report = scan(&root, &root.join("dist")).expect("scan");
-    build_site("Fixture", &root, &report.docs)
+    let mut build = build_site("Fixture", &root, &report.docs);
+    build.register_favicon(DEFAULT_FAVICON_NAME, DEFAULT_FAVICON);
+    build
+}
+
+/// The placeholder of the default favicon `fixture_build` registered.
+fn favicon_href() -> String {
+    format!("wikicc-asset:{}", asset_hash(DEFAULT_FAVICON))
 }
 
 fn render(build: &SiteBuild) -> RenderedOutput {
-    RenderedOutput::Page(render_site(&build.bundle).expect("the shell renders"))
+    let favicon = favicon_href();
+    RenderedOutput::Page(render_site(&build.bundle, &favicon).expect("the shell renders"))
 }
 
 /// Render the fixture the way `format` consumes it.
 fn render_for(format: OutputFormat, build: &SiteBuild) -> RenderedOutput {
     match format {
         OutputFormat::Pages => {
-            RenderedOutput::Pages(render_pages(&build.bundle).expect("the pages output renders"))
+            let favicon = favicon_href();
+            RenderedOutput::Pages(
+                render_pages(&build.bundle, &favicon).expect("the pages output renders"),
+            )
         }
         _ => render(build),
     }
@@ -171,9 +186,12 @@ fn the_output_directory_holds_exactly_one_file() {
     assert_eq!(
         report.assets,
         fixture_build().assets.len(),
-        "the fixture references exactly one asset"
+        "the report counts the assets the build carries"
     );
-    assert_eq!(report.assets, 1);
+    assert_eq!(
+        report.assets, 2,
+        "the fixture logo plus the favicon, deduplicated"
+    );
 }
 
 #[test]
@@ -349,7 +367,10 @@ fn html_dir_writes_the_page_next_to_a_deduplicated_asset_folder() {
         fixture_build().assets.len(),
         "the report counts unique assets"
     );
-    assert_eq!(report.assets, 1);
+    assert_eq!(
+        report.assets, 2,
+        "the fixture logo plus the favicon, deduplicated"
+    );
     assert_eq!(report.files, 1 + report.assets);
     assert_eq!(
         report.bytes,
@@ -363,13 +384,15 @@ fn html_dir_writes_the_page_next_to_a_deduplicated_asset_folder() {
     let assets = entry_names(&dir.path().join(ASSETS_DIR_NAME));
     assert_eq!(assets.len(), report.assets);
     assert!(
-        assets[0].ends_with(".svg"),
-        "the asset keeps its extension: {assets:?}"
+        assets.iter().all(|name| name.ends_with(".svg")),
+        "both assets keep their extension: {assets:?}"
     );
-    assert_eq!(
-        std::fs::read(dir.path().join(ASSETS_DIR_NAME).join(&assets[0])).expect("asset file"),
-        std::fs::read(fixture_root().join("assets").join("logo.svg")).expect("fixture logo"),
-        "the asset is the original file, byte for byte"
+    let logo = std::fs::read(fixture_root().join("assets").join("logo.svg")).expect("fixture logo");
+    assert!(
+        assets.iter().any(|name| {
+            std::fs::read(dir.path().join(ASSETS_DIR_NAME).join(name)).expect("asset file") == logo
+        }),
+        "the fixture logo is stored content-addressed: {assets:?}"
     );
 }
 
@@ -487,11 +510,11 @@ fn pages_writes_the_shell_chunks_corpus_and_assets() {
             SEARCH_FILE_NAME
         ]
     );
-    assert_eq!(report.assets, 1);
+    assert_eq!(report.assets, 2);
     assert_eq!(
         report.files,
         2 + report.assets + 3,
-        "the shell, the corpus, three chunks and one asset"
+        "the shell, the corpus, three chunks and the assets"
     );
     assert_eq!(
         report.bytes,
@@ -561,7 +584,7 @@ fn pages_manifest_names_every_document_with_its_chunk_hash() {
     let dir = tempfile::tempdir().expect("temp dir");
     write_fixture_in(OutputFormat::Pages, dir.path());
     let build = fixture_build();
-    let rendered = render_pages(&build.bundle).expect("the pages output renders");
+    let rendered = render_pages(&build.bundle, &favicon_href()).expect("the pages output renders");
     let value: serde_json::Value =
         serde_json::from_str(payload_of(&read_page(dir.path()))).expect("manifest JSON");
 

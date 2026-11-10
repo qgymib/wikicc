@@ -23,6 +23,11 @@
 //!   escaped so a document that contains `</script>` cannot terminate the
 //!   script element;
 //! - `{{ title }}` is the site title, escaped by the engine's HTML auto-escaper.
+//! - `{{ favicon|safe }}` is the address the page head's favicon link carries:
+//!   the opaque asset placeholder of the site favicon, which the writers
+//!   expand like every other resource. The pipeline resolves the value — the
+//!   configured file, else the logo embedded in the executable — and hands it
+//!   in; the render stage itself knows nothing about favicons.
 //!
 //! The pages format ([`render_pages`]) additionally projects the
 //! bundle into one JSON chunk per document and the search corpus file. Those
@@ -134,9 +139,11 @@ pub fn shell_js() -> &'static str {
 
 /// Render `bundle` into the self-contained page.
 ///
-/// Fails only on a broken build: a skeleton that does not compile or render, or
-/// an embedded resource that could close its own element.
-pub fn render_site(bundle: &SiteBundle) -> Result<RenderedSite> {
+/// `favicon` is the address the head's favicon link carries: the asset
+/// placeholder [`crate::site::SiteBuild::register_favicon`] returned. Fails
+/// only on a broken build: a skeleton that does not compile or render, or an
+/// embedded resource that could close its own element.
+pub fn render_site(bundle: &SiteBundle, favicon: &str) -> Result<RenderedSite> {
     let css = shell_css();
     let js = shell_js();
 
@@ -152,7 +159,7 @@ pub fn render_site(bundle: &SiteBundle) -> Result<RenderedSite> {
     }
 
     let payload = escape_json_for_script(&bundle.to_json());
-    let html = render_template(&bundle.title, css, js, &payload)?;
+    let html = render_template(&bundle.title, css, js, &payload, favicon)?;
 
     Ok(RenderedSite { html })
 }
@@ -321,11 +328,12 @@ pub fn chunk_file_name(id: &str) -> String {
 /// Render `bundle` into the pages projection: the shell page carrying the
 /// manifest, one JSON chunk per document and the search corpus file.
 ///
-/// Fails only on a broken build: a skeleton that does not compile or render,
-/// or an embedded resource that could close its own element. Document chunks
-/// follow scan order and the corpus follows the same order, so two builds of
-/// the same input are byte-identical.
-pub fn render_pages(bundle: &SiteBundle) -> Result<RenderedPages> {
+/// `favicon` is the address the shell head's favicon link carries, exactly as
+/// for [`render_site`]. Fails only on a broken build: a skeleton that does
+/// not compile or render, or an embedded resource that could close its own
+/// element. Document chunks follow scan order and the corpus follows the same
+/// order, so two builds of the same input are byte-identical.
+pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages> {
     let css = shell_css();
     let js = shell_js();
 
@@ -382,7 +390,7 @@ pub fn render_pages(bundle: &SiteBundle) -> Result<RenderedPages> {
     let payload = escape_json_for_script(
         &serde_json::to_string(&manifest).expect("a manifest always serialises to JSON"),
     );
-    let html = render_template(&bundle.title, css, js, &payload)?;
+    let html = render_template(&bundle.title, css, js, &payload, favicon)?;
 
     let corpus = SearchCorpus {
         docs: bundle
@@ -410,10 +418,16 @@ pub fn render_pages(bundle: &SiteBundle) -> Result<RenderedPages> {
 ///
 /// Undefined variables are an error rather than an empty string, so a typo in
 /// the skeleton fails the build instead of silently dropping the stylesheet,
-/// the script or the payload. The environment is built per call because the
-/// render stage runs once per output and compiling the skeleton costs
-/// microseconds next to the multi-megabyte bundle it carries.
-fn render_template(title: &str, css: &str, js: &str, payload: &str) -> Result<String> {
+/// the script, the payload or the favicon. The environment is built per call
+/// because the render stage runs once per output and compiling the skeleton
+/// costs microseconds next to the multi-megabyte bundle it carries.
+fn render_template(
+    title: &str,
+    css: &str,
+    js: &str,
+    payload: &str,
+    favicon: &str,
+) -> Result<String> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
     env.add_template(TEMPLATE_NAME, SHELL_TEMPLATE)
@@ -429,6 +443,7 @@ fn render_template(title: &str, css: &str, js: &str, payload: &str) -> Result<St
             css => css,
             js => js,
             payload => payload,
+            favicon => favicon,
         })
         .map_err(|error| Error::Render(format!("the page skeleton does not render: {error}")))
 }
@@ -472,6 +487,13 @@ mod tests {
             text: text.to_string(),
         }
     }
+
+    /// Favicon address the render functions of these tests receive.
+    ///
+    /// The pipeline passes the placeholder `register_favicon` returned; the
+    /// tests hand a stand-in with the same shape, since addressing is the
+    /// writers' job.
+    const FAVICON: &str = "wikicc-asset:0123456789abcdef";
 
     /// Payload embedded in a rendered page.
     fn payload_of(html: &str) -> &str {
@@ -637,11 +659,35 @@ mod tests {
     }
 
     #[test]
+    fn rendering_carries_the_favicon_link() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
+
+        let rendered = render_site(&build.bundle, FAVICON).expect("render");
+
+        assert!(
+            rendered
+                .html
+                .contains(r#"<link rel="icon" href="wikicc-asset:0123456789abcdef">"#),
+            "the head carries the favicon link"
+        );
+
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
+        assert!(
+            rendered
+                .shell
+                .html
+                .contains(r#"<link rel="icon" href="wikicc-asset:0123456789abcdef">"#),
+            "the pages shell carries the same link"
+        );
+    }
+
+    #[test]
     fn rendering_embeds_title_payload_and_scripts() {
         let dir = tempfile::tempdir().expect("temp dir");
         let build = build_site("Site <One>", dir.path(), &[source("a.md", "A", "# A\n")]);
 
-        let rendered = render_site(&build.bundle).expect("render");
+        let rendered = render_site(&build.bundle, FAVICON).expect("render");
 
         assert!(rendered.html.contains("<title>Site &lt;One&gt;</title>"));
         assert!(
@@ -674,7 +720,7 @@ mod tests {
             )],
         );
 
-        let rendered = render_site(&build.bundle).expect("render");
+        let rendered = render_site(&build.bundle, FAVICON).expect("render");
 
         assert_eq!(
             rendered.html.matches("</script>").count(),
@@ -696,8 +742,8 @@ mod tests {
         let build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
 
         assert_eq!(
-            render_site(&build.bundle).expect("render"),
-            render_site(&build.bundle).expect("render")
+            render_site(&build.bundle, FAVICON).expect("render"),
+            render_site(&build.bundle, FAVICON).expect("render")
         );
     }
 
@@ -733,7 +779,7 @@ mod tests {
                 source("b.md", "B", "# B\n"),
             ],
         );
-        let rendered = render_pages(&build.bundle).expect("render");
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
 
         // The manifest is the shell's payload and names every document.
         let manifest: serde_json::Value =
@@ -794,7 +840,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "![logo](logo.svg)\n").expect("write fixture");
         let report = crate::scan::scan(dir.path(), &dir.path().join("dist")).expect("scan");
         let build = build_site("Site", dir.path(), &report.docs);
-        let rendered = render_pages(&build.bundle).expect("render");
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
 
         assert!(
             rendered.chunks[0]
@@ -817,7 +863,7 @@ mod tests {
                 "# A\n\n</script><script>alert('x')</script>\n",
             )],
         );
-        let rendered = render_pages(&build.bundle).expect("render");
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
 
         let payload = payload_of(&rendered.shell.html);
         assert!(!payload.contains("</script"));
@@ -837,8 +883,8 @@ mod tests {
             &[source("a.md", "A", "# A\n"), source("b.md", "B", "# B\n")],
         );
 
-        let first = render_pages(&build.bundle).expect("render");
-        let second = render_pages(&build.bundle).expect("render");
+        let first = render_pages(&build.bundle, FAVICON).expect("render");
+        let second = render_pages(&build.bundle, FAVICON).expect("render");
 
         assert_eq!(first, second);
         assert_eq!(
@@ -853,7 +899,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let build = build_site("Empty", dir.path(), &[]);
 
-        let rendered = render_pages(&build.bundle).expect("render");
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
 
         assert!(rendered.chunks.is_empty());
         let manifest: serde_json::Value =
@@ -869,7 +915,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let build = build_site("Site <One>", dir.path(), &[source("a.md", "A", "# A\n")]);
 
-        let rendered = render_pages(&build.bundle).expect("render");
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
 
         let payload = payload_of(&rendered.shell.html);
         assert!(
@@ -891,7 +937,7 @@ mod tests {
         let mut bundle = build.bundle;
         bundle.home = Some("b.md".to_string());
 
-        let rendered = render_pages(&bundle).expect("render");
+        let rendered = render_pages(&bundle, FAVICON).expect("render");
         let manifest: serde_json::Value =
             serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
 
@@ -903,7 +949,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
 
-        let rendered = render_pages(&build.bundle).expect("render");
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
         let manifest: serde_json::Value =
             serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
 

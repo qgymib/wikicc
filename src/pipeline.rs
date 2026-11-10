@@ -6,7 +6,8 @@
 //! 1. validate the input directory,
 //! 2. read the optional `.wikicc.json` configuration from the input root,
 //! 3. merge the command line over the configuration over the built-in
-//!    defaults and guard the output directory,
+//!    defaults, guard the output directory and resolve the favicon (the
+//!    configured file, else the default embedded in the executable),
 //! 4. scan the input directory, pruning the directories the `exclude`
 //!    entries name,
 //! 5. assemble the payload and resolve links and assets,
@@ -31,6 +32,7 @@ use std::time::{Duration, Instant};
 
 use crate::config;
 use crate::error::{Error, Result};
+use crate::favicon;
 use crate::options::{self, Options, OutputFormat, Request};
 use crate::render::{RenderedOutput, render_pages, render_site};
 use crate::scan::{self, Severity};
@@ -110,6 +112,12 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     let options = Options::resolve(request, &site_config.settings)?;
     options::validate_paths(&options.input, &options.out)?;
 
+    // The favicon is an explicit instruction like the configuration itself:
+    // a file that cannot be read aborts the build here, before the scan, so
+    // a broken path is reported on its own instead of behind scan notes. An
+    // unset value resolves to the default embedded in the executable.
+    let favicon = favicon::resolve(options.favicon.as_deref(), &options.input)?;
+
     let report = scan::scan_with(&options.input, &options.out, &options.exclude)?;
 
     let ids: Vec<String> = report.docs.iter().map(|doc| doc.id.clone()).collect();
@@ -119,6 +127,10 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
 
     let mut build = site::build_site(&options.title, &options.input, &report.docs);
     build.bundle.home = home;
+    // The favicon joins the asset table like any document-referenced resource
+    // (deduplicated by content); the rendered head addresses it by the
+    // placeholder the registration returns.
+    let favicon_href = build.register_favicon(&favicon.name, &favicon.bytes);
 
     // Diagnostics always reach stderr; `--quiet` only silences the summary
     // line. Scan messages come first, then the configuration problems, then
@@ -153,9 +165,9 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     // projection — shell, chunks, corpus — because the shell-only render would
     // embed every document body the artifact never carries.
     let rendered = if options.format == OutputFormat::Pages {
-        RenderedOutput::Pages(render_pages(&build.bundle)?)
+        RenderedOutput::Pages(render_pages(&build.bundle, &favicon_href)?)
     } else {
-        RenderedOutput::Page(render_site(&build.bundle)?)
+        RenderedOutput::Page(render_site(&build.bundle, &favicon_href)?)
     };
     let written = writers::write_site(
         options.format,
@@ -254,11 +266,14 @@ mod tests {
         let outcome = outcome.expect("the build succeeds");
 
         assert_eq!(outcome.stats.documents, 1);
-        assert_eq!(outcome.stats.assets, 1);
+        assert_eq!(
+            outcome.stats.assets, 2,
+            "the document asset plus the favicon"
+        );
         assert_eq!(
             outcome.summary(&resolved(&request)),
             format!(
-                "compiled 1 document, 1 asset -> {} (single-html) in {} ms",
+                "compiled 1 document, 2 assets -> {} (single-html) in {} ms",
                 resolved(&request).out.display(),
                 outcome.elapsed.as_millis()
             )
@@ -326,10 +341,173 @@ mod tests {
         assert!(outcome.written.bytes > 0);
         assert_eq!(outcome.warnings, 0);
         assert!(out.join(writers::HTML_FILE_NAME).is_file());
-        assert!(stdout.starts_with("compiled 1 document, 1 asset -> "));
+        assert!(stdout.starts_with("compiled 1 document, 2 assets -> "));
         assert!(
             !stderr.contains("warning"),
             "a clean build reports no warning: {stderr}"
+        );
+    }
+
+    #[test]
+    fn every_artifact_carries_the_default_favicon() {
+        let dir = fixture();
+        let out = dir.path().join("dist");
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
+
+        let (outcome, _, stderr) = execute(&request);
+        outcome.expect("the build succeeds");
+
+        assert!(
+            !stderr.contains("warning"),
+            "the default favicon needs no configuration: {stderr}"
+        );
+        let artifact =
+            std::fs::read_to_string(out.join(writers::HTML_FILE_NAME)).expect("read artifact");
+        assert!(
+            artifact.contains(r#"<link rel="icon" href="data:image/svg+xml;base64,"#),
+            "the head links the embedded logo as a data URI"
+        );
+        assert!(
+            !artifact.contains("wikicc-asset:"),
+            "the single-file artifact carries no placeholder"
+        );
+    }
+
+    #[test]
+    fn the_configured_favicon_replaces_the_default() {
+        let dir = fixture();
+        std::fs::write(dir.path().join("icon.png"), b"png").expect("write favicon");
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"favicon": "icon.png"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
+
+        let (outcome, _, stderr) = execute(&request);
+        outcome.expect("the build succeeds");
+
+        assert!(
+            !stderr.contains("config:"),
+            "a readable favicon is silent: {stderr}"
+        );
+        let artifact =
+            std::fs::read_to_string(out.join(writers::HTML_FILE_NAME)).expect("read artifact");
+        assert!(
+            artifact.contains(r#"<link rel="icon" href="data:image/png;base64,cG5n">"#),
+            "the head links the configured file"
+        );
+    }
+
+    #[test]
+    fn the_command_line_favicon_overrides_the_configuration() {
+        let dir = fixture();
+        std::fs::write(dir.path().join("configured.png"), b"png").expect("write favicon");
+        std::fs::write(dir.path().join("cli.ico"), b"ico").expect("write favicon");
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"favicon": "configured.png"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let mut override_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+        override_request.settings.favicon = Some("cli.ico".to_string());
+
+        let (outcome, _, _) = execute(&override_request);
+        outcome.expect("the build succeeds");
+
+        let artifact =
+            std::fs::read_to_string(out.join(writers::HTML_FILE_NAME)).expect("read artifact");
+        assert!(
+            artifact.contains(r#"<link rel="icon" href="data:image/x-icon;base64,aWNv">"#),
+            "the command line favicon wins over the configured one"
+        );
+        assert!(
+            !artifact.contains("data:image/png"),
+            "the configured favicon is gone"
+        );
+    }
+
+    #[test]
+    fn a_favicon_the_documents_also_reference_is_counted_once() {
+        let dir = fixture();
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"favicon": "assets/logo.svg"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
+
+        let (outcome, _, stderr) = execute(&request);
+        let outcome = outcome.expect("the build succeeds");
+
+        assert!(
+            !stderr.contains("warning"),
+            "the favicon path exists: {stderr}"
+        );
+        assert_eq!(
+            outcome.stats.assets, 1,
+            "the favicon collapses into the asset the document already carries"
+        );
+    }
+
+    #[test]
+    fn a_missing_configured_favicon_fails_before_anything_is_written() {
+        let dir = fixture();
+        std::fs::write(
+            dir.path().join(crate::config::CONFIG_FILE_NAME),
+            r#"{"favicon": "gone.png"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join("dist");
+        let request = request(dir.path(), &out, OutputFormat::SingleHtml);
+
+        let (outcome, stdout, stderr) = execute(&request);
+
+        let error = outcome.expect_err("a missing favicon is a hard error");
+        assert!(
+            error.to_string().contains("cannot read the favicon"),
+            "unexpected message: {error}"
+        );
+        assert!(!out.exists(), "a refused build writes nothing");
+        assert_eq!(stdout, "");
+        assert!(
+            stderr.is_empty(),
+            "the error goes to the process sink: {stderr}"
+        );
+    }
+
+    #[test]
+    fn html_dir_writes_the_favicon_next_to_the_page() {
+        let dir = fixture();
+        let out = dir.path().join("dist");
+        let request = request(dir.path(), &out, OutputFormat::HtmlDir);
+
+        let (outcome, _, _) = execute(&request);
+        let outcome = outcome.expect("the build succeeds");
+
+        // The fixture's one document asset plus the default favicon.
+        assert_eq!(outcome.written.assets, 2);
+        let page = std::fs::read_to_string(out.join(writers::HTML_FILE_NAME)).expect("read page");
+        let start = page
+            .find(r#"<link rel="icon" href="assets/"#)
+            .expect("the favicon link addresses the assets folder");
+        let rest = &page[start + r#"<link rel="icon" href=""#.len()..];
+        let end = rest.find('"').expect("the link closes");
+        let favicon_name = &rest[..end];
+        let favicon_path = favicon_name
+            .split('/')
+            .fold(out.to_path_buf(), |path, part| path.join(part));
+
+        assert!(
+            favicon_path.is_file(),
+            "the linked favicon file exists: {favicon_name}"
+        );
+        assert!(
+            favicon_name.ends_with(".svg"),
+            "the default favicon keeps the vector extension: {favicon_name}"
         );
     }
 
@@ -480,8 +658,8 @@ mod tests {
         assert!(out.join(PAGES_DIR_NAME).join("intro.md.json").is_file());
         assert!(out.join(writers::ASSETS_DIR_NAME).is_dir());
         assert_eq!(
-            outcome.written.files, 4,
-            "the shell, one chunk, the corpus and one asset"
+            outcome.written.files, 5,
+            "the shell, one chunk, the corpus and two assets"
         );
         assert!(
             stdout.contains("(pages)"),

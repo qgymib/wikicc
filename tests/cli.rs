@@ -37,6 +37,7 @@ fn help_lists_documented_options() {
         "--strict",
         "--home",
         "--exclude",
+        "--favicon",
         "--force",
         "--quiet",
     ] {
@@ -148,7 +149,7 @@ fn the_default_format_writes_one_self_contained_file() {
         .arg(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("compiled 1 document, 0 assets"));
+        .stdout(predicate::str::contains("compiled 1 document, 1 asset"));
 
     let entries: Vec<_> = std::fs::read_dir(&out)
         .expect("the output directory exists")
@@ -157,6 +158,10 @@ fn the_default_format_writes_one_self_contained_file() {
 
     let html = std::fs::read_to_string(out.join("index.html")).expect("index.html is readable");
     assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(
+        html.contains(r#"<link rel="icon" href="data:image/svg+xml;base64,"#),
+        "the head links the embedded logo as a data URI"
+    );
     assert!(
         !html.contains("wikicc-asset:"),
         "every asset placeholder must be replaced"
@@ -234,15 +239,23 @@ fn html_dir_format_writes_a_page_and_an_asset_folder() {
         .assert()
         .success()
         .stdout(predicate::str::contains("(html-dir) in "))
-        .stdout(predicate::str::contains("compiled 1 document, 1 asset"));
+        .stdout(predicate::str::contains("compiled 1 document, 2 assets"));
 
     let out = dir.path().join("dist");
     let assets: Vec<_> = std::fs::read_dir(out.join("assets"))
         .expect("the asset directory exists")
         .collect();
-    assert_eq!(assets.len(), 1, "one file per unique asset");
+    assert_eq!(
+        assets.len(),
+        2,
+        "one file per unique asset, the favicon included"
+    );
 
     let html = std::fs::read_to_string(out.join("index.html")).expect("index.html is readable");
+    assert!(
+        html.contains(r#"<link rel="icon" href="assets/"#),
+        "the favicon is a sibling file of the page"
+    );
     assert!(
         html.contains("assets/"),
         "the page addresses its asset as a sibling file"
@@ -270,7 +283,7 @@ fn pages_format_writes_shell_chunks_corpus_and_assets() {
         .assert()
         .success()
         .stdout(predicate::str::contains("(pages) in "))
-        .stdout(predicate::str::contains("compiled 1 document, 1 asset"));
+        .stdout(predicate::str::contains("compiled 1 document, 2 assets"));
 
     let out = dir.path().join("dist");
     assert!(out.join("index.html").is_file(), "the shell exists");
@@ -329,7 +342,7 @@ fn summary_reports_compiled_documents_and_assets() {
         .arg(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("compiled 2 documents, 1 asset"));
+        .stdout(predicate::str::contains("compiled 2 documents, 2 assets"));
 }
 
 #[test]
@@ -427,7 +440,7 @@ fn exclude_replaces_the_configured_list() {
         .args(["--out", &path_string(&out), "--exclude", "archive"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("compiled 2 documents, 0 assets"));
+        .stdout(predicate::str::contains("compiled 2 documents, 1 asset"));
 
     let shell = std::fs::read_to_string(out.join("index.html")).expect("read shell");
     assert!(
@@ -497,4 +510,107 @@ fn the_configured_out_directory_receives_the_artifact() {
         .stdout(predicate::str::contains(path_string(&out)));
 
     assert!(out.join("index.html").is_file());
+}
+
+#[test]
+fn a_configured_favicon_reaches_the_artifact() {
+    let dir = fixture();
+    std::fs::write(dir.path().join("icon.png"), b"png").expect("write favicon");
+    std::fs::write(
+        dir.path().join(".wikicc.json"),
+        r#"{"favicon": "icon.png"}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .assert()
+        .success();
+
+    let html = std::fs::read_to_string(out.join("index.html")).expect("read shell");
+    assert!(
+        html.contains(r#"<link rel="icon" href="data:image/png;base64,cG5n">"#),
+        "the head links the configured file"
+    );
+    assert!(
+        !html.contains("data:image/svg+xml"),
+        "the default logo is replaced"
+    );
+}
+
+#[test]
+fn the_favicon_flag_overrides_the_configuration() {
+    let dir = fixture();
+    std::fs::write(dir.path().join("configured.png"), b"png").expect("write favicon");
+    std::fs::write(dir.path().join("cli.ico"), b"ico").expect("write favicon");
+    std::fs::write(
+        dir.path().join(".wikicc.json"),
+        r#"{"favicon": "configured.png"}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out), "--favicon", "cli.ico"])
+        .assert()
+        .success();
+
+    let html = std::fs::read_to_string(out.join("index.html")).expect("read shell");
+    assert!(
+        html.contains(r#"<link rel="icon" href="data:image/x-icon;base64,aWNv">"#),
+        "the command line favicon wins"
+    );
+}
+
+#[test]
+fn a_missing_configured_favicon_fails_the_build() {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join(".wikicc.json"),
+        r#"{"favicon": "gone.png"}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("cannot read the favicon"));
+    assert!(!out.exists(), "a refused build writes nothing");
+}
+
+#[test]
+fn an_escaping_favicon_flag_is_a_runtime_error() {
+    let dir = fixture();
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--favicon", "../outside.png"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "'favicon' value '../outside.png' is not a file path inside the input folder",
+        ));
+}
+
+#[test]
+fn init_config_writes_the_favicon_key() {
+    let dir = fixture();
+
+    wikicc()
+        .args(["--init-config", &path_string(dir.path())])
+        .assert()
+        .success();
+
+    let content =
+        std::fs::read_to_string(dir.path().join(".wikicc.json")).expect("the starter file");
+    assert!(
+        content.contains("\"favicon\": null"),
+        "the starter names every key this version knows: {content}"
+    );
 }

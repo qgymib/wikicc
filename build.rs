@@ -7,11 +7,12 @@
 //! script runs the npm-installed esbuild once and stages the resulting IIFE
 //! bundle in `OUT_DIR`, which is the only place `src/render.rs` reads it from.
 //!
-//! The hand-written shell resources — the page skeleton and the reader
-//! stylesheet — are staged the same way: the build script writes LF-normalized
-//! copies into `OUT_DIR`, so the embedded bytes never depend on how Git checked
-//! the sources out (a CRLF checkout must not leak carriage returns into the
-//! template, the sheet or the page built from them).
+//! The hand-written shell resources — the page skeleton, the reader
+//! stylesheet and the default favicon — are staged the same way: the build
+//! script writes LF-normalized copies into `OUT_DIR`, so the embedded bytes
+//! never depend on how Git checked the sources out (a CRLF checkout must not
+//! leak carriage returns into the template, the sheet, the favicon or the page
+//! built from them).
 //!
 //! The script has a second, independent job: Windows executables show an icon
 //! in the file explorer, and that icon lives in the PE resource section. The
@@ -132,15 +133,18 @@ const KATEX_CSS_STAGED: &str = "vendor/katex.css";
 /// Marker that starts every font reference in the KaTeX stylesheet.
 const FONT_URL_MARKER: &str = "url(fonts/";
 
-/// Hand-written text resources staged into `OUT_DIR` with normalized line
-/// endings, consumed by `src/render.rs`.
+/// Text resources staged into `OUT_DIR` with normalized line endings.
 ///
-/// Both are embedded with `include_str!`, which copies the working-tree bytes
-/// verbatim; a checkout that Git smudges to CRLF must not leak carriage returns
-/// into the page, so the staged copies are the only bytes the compile sees.
-const STAGED_TEXT_ASSETS: [(&str, &str); 2] = [
+/// The page skeleton and the shell stylesheet are consumed by `src/render.rs`
+/// with `include_str!`, the default favicon by `src/favicon.rs` with
+/// `include_bytes!`; all three copy the staged bytes verbatim. A checkout that
+/// Git smudges to CRLF must not leak carriage returns into any of them — the
+/// favicon's bytes decide the asset hash every build derives from them — so
+/// the staged copies are the only bytes the compile sees.
+const STAGED_TEXT_ASSETS: [(&str, &str); 3] = [
     ("src/web/index.html.tmpl", "vendor/index.html.tmpl"),
     ("src/web/css/app.css", "vendor/app.css"),
+    ("docs/logo.svg", "vendor/logo.svg"),
 ];
 
 /// Marker of a diagram chunk that esbuild failed to inline.
@@ -173,6 +177,7 @@ fn main() {
         "src/web/js",
         "src/web/css",
         "src/web/index.html.tmpl",
+        "docs/logo.svg",
         "package.json",
         "package-lock.json",
         ICON_ASSET,

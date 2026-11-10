@@ -26,13 +26,13 @@
 //! hash instead. The names are safe on Windows, in URLs and on static hosts.
 //!
 //! Ordering is deliberate and preserves the "fail before writing" guarantee
-//! the other writers keep: every chunk's placeholders are expanded first (an
-//! unknown hash fails before a single file exists), then the assets are
-//! written, then the chunks, then `search.json`, and `index.html` last. The
-//! page therefore never references a file that is not on disk yet, and
-//! `index.html` appearing means the build finished writing resources.
-//! `AssetTable` iterates in hash order and chunks follow scan order, so two
-//! builds of the same input produce byte-identical directories.
+//! the other writers keep: every chunk's and the shell's placeholders are
+//! expanded first (an unknown hash fails before a single file exists), then
+//! the assets are written, then the chunks, then `search.json`, and
+//! `index.html` last. The page therefore never references a file that is not
+//! on disk yet, and `index.html` appearing means the build finished writing
+//! resources. `AssetTable` iterates in hash order and chunks follow scan
+//! order, so two builds of the same input produce byte-identical directories.
 
 use std::path::{Path, PathBuf};
 
@@ -82,6 +82,14 @@ impl SiteWriter for PagesWriter {
             expanded.push((chunk.name.as_str(), json));
         }
 
+        // The shell carries the favicon placeholder in its head, so it is
+        // expanded like the chunks — still before anything is written.
+        let (shell_html, _) =
+            expand_placeholders(&pages.shell.html, &build.assets, |asset, sink| {
+                sink.push_str(&asset_relative_path(asset));
+                Ok(())
+            })?;
+
         let mut files = 0;
         let mut bytes = 0u64;
 
@@ -130,10 +138,10 @@ impl SiteWriter for PagesWriter {
         bytes += pages.search_json.len() as u64;
 
         let page = out.join(HTML_FILE_NAME);
-        std::fs::write(&page, pages.shell.html.as_bytes())
+        std::fs::write(&page, shell_html.as_bytes())
             .map_err(|error| io_error("write the page", &page, error))?;
         files += 1;
-        bytes += pages.shell.html.len() as u64;
+        bytes += shell_html.len() as u64;
 
         Ok(WriteReport {
             files,
@@ -366,6 +374,54 @@ mod tests {
             format!(r#"{{"html":"<img src=\"assets/{}.svg\">"}}"#, hashes[0])
         );
         assert!(!chunk.contains("wikicc-asset:"));
+    }
+
+    #[test]
+    fn the_shell_placeholders_become_relative_asset_addresses() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (build, hashes) = build_with(&[("logo.svg", b"<svg/>")]);
+        let mut pages = pages_with(0);
+        pages.shell = RenderedSite {
+            html: format!(r#"<link rel="icon" href="wikicc-asset:{}">"#, hashes[0]),
+        };
+        let rendered = RenderedOutput::Pages(pages);
+
+        PagesWriter
+            .write(&build, &rendered, dir.path())
+            .expect("write");
+
+        let shell = fs::read_to_string(dir.path().join(HTML_FILE_NAME)).expect("shell");
+        assert_eq!(
+            shell,
+            format!(r#"<link rel="icon" href="assets/{}.svg">"#, hashes[0]),
+            "the favicon link addresses the asset the writer put next to the page"
+        );
+        assert!(!shell.contains("wikicc-asset:"));
+    }
+
+    #[test]
+    fn an_unknown_placeholder_in_the_shell_fails_before_anything_is_written() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (build, _) = build_with(&[]);
+        let mut pages = pages_with(0);
+        pages.shell = RenderedSite {
+            html: r#"<link rel="icon" href="wikicc-asset:0000000000000000">"#.to_string(),
+        };
+        let rendered = RenderedOutput::Pages(pages);
+
+        let error = PagesWriter
+            .write(&build, &rendered, dir.path())
+            .expect_err("unknown placeholder in the shell");
+
+        assert!(
+            error.to_string().contains("unknown asset placeholder"),
+            "unexpected message: {error}"
+        );
+        assert_eq!(
+            entry_names(dir.path()),
+            Vec::<String>::new(),
+            "a failed expansion must not leave a partial artifact"
+        );
     }
 
     #[test]

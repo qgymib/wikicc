@@ -26,7 +26,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::assets::AssetTable;
+use crate::assets::{ASSET_PLACEHOLDER_PREFIX, AssetTable};
 use crate::markdown::sections::Block;
 use crate::markdown::toc::TocEntry;
 use crate::markdown::{LinkContext, render_document_with, sections_of};
@@ -147,6 +147,31 @@ impl SiteBuild {
             .iter()
             .filter(|diagnostic| diagnostic.severity == Severity::Warning)
             .count()
+    }
+
+    /// Register the favicon asset and return the placeholder that addresses it.
+    ///
+    /// The favicon is a build-provided resource rather than one a document
+    /// references, so the pipeline registers it after assembly — the same
+    /// place it sets `home` — and the rendered page carries the returned
+    /// placeholder in its head, which the writers expand like every other
+    /// resource.
+    ///
+    /// The bytes join the asset table under the given name: the name decides
+    /// only the extension and the MIME type, the content decides the
+    /// identity. A favicon whose bytes a document already references
+    /// therefore collapses into the existing entry, and the stats grow only
+    /// when the entry is new, so the counters keep describing distinct
+    /// resources.
+    pub fn register_favicon(&mut self, name: &str, bytes: &[u8]) -> String {
+        let hash = crate::assets::asset_hash(bytes);
+        if self.assets.get(&hash).is_none() {
+            self.assets.insert_bytes(Path::new(name), bytes.to_vec());
+            self.bundle.stats.assets += 1;
+            self.bundle.stats.asset_bytes += bytes.len() as u64;
+        }
+
+        format!("{ASSET_PLACEHOLDER_PREFIX}{hash}")
     }
 }
 
@@ -475,6 +500,53 @@ mod tests {
             build.bundle.to_json(),
             r#"{"title":"Empty","docs":[],"edges":[],"stats":{"documents":0,"assets":0,"asset_bytes":0}}"#
         );
+    }
+
+    #[test]
+    fn registering_a_favicon_extends_the_assets_and_the_stats() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
+
+        let before = build.bundle.stats;
+        let placeholder = build.register_favicon("logo.svg", b"<svg/>");
+
+        assert!(
+            placeholder.starts_with(crate::ASSET_PLACEHOLDER_PREFIX),
+            "the render stage addresses the favicon by its placeholder"
+        );
+        assert_eq!(
+            placeholder.len(),
+            crate::ASSET_PLACEHOLDER_PREFIX.len() + 16,
+            "the placeholder carries the asset hash width"
+        );
+        assert_eq!(build.bundle.stats.assets, before.assets + 1);
+        assert_eq!(build.bundle.stats.asset_bytes, before.asset_bytes + 6);
+        assert_eq!(build.assets.total_bytes(), build.bundle.stats.asset_bytes);
+        assert_eq!(build.assets.len(), build.bundle.stats.assets);
+    }
+
+    #[test]
+    fn a_favicon_deduplicates_against_document_assets() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        write(dir.path(), "logo.svg", b"<svg/>");
+        let docs = [source("a.md", "A", "![logo](logo.svg)\n")];
+        let mut build = build_site("Site", dir.path(), &docs);
+
+        let before = build.bundle.stats;
+        let placeholder = build.register_favicon("logo.svg", b"<svg/>");
+
+        assert!(
+            build.diagnostics.is_empty(),
+            "the referenced asset exists: {:?}",
+            build.diagnostics
+        );
+        assert_eq!(
+            build.bundle.stats.assets, before.assets,
+            "the same bytes are one asset, whatever references them"
+        );
+        assert_eq!(build.bundle.stats.asset_bytes, before.asset_bytes);
+        assert_eq!(build.assets.len(), build.bundle.stats.assets);
+        assert!(placeholder.starts_with(crate::ASSET_PLACEHOLDER_PREFIX));
     }
 
     #[test]

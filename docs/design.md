@@ -67,6 +67,8 @@ src/error.rs                error type and exit-code mapping
 src/pipeline.rs             stage order, strict gate, summary lines
 src/scan.rs                 discovery, ordering, ids, titles, diagnostics
 src/config.rs               the optional `.wikicc.json` site configuration and its initializer
+src/favicon.rs              the site favicon: the configured file, else the
+                            default embedded from docs/logo.svg at build time
 src/markdown/               render orchestration, heading text, slugs, TOC, chapter blocks,
                             highlighting, link resolution, reference definitions
 src/assets.rs               read, MIME, hashing, dedupe
@@ -74,8 +76,9 @@ src/site.rs                 payload types and assembly
 src/render.rs               shell assembly (template, CSS, script, payload), size guard
 src/writers/                one writer per format plus the shared placeholder expansion
 src/web/                    page template, stylesheet and the reader's ES modules
-build.rs                    bundles src/web/js/main.js with esbuild into OUT_DIR,
-                            and embeds docs/logo.ico into the Windows executable
+build.rs                    bundles src/web/js/main.js with esbuild into OUT_DIR, stages
+                            the default favicon (docs/logo.svg) into OUT_DIR, and embeds
+                            docs/logo.ico into the Windows executable
 tools/make-icon.mjs         packs the rendered icon sizes into docs/logo.ico
 ```
 
@@ -99,8 +102,9 @@ on its own.
    and carries an opaque placeholder (`wikicc-asset:<hash>`) wherever a local
    resource is referenced. Writers expand the placeholder into the addressing
    form of their format. The placeholder only ever appears inside the JSON
-   payload, and every substitution value is quote-free, so the payload stays
-   valid JSON.
+   payload — and in the shell head's single favicon link, which the writers
+   expand with the same pass — and every substitution value is quote-free,
+   so the payload stays valid JSON.
 3. **The shell formats inline the payload; the pages format fetches.**
    `single-html` and `html-dir` must work over `file://`, where `fetch()` of a
    local JSON file is blocked by CORS, so their whole payload is embedded in
@@ -165,9 +169,9 @@ These are the boundaries where an internal change becomes observable, so each
 one is stated as a contract rather than left to the implementation.
 
 - **The configuration file.** `.wikicc.json` sits in the input folder root and
-  is optional. It carries six keys — `home`, `exclude`, `out`, `format`,
-  `title`, `strict` — exactly the `Settings` shape the command line also
-  expresses, and every value it names is a default the command line
+  is optional. It carries seven keys — `home`, `exclude`, `out`, `format`,
+  `title`, `favicon`, `strict` — exactly the `Settings` shape the command line
+  also expresses, and every value it names is a default the command line
   overrides. A relative `out` is resolved against the input folder (the
   folder the file sits in), so the build lands in the same place whatever the
   working directory. The file is read once, before the scan (the `exclude`
@@ -185,6 +189,18 @@ one is stated as a contract rather than left to the implementation.
   `wikicc --init-config [DIR]`: the default content (every key unset) goes
   into a directory that already exists, and a file that is already there is
   never overwritten.
+- **The favicon.** Every page carries a favicon: the `favicon` setting of
+  either source, else the wikicc logo that `build.rs` stages from
+  `docs/logo.svg` (LF-normalized, like the page skeleton) and the binary
+  embeds. The value is a file path relative to the input folder, normalized
+  and guarded like the other path-shaped settings; a configured file that
+  cannot be read is a runtime failure, because the icon is an explicit
+  instruction. The bytes join the asset table through
+  `SiteBuild::register_favicon` after assembly — deduplicated by content
+  like every other resource, the stats growing only when the entry is new —
+  and the rendered head addresses them by the asset placeholder the
+  registration returns, so the writers inline a data URI in `single-html`
+  and write a sibling file in the other two formats.
 - **CLI surface.** `cli` defines the arguments; `options` owns the shared
   `Settings` (the shape both the command line and the configuration file
   express), merges the command line over the file over the built-in defaults
@@ -207,11 +223,12 @@ one is stated as a contract rather than left to the implementation.
   without spawning a process.
 - **Formats.** The three writers never re-render markup: the two shell writers
   share the page and differ only in asset addressing, and the pages
-  writer expands the same placeholders into its chunk files. A writer
-  receives the render of its own format and refuses any other. The pages
-  writer expands every chunk before it writes anything, writes the shell page
-  last, so the artifact never references a file that is not on disk, and an
-  asset-free or document-free site writes no empty directory.
+  writer expands the same placeholders into its chunk files and its shell
+  head. A writer receives the render of its own format and refuses any other.
+  The pages writer expands every chunk and the shell before it writes
+  anything, writes the shell page last, so the artifact never references a
+  file that is not on disk, and an asset-free or document-free site writes no
+  empty directory.
 - **Weight.** `render.rs` holds a size guard that fails the build if the bundle
   regresses.
 - **The Windows icon.** A Windows executable shows an icon in the file
@@ -358,3 +375,4 @@ must all pass.
 | Raw HTML passthrough | XSS if untrusted Markdown is compiled | documented as trusted-input behaviour; no sanitizer |
 | No incremental build | full rebuild on every run | acceptable at folder scale; the artifacts are deterministic |
 | The Windows icon is a derived asset | `docs/logo.svg` and `docs/logo.ico` can drift apart | the icon is rendered from the source and committed, and `tools/make-icon.mjs` packs it deterministically; regenerating it after a design change is a documented manual step |
+| The default favicon is the embedded `docs/logo.svg` | a changed logo changes the favicon hash of every build | the staged copy is LF-normalized, so the bytes — and the hash — depend only on the committed source, never on the checkout |

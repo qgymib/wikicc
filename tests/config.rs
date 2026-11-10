@@ -373,3 +373,52 @@ fn an_initialized_configuration_builds_without_warnings() {
         );
     }
 }
+
+#[test]
+fn the_configured_favicon_reaches_every_format() {
+    for format in OutputFormat::ALL {
+        let dir = fixture();
+        std::fs::write(dir.path().join("icon.png"), b"png").expect("write favicon");
+        std::fs::write(
+            dir.path().join(CONFIG_FILE_NAME),
+            r#"{"favicon": "icon.png"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join(format.as_str());
+        let request = request(dir.path(), &out, format);
+
+        let (outcome, _, stderr) = execute(&request);
+        outcome.unwrap_or_else(|error| panic!("{format}: the build succeeds: {error}"));
+
+        assert!(
+            !stderr.contains("config:"),
+            "{format}: a readable favicon is silent: {stderr}"
+        );
+        let shell = shell_of(&out);
+        assert!(
+            shell.contains(r#"<link rel="icon""#),
+            "{format}: the head carries the favicon link"
+        );
+    }
+}
+
+#[test]
+fn a_favicon_that_cannot_be_read_aborts_the_build() {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join(CONFIG_FILE_NAME),
+        r#"{"favicon": "gone.png"}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+    let request = request(dir.path(), &out, OutputFormat::SingleHtml);
+
+    let (outcome, _, _) = execute(&request);
+
+    let error = outcome.expect_err("a missing favicon is a hard error");
+    assert!(
+        error.to_string().contains("cannot read the favicon"),
+        "unexpected message: {error}"
+    );
+    assert!(!out.exists(), "a refused build writes nothing");
+}

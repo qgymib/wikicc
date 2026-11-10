@@ -1,6 +1,6 @@
 //! Site configuration file: `.wikicc.json` in the input folder root.
 //!
-//! The file is optional and carries six keys, exactly the settings the
+//! The file is optional and carries seven keys, exactly the settings the
 //! command line can also express ([`Settings`]):
 //!
 //! - `home`: the document the reader shows when it is opened at an empty or
@@ -17,6 +17,10 @@
 //!   working directory the build was started from.
 //! - `format`: the output artifact format, spelled like the `--format` flag.
 //! - `title`: the site title.
+//! - `favicon`: the site favicon, a file path relative to the input folder
+//!   (an absolute path is taken as it is). Without the key the reader carries
+//!   the wikicc logo, embedded into the executable at build time; a file that
+//!   cannot be read is a hard error.
 //! - `strict`: whether warnings fail the build, spelled as a JSON boolean.
 //!
 //! Every value the file names is a default: an explicit command line flag
@@ -135,7 +139,7 @@ pub fn load(input: &Path) -> Result<SiteConfig> {
 /// through [`parse`], so the default content can never drift away from what
 /// the loader accepts.
 pub fn template() -> &'static str {
-    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"strict\": null\n}\n"
+    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"favicon\": null,\n  \"strict\": null\n}\n"
 }
 
 /// Write the default configuration file into `dir` and report it.
@@ -256,6 +260,20 @@ fn parse(bytes: &[u8], path: &Path, base: &Path) -> Result<SiteConfig> {
             }
             ("title", _) => {
                 return Err(Error::InvalidInput("'title' must be a string".to_string()));
+            }
+            ("favicon", Value::Null) => {}
+            ("favicon", Value::String(text)) => {
+                if text.trim().is_empty() {
+                    return Err(Error::InvalidInput(
+                        "'favicon' must be a non-empty file path".to_string(),
+                    ));
+                }
+                config.settings.favicon = Some(text);
+            }
+            ("favicon", _) => {
+                return Err(Error::InvalidInput(
+                    "'favicon' must be a string".to_string(),
+                ));
             }
             ("strict", Value::Null) => {}
             ("strict", Value::Bool(flag)) => {
@@ -506,6 +524,38 @@ mod tests {
         let error = parse_text(r#"{"title": 5}"#).expect_err("a number is not a title");
 
         assert_eq!(error.to_string(), "'title' must be a string");
+    }
+
+    #[test]
+    fn favicon_is_read_verbatim() {
+        let config = parse_text(r#"{"favicon": "assets/icon.png"}"#).expect("valid config");
+
+        assert_eq!(config.settings.favicon.as_deref(), Some("assets/icon.png"));
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_null_favicon_is_unset() {
+        let config = parse_text(r#"{"favicon": null}"#).expect("valid config");
+
+        assert_eq!(config.settings.favicon, None);
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn an_empty_favicon_is_a_hard_error() {
+        for text in [r#"{"favicon": ""}"#, r#"{"favicon": "   "}"#] {
+            let error = parse_text(text).expect_err("an empty favicon is rejected");
+
+            assert_eq!(error.to_string(), "'favicon' must be a non-empty file path");
+        }
+    }
+
+    #[test]
+    fn a_non_string_favicon_is_a_hard_error() {
+        let error = parse_text(r#"{"favicon": 5}"#).expect_err("a number is not a favicon");
+
+        assert_eq!(error.to_string(), "'favicon' must be a string");
     }
 
     #[test]
