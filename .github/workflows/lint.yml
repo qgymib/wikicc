@@ -59,8 +59,9 @@ jobs:
     - name: Lint Rust
       run: cargo clippy --all-targets -- -D warnings
 
-    # The JS gate: `biome check .` fails on a formatting difference or a lint
-    # violation in `src/web/js`, `tests/js` and `tools` (the scope of
-    # `biome.jsonc`); third-party code in `node_modules` is never touched.
+    # The JS gate: `biome check --error-on-warnings .` fails on a formatting
+    # difference, a lint violation or a lint warning in `src/web/js`, `tests/js`
+    # and `tools` (the scope of `biome.jsonc`); third-party code in
+    # `node_modules` is never touched.
     - name: Lint JS
       run: npm run check

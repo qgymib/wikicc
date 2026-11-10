@@ -21,8 +21,8 @@ cargo test                                 # everything, including the front-end
 
 `npm run check` covers the reader's own JavaScript — the modules in
 `src/web/js`, the tests in `tests/js` and the scripts in `tools`, as scoped by
-`biome.jsonc` — and fails on a formatting difference or a lint violation;
-third-party code under `node_modules` is never touched. `npm run format`
+`biome.jsonc` — and fails on a formatting difference, a lint violation or a
+lint warning; third-party code under `node_modules` is never touched. `npm run format`
 rewrites the formatting in place and `npm run lint` runs only the lint half.
 The gates and the suite they protect are described further in
 [`../tests/README.md`](../tests/README.md).

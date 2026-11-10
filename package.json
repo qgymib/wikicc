@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "check": "biome check .",
+    "check": "biome check --error-on-warnings .",
     "format": "biome format --write .",
     "lint": "biome lint ."
   },

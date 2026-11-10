@@ -908,14 +908,14 @@ export function start() {
     var width = context
       ? context.clientWidth
       : searchPanel.clientWidth - 34 - 14 - 260;
-    if (!width || width <= 0 || !isFinite(width)) {
+    if (!width || width <= 0 || !Number.isFinite(width)) {
       return null;
     }
 
     var fontSize = 12.5;
     if (context && typeof getComputedStyle === "function") {
       var parsed = parseFloat(getComputedStyle(context).fontSize);
-      if (parsed > 0 && isFinite(parsed)) {
+      if (parsed > 0 && Number.isFinite(parsed)) {
         fontSize = parsed;
       }
     }
