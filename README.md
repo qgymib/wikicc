@@ -25,7 +25,10 @@ their chapter outline.
   chapter on hover and opens it on click, and a link to a whole document
   previews that document on hover. A chapter that does not exist is reported
   as a broken reference and explained by the reader.
-- **Tables**: sorting and Excel-style per-column filtering.
+- **Tables**: sorting and Excel-style per-column filtering. Filtering never
+  shifts the column widths: they are measured at the last layout-affecting
+  moment — the page loading, the window being resized — and pinned until the
+  next one.
 - **Code blocks**: a button on every code block copies its text to the
   clipboard; inline code, diagrams and formulas are left alone.
 - **Theme** toggle (light/dark) and a layout that stays usable down to phone

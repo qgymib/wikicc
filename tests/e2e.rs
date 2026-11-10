@@ -244,6 +244,10 @@ fn tables_are_emitted_and_hooked_for_enhancement() {
         "the table enhancement must be bundled into the page"
     );
     assert!(
+        page.html.contains("data-wikicc-locked-widths"),
+        "the column-width pin must be bundled into the page"
+    );
+    assert!(
         page.html.contains("No matching rows"),
         "the empty-filter placeholder must be bundled into the page"
     );
@@ -1253,15 +1257,16 @@ fn the_engines_and_the_reader_are_embedded_in_one_script() {
     // The bundle is minified, so identifiers are not asserted; string literals
     // and attribute names are, because esbuild leaves both alone.
     for marker in [
-        "wikicc-payload",      // the bootstrap reads the embedded payload
-        "data-wikicc-table",   // the table enhancer is bundled
-        "table-filter-toggle", // ... with its per-column filter buttons
-        "code-block",          // the code copy enhancer is bundled
-        "code-copy",           // ... with a button on every code block
-        "graph-node",          // the link graph renderer is bundled
-        "startOnLoad",         // the diagram engine is configured
-        "data-processed",      // ... and mermaid itself is present
-        "sequenceDiagram",     // ... including its diagram implementations
+        "wikicc-payload",            // the bootstrap reads the embedded payload
+        "data-wikicc-table",         // the table enhancer is bundled
+        "data-wikicc-locked-widths", // ... with the column-width pin
+        "table-filter-toggle",       // ... with its per-column filter buttons
+        "code-block",                // the code copy enhancer is bundled
+        "code-copy",                 // ... with a button on every code block
+        "graph-node",                // the link graph renderer is bundled
+        "startOnLoad",               // the diagram engine is configured
+        "data-processed",            // ... and mermaid itself is present
+        "sequenceDiagram",           // ... including its diagram implementations
     ] {
         assert!(page.html.contains(marker), "the bundle is missing {marker}");
     }

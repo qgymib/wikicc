@@ -968,6 +968,15 @@ a {
 
 /* ---------- table sorting and filtering ---------- */
 
+/* A measured table pins the column widths the auto layout chose at the last
+   layout-affecting moment — the table landing on screen, a window resize, a
+   first filter on a table enhanced offscreen. Hiding rows for a filter is not
+   one of those moments: the fixed layout reads the pin and ignores the body,
+   so the columns hold still while the reader narrows the table. */
+.doc-body table[data-wikicc-locked-widths] {
+  table-layout: fixed;
+}
+
 .doc-body thead th.table-sortable {
   /* Room for the sort arrow and the funnel button on the right edge. */
   padding-right: 46px;
@@ -2977,5 +2986,16 @@ a {
 
   .doc-body thead th.table-sortable::after {
     content: "";
+  }
+
+  /* The pin is a screen agreement about widths the viewport chose; a sheet
+     reflows from the content, so the fixed layout and its colgroup step
+     aside and the printout lays the columns out as if never measured. */
+  .doc-body table[data-wikicc-locked-widths] {
+    table-layout: auto;
+  }
+
+  .doc-body table[data-wikicc-locked-widths] colgroup {
+    display: none;
   }
 }

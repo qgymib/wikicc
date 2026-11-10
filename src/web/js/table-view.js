@@ -17,6 +17,15 @@
  * `Apply` button (or `Enter`) commits it. Every other way out of the panel -
  * `Escape`, an outside click, losing the anchor - drops the draft, so a
  * half-finished selection never hides rows.
+ *
+ * Column widths are pinned: at the last layout-affecting moment (the table
+ * being enhanced on screen, a window resize, a first filter on a table that
+ * was enhanced offscreen) each column is measured under the auto layout with
+ * every row visible and written into a colgroup of pixel widths, and the
+ * fixed layout takes over from there. Hiding rows for a filter is not a
+ * layout-affecting moment, so the columns hold still while the reader
+ * narrows the table; the stylesheet pins `table-layout` off the
+ * `LOCK_ATTRIBUTE` marker.
  */
 import * as Table from "./table.js";
 
@@ -67,6 +76,21 @@ export var MORE_VALUES_TEXT = "more values, type to narrow";
  * the panel. Typing narrows the list and brings the rest into reach.
  */
 export var MAX_RENDERED_VALUES = 200;
+
+/** Attribute marking a table whose column widths are pinned. */
+export var LOCK_ATTRIBUTE = "data-wikicc-locked-widths";
+
+/** Idle gap a resize burst is coalesced into, in milliseconds. */
+var RELAYOUT_DELAY_MS = 150;
+
+/** Tables with pinned widths, in enhance order. */
+var pinnedTables = [];
+
+/** The pending re-measure, so a resize burst relayouts once. */
+var relayoutTimer = null;
+
+/** Whether the shared resize listener is armed. */
+var relayoutWired = false;
 
 /** The panel currently in the document, or `null`. */
 var activePanel = null;
@@ -143,6 +167,52 @@ function closeActivePanel() {
   }
 }
 
+/** Arm the shared resize listener, once, when the first table pins. */
+function ensureRelayoutWiring() {
+  if (relayoutWired) {
+    return;
+  }
+
+  relayoutWired = true;
+  globalThis.addEventListener("resize", scheduleRelayout);
+}
+
+/** Coalesce a resize burst into one re-measure after the window settles. */
+function scheduleRelayout() {
+  if (relayoutTimer !== null) {
+    clearTimeout(relayoutTimer);
+  }
+
+  relayoutTimer = setTimeout(function () {
+    relayoutTimer = null;
+    relayoutLockedTables();
+  }, RELAYOUT_DELAY_MS);
+}
+
+/**
+ * Re-measure and re-pin every table still in the document.
+ *
+ * A window resize is a moment column widths may change, so each connected
+ * table reads its columns from the content again, exactly as at load; tables
+ * left behind by a replaced document are dropped here rather than kept alive
+ * by the registry. Exported so the sweep can be driven directly.
+ */
+export function relayoutLockedTables() {
+  pinnedTables = pinnedTables.filter(function (entry) {
+    return entry.table.isConnected;
+  });
+
+  pinnedTables.forEach(function (entry) {
+    entry.pin();
+  });
+
+  // The sweep moves the columns, so an open panel rides its anchor's new
+  // place the way it already rides a scroll.
+  if (activePanel && typeof activePanel.reposition === "function") {
+    activePanel.reposition();
+  }
+}
+
 /**
  * Open the filter panel for one column.
  *
@@ -212,7 +282,16 @@ function openFilterPanel(options) {
   panel.appendChild(footer);
 
   var visible = [];
-  var api = { anchor: options.anchor, close: close };
+  var api = {
+    anchor: options.anchor,
+    close: close,
+    /** Follow the anchor after a re-measure has moved the columns. */
+    reposition: function () {
+      if (options.anchor.isConnected) {
+        positionPanel(panel, options.anchor);
+      }
+    },
+  };
 
   /**
    * Push the draft back to the table, normalised against every candidate.
@@ -474,7 +553,111 @@ export function enhanceTable(table) {
   var sortState = { column: null, direction: "none" };
   var emptyRow = createEmptyRow(headers.length);
 
+  /** The colgroup pinning the measured widths, or `null` while free. */
+  var colgroup = null;
+
+  /** Whether the widths have been pinned at least once. */
+  var pinned = false;
+
+  /** True while the table is attached and laid out, so widths can be read. */
+  function measurable() {
+    return typeof table.offsetWidth === "number" && table.offsetWidth > 0;
+  }
+
+  /** Lift the pin: the browser renegotiates the columns from the content. */
+  function removeLock() {
+    if (colgroup) {
+      colgroup.remove();
+      colgroup = null;
+    }
+    table.removeAttribute(LOCK_ATTRIBUTE);
+  }
+
+  /**
+   * Write the pin: one col of pixel width per column, plus the attribute that
+   * turns the fixed layout on.
+   */
+  function writeLock(widths) {
+    colgroup = document.createElement("colgroup");
+
+    widths.forEach(function (width) {
+      var col = document.createElement("col");
+      col.style.width = width + "px";
+      colgroup.appendChild(col);
+    });
+
+    // A colgroup belongs ahead of the sections it sizes, so it takes the
+    // header's place rather than a body row's.
+    table.insertBefore(colgroup, table.tHead);
+    table.setAttribute(LOCK_ATTRIBUTE, "");
+  }
+
+  /**
+   * Measure every column at its full-table baseline and pin the result.
+   *
+   * The widths are read the way the reader saw them at load: the auto layout
+   * with every model row visible. Rows a filter currently hides — and the
+   * colspan placeholder, whose text would leak into the measure — are put
+   * back afterwards; the whole dance is synchronous, so nothing paints in
+   * between. Returns `false` while the table cannot be measured.
+   */
+  function pinWidths() {
+    if (!measurable()) {
+      return false;
+    }
+
+    var hiddenStates = rows.map(function (row) {
+      return row.hasAttribute("hidden");
+    });
+    var filtered = hiddenStates.some(Boolean);
+    var emptyWasHidden = emptyRow.hasAttribute("hidden");
+
+    removeLock();
+    if (filtered) {
+      rows.forEach(function (row) {
+        row.removeAttribute("hidden");
+      });
+      emptyRow.setAttribute("hidden", "");
+    }
+
+    var widths = headers.map(function (cell) {
+      return cell.offsetWidth;
+    });
+
+    writeLock(widths);
+    pinned = true;
+
+    if (filtered) {
+      rows.forEach(function (row, index) {
+        if (hiddenStates[index]) {
+          row.setAttribute("hidden", "");
+        }
+      });
+      if (!emptyWasHidden) {
+        emptyRow.removeAttribute("hidden");
+      }
+    }
+
+    return true;
+  }
+
+  /** Pin the widths the first time the table can be measured. */
+  function ensurePinned() {
+    if (pinned) {
+      return;
+    }
+
+    if (pinWidths()) {
+      ensureRelayoutWiring();
+      pinnedTables.push({ table: table, pin: pinWidths });
+    }
+  }
+
   function applyFilter() {
+    // A table enhanced offscreen pins here, before its first row hides: the
+    // measure still sees the whole table, so the pin is the load baseline.
+    ensurePinned();
+
     var visible = new Set(
       Table.filterRows(model.rows, selections).map(function (row) {
         return row.index;
@@ -632,6 +815,10 @@ export function enhanceTable(table) {
 
   body.appendChild(emptyRow);
 
+  // Pin now when the table is on screen; one enhanced offscreen — a preview
+  // filled before it is shown — pins at its first filter instead.
+  ensurePinned();
+
   return true;
 }
 
@@ -645,6 +832,12 @@ export function enhanceTable(table) {
  */
 export function enhanceTables(root) {
   closeActivePanel();
+
+  // Tables left behind by the previous document drop out of the registry at
+  // the next render, not at the next resize.
+  pinnedTables = pinnedTables.filter(function (entry) {
+    return entry.table.isConnected;
+  });
 
   var scope =
     root && typeof root.querySelectorAll === "function" ? root : document;

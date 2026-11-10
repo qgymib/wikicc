@@ -108,6 +108,7 @@ neither replaces the other.
 | `preview.test.js` | `preview.js` | the chapter a block reference previews: its own block plus everything nested under it, never a sibling or an ancestor |
 | `search.test.js` | `search.js` | CJK tokenisation, flattening a nested outline into searchable text, the `minisearch` adapter |
 | `table.test.js` | `table.js` | cell type detection (numbers, thousands separators, percents), the table model's ordering and filtering |
+| `table-view.test.js` | `table-view.js` (fake DOM) | the column-width pin: an on-screen table is pinned to its measured auto-layout widths at enhance, an offscreen one at its first filter, filtering and sorting leave the pin untouched, a re-measure reads the full table (no row hidden, no colspan placeholder) and restores what the filter hid, a window resize burst settles into one sweep, an open panel rides its anchor, and a detached table leaves the registry |
 | `toc.test.js` | `toc.js` | which section the reading line is in, including headings far outside the viewport |
 | `graph.test.js` | `graph.js` | the seeded layout: stable seeds, a replayable generator, edge deduplication, degree-based radii, the same graph laid out identically twice, every node inside the normalised box, isolated documents |
 | `diagrams.test.js` | `diagrams.js` | selecting diagram markup, initialising only when a diagram exists, theme mapping, a fresh config per call |
