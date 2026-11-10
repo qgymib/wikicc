@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Third-party front-end libraries and the bundler used by the wikicc reader",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "check": "biome check --error-on-warnings .",
