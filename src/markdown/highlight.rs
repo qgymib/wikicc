@@ -633,7 +633,9 @@ mod tests {
             ":root[data-theme=\"light\"] .code {",
             ":root:not([data-theme=\"dark\"]) .code {",
         ] {
-            let start = css.find(marker).unwrap_or_else(|| panic!("css lacks {marker}"));
+            let start = css
+                .find(marker)
+                .unwrap_or_else(|| panic!("css lacks {marker}"));
             let rule = css[start..].split('}').next().expect("a rule has a body");
 
             assert!(

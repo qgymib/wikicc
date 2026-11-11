@@ -72,6 +72,13 @@ pub const MISSING_LINK_CLASS: &str = "doc-link-missing";
 /// `src/web/js/links.js`.
 pub const MISSING_ANCHOR_ATTRIBUTE: &str = "data-wikicc-missing-anchor";
 
+/// Attributes a web-page link carries so the reader opens it in a new tab.
+///
+/// `noopener noreferrer` keeps the opened page from reaching back into this
+/// one and keeps the site's address out of the referrer. Both serialisers
+/// that write an `<a>` use this verbatim, so the attribute never drifts.
+pub(crate) const NEW_TAB_ATTRIBUTES: &str = " target=\"_blank\" rel=\"noopener noreferrer\"";
+
 /// Opening-tag attributes for a link whose chapter does not exist.
 ///
 /// Built from escaped parts, so the authored chapter cannot terminate the
@@ -130,6 +137,14 @@ pub struct LinkTarget {
     /// `Some` is the authored spelling, kept verbatim so the message quotes
     /// the line the author has to fix. Only a chapter mismatch ever sets it.
     pub missing_anchor: Option<String>,
+    /// Whether the destination is a web page the reader opens in a new tab.
+    ///
+    /// Only a web navigation — an `http`/`https` URL or a protocol-relative
+    /// `//host` — sets it; the serialiser turns it into the `target` and
+    /// `rel` attributes on the anchor. Other schemes (`mailto`, `tel`,
+    /// `data`, …) hand over to the browser or the operating system as they
+    /// always have, and every destination inside the site stays in this tab.
+    pub new_tab: bool,
 }
 
 impl LinkTarget {
@@ -138,6 +153,16 @@ impl LinkTarget {
         Self {
             dest: dest.into(),
             missing_anchor: None,
+            new_tab: false,
+        }
+    }
+
+    /// A web page the reader opens in a new tab.
+    pub fn external(dest: impl Into<String>) -> Self {
+        Self {
+            dest: dest.into(),
+            missing_anchor: None,
+            new_tab: true,
         }
     }
 
@@ -146,6 +171,7 @@ impl LinkTarget {
         Self {
             dest: dest.into(),
             missing_anchor: Some(anchor.into()),
+            new_tab: false,
         }
     }
 }

@@ -534,6 +534,9 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
         self.html.push_str("<a href=\"");
         escape_into(&mut self.html, &target.dest);
         self.html.push('"');
+        if target.new_tab {
+            self.html.push_str(super::NEW_TAB_ATTRIBUTES);
+        }
         if let Some(title) = title {
             self.html.push_str(" title=\"");
             escape_into(&mut self.html, title);

@@ -7,7 +7,7 @@
 //!
 //! | Class | Rewritten to | On failure |
 //! | --- | --- | --- |
-//! | [`LinkClass::External`] | unchanged | — |
+//! | [`LinkClass::External`] | unchanged; a web page (`http`/`https`/`//host`) also marks [`LinkTarget::new_tab`] | — |
 //! | [`LinkClass::Anchor`] | unchanged | — |
 //! | [`LinkClass::InternalDoc`] | `#/doc/<percent-encoded id>[#<anchor>]` | warning, unchanged |
 //! | [`LinkClass::LocalAsset`] | `wikicc-asset:<hash>` | warning, unchanged |
@@ -358,6 +358,9 @@ impl LinkResolver<'_> {
     /// reader can still explain: the document itself did resolve.
     pub fn resolve(&mut self, destination: &str, line: usize) -> LinkTarget {
         match classify(destination) {
+            LinkClass::External if opens_in_new_tab(destination) => {
+                LinkTarget::external(destination)
+            }
             LinkClass::External | LinkClass::Anchor => LinkTarget::new(destination),
             LinkClass::InternalDoc { path, anchor } => {
                 self.resolve_doc(destination, line, &path, anchor.as_deref())
@@ -545,6 +548,27 @@ fn split_once(input: &str, separator: char) -> (&str, Option<&str>) {
             Some(&input[index + separator.len_utf8()..]),
         ),
         None => (input, None),
+    }
+}
+
+/// Whether a destination is a web page the reader opens in a new tab.
+///
+/// Only a web navigation qualifies: an `http`/`https` URL (scheme case is
+/// irrelevant) or a protocol-relative `//host`. Every other scheme —
+/// `mailto`, `tel`, `data`, `javascript`, `ftp`, … — hands over to the
+/// browser or the operating system in place, so it keeps the current tab's
+/// behaviour, as does any destination classified inside the site.
+fn opens_in_new_tab(destination: &str) -> bool {
+    if destination.starts_with("//") {
+        return true;
+    }
+
+    match scheme_end(destination) {
+        Some(end) => {
+            let scheme = &destination[..end];
+            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+        }
+        None => false,
     }
 }
 
@@ -990,16 +1014,55 @@ mod tests {
     }
 
     #[test]
-    fn external_and_anchor_destinations_are_untouched() {
+    fn external_web_pages_and_anchor_destinations_are_untouched() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut context = context(dir.path(), &["a.md"]);
         let mut resolver = context.for_doc("a.md");
 
         assert_eq!(
             resolver.resolve("https://example.com", 1),
-            LinkTarget::new("https://example.com")
+            LinkTarget::external("https://example.com")
         );
         assert_eq!(resolver.resolve("#section", 2), LinkTarget::new("#section"));
+        assert!(context.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn web_destinations_are_marked_for_a_new_tab() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md"]);
+        let mut resolver = context.for_doc("a.md");
+
+        for destination in [
+            "http://example.com",
+            "https://example.com/a?b=1",
+            "HTTPS://EXAMPLE.COM/UPPER",
+            "//cdn.example.com/app.js",
+        ] {
+            let target = resolver.resolve(destination, 1);
+            assert!(target.new_tab, "destination: {destination}");
+            assert_eq!(target.dest, destination, "destination: {destination}");
+        }
+        assert!(context.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn non_web_schemes_stay_in_the_current_tab() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md"]);
+        let mut resolver = context.for_doc("a.md");
+
+        for destination in [
+            "mailto:docs@example.com",
+            "tel:+123456",
+            "data:image/png;base64,AAAA",
+            "javascript:void(0)",
+            "ftp://example.com/file",
+        ] {
+            let target = resolver.resolve(destination, 1);
+            assert!(!target.new_tab, "destination: {destination}");
+            assert_eq!(target.dest, destination, "destination: {destination}");
+        }
         assert!(context.diagnostics().is_empty());
     }
 

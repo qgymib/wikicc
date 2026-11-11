@@ -163,6 +163,9 @@ pub(crate) fn definition_html<R: LinkRewriter + ?Sized>(
     html.push_str("]:</span> <a href=\"");
     escape_into(&mut html, &target.dest);
     html.push('"');
+    if target.new_tab {
+        html.push_str(super::NEW_TAB_ATTRIBUTES);
+    }
 
     // A definition can name a chapter the way an inline reference can, so it
     // carries the same mark: an entry in the source list is as visible as a
@@ -338,6 +341,32 @@ mod tests {
             collected.take_first("b"),
             None,
             "a repeated definition is a repeat in the tree, not a first"
+        );
+    }
+
+    /// Rewriter that marks every destination as a web page.
+    struct Web;
+
+    impl LinkRewriter for Web {
+        fn rewrite(&mut self, destination: &str, _line: usize) -> LinkTarget {
+            LinkTarget::external(destination.to_string())
+        }
+    }
+
+    #[test]
+    fn a_web_definition_opens_in_a_new_tab() {
+        let definition = ReferenceDefinition {
+            identifier: "1".to_string(),
+            label: "1".to_string(),
+            dest: "https://example.com/a".to_string(),
+            title: Some("Title".to_string()),
+        };
+
+        assert_eq!(
+            definition_html(&definition, &mut Web, 1),
+            "<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"https://example.com/a\" target=\"_blank\" rel=\"noopener noreferrer\">\
+             https://example.com/a</a> \"Title\"</p>\n"
         );
     }
 

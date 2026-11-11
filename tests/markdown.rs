@@ -1,7 +1,45 @@
 //! Integration tests for the Markdown stage: GFM rendering, heading anchors and
 //! the nested chapter outline, all observed through the public library API.
 
-use wikicc::markdown::{RenderedDoc, TocEntry, render_document};
+use wikicc::markdown::{
+    LinkRewriter, LinkTarget, RenderedDoc, TocEntry, render_document, render_document_with,
+};
+
+/// Marks every `https://` destination as a web page, so the serialiser's
+/// new-tab branch is observed without standing up a whole site.
+struct WebPages;
+
+impl LinkRewriter for WebPages {
+    fn rewrite(&mut self, destination: &str, _line: usize) -> LinkTarget {
+        if destination.starts_with("https://") {
+            LinkTarget::external(destination.to_string())
+        } else {
+            LinkTarget::new(destination.to_string())
+        }
+    }
+}
+
+#[test]
+fn a_web_page_link_carries_the_new_tab_attributes() {
+    let doc = render_document_with(
+        "[site](https://example.com \"Site\") and [local](#overview)\n",
+        &mut WebPages,
+    );
+
+    assert!(
+        doc.html.contains(
+            "<a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\" \
+             title=\"Site\">site</a>"
+        ),
+        "the target sits between the href and the title: {}",
+        doc.html
+    );
+    assert!(
+        doc.html.contains("<a href=\"#overview\">local</a>"),
+        "an in-page anchor keeps the current tab: {}",
+        doc.html
+    );
+}
 
 /// Flatten an outline into `(level, text)` pairs, depth first.
 fn levels_and_texts(entries: &[TocEntry]) -> Vec<(u32, String)> {
@@ -516,7 +554,9 @@ fn light_highlight_css_is_scoped_to_the_reader_s_light_paths() {
         ":root[data-theme=\"light\"] .code {",
         ":root:not([data-theme=\"dark\"]) .code {",
     ] {
-        let start = css.find(marker).unwrap_or_else(|| panic!("css lacks {marker}"));
+        let start = css
+            .find(marker)
+            .unwrap_or_else(|| panic!("css lacks {marker}"));
         let rule = css[start..].split('}').next().expect("a rule has a body");
 
         assert!(!rule.contains("background-color"), "css: {rule}");

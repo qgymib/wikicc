@@ -344,8 +344,11 @@ fn definition_destinations_are_resolved_like_inline_links() {
         "a local asset becomes a placeholder, the text stays as written\nhtml: {html}"
     );
     assert!(
-        html.contains("<a href=\"https://example.com/docs\">https://example.com/docs</a>"),
-        "an external destination is untouched\nhtml: {html}"
+        html.contains(
+            "<a href=\"https://example.com/docs\" target=\"_blank\" \
+             rel=\"noopener noreferrer\">https://example.com/docs</a>"
+        ),
+        "an external web page opens in a new tab\nhtml: {html}"
     );
     assert!(
         html.contains("<a href=\"missing.md\">missing.md</a>"),
