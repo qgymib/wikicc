@@ -477,6 +477,67 @@ fn highlight_css_is_available_to_the_shell() {
     assert_eq!(wikicc::THEME_NAME, "base16-ocean.dark");
 }
 
+#[test]
+fn light_highlight_css_is_scoped_to_the_reader_s_light_paths() {
+    let css = wikicc::light_theme_css();
+
+    assert_eq!(wikicc::LIGHT_THEME_NAME, "base16-ocean.light");
+    assert!(
+        css.contains(":root[data-theme=\"light\"] .code {"),
+        "css: {css}"
+    );
+    assert!(
+        css.contains("@media (prefers-color-scheme: light) {"),
+        "css: {css}"
+    );
+    assert!(
+        css.contains(":root:not([data-theme=\"dark\"]) .code {"),
+        "css: {css}"
+    );
+
+    // Every selector of every rule carries a scope: with a dark choice on a
+    // light system the media copy must fail at the root, not lose to it by
+    // position, and a bare selector would leak the light palette into the
+    // dark reader. The `@media` block opens the one brace to let through.
+    for line in css.lines() {
+        if line.ends_with(" {") && !line.starts_with("@media") {
+            assert!(
+                line.starts_with(":root[data-theme=\"light\"] ")
+                    || line.starts_with(":root:not([data-theme=\"dark\"]) "),
+                "a selector escaped the light scope: {line}"
+            );
+        }
+    }
+
+    // The block surface belongs to the reader's tokens in both themes, so the
+    // base rule of each copy carries colours only — scope rules keep their own
+    // paired backgrounds.
+    for marker in [
+        ":root[data-theme=\"light\"] .code {",
+        ":root:not([data-theme=\"dark\"]) .code {",
+    ] {
+        let start = css.find(marker).unwrap_or_else(|| panic!("css lacks {marker}"));
+        let rule = css[start..].split('}').next().expect("a rule has a body");
+
+        assert!(!rule.contains("background-color"), "css: {rule}");
+    }
+
+    // Both light paths ship the same rule set, or one surface would drift.
+    // Every selector carries its scope prefix exactly once, so counting the
+    // prefixes counts the rules each path ships.
+    assert_eq!(
+        css.matches(":root[data-theme=\"light\"] ").count(),
+        css.matches(":root:not([data-theme=\"dark\"]) ").count(),
+        "css: {css}"
+    );
+
+    assert_eq!(
+        css,
+        wikicc::light_theme_css(),
+        "the CSS must come from the cache"
+    );
+}
+
 // BUG-2026-11-04 acceptance construction: a citation-dense document whose
 // reference links must all resolve. Some engines cap the total size of
 // resolved reference links with an anti-DoS budget charged per successful

@@ -24,7 +24,7 @@ use wikicc::site::build_site;
 use wikicc::writers::{ASSETS_DIR_NAME, HTML_FILE_NAME};
 use wikicc::{
     APP_BUNDLE, DEFAULT_FAVICON, DEFAULT_FAVICON_NAME, RenderedSite, SHELL_CSS, SiteBundle,
-    asset_hash, render_site, theme_css,
+    asset_hash, light_theme_css, render_site, theme_css,
 };
 
 /// Prefix of the opaque asset placeholder the writers replace.
@@ -1255,6 +1255,7 @@ fn the_highlighting_theme_is_injected_exactly_once() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
     assert_eq!(page.html.matches(theme_css()).count(), 1);
+    assert_eq!(page.html.matches(light_theme_css()).count(), 1);
     assert_eq!(page.html.matches("</style>").count(), 1);
 }
 

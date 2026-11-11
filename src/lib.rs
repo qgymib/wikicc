@@ -35,7 +35,9 @@ pub mod writers;
 pub use assets::{ASSET_PLACEHOLDER_PREFIX, Asset, AssetTable, asset_hash, mime_for};
 pub use error::{Error, Result};
 pub use favicon::{DEFAULT_FAVICON, DEFAULT_FAVICON_NAME, Favicon};
-pub use markdown::highlight::{MERMAID_CLASS, MERMAID_FENCE, THEME_NAME, theme_css};
+pub use markdown::highlight::{
+    LIGHT_THEME_NAME, MERMAID_CLASS, MERMAID_FENCE, THEME_NAME, light_theme_css, theme_css,
+};
 pub use markdown::links::{LinkClass, LinkContext, LinkResolver, MissingReason, classify};
 pub use markdown::{
     LinkRewriter, NoRewrite, RenderedDoc, TocEntry, render_document, render_document_with,

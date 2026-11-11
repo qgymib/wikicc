@@ -5,10 +5,14 @@
 //! from the same theme. The reader therefore ships no highlighter, no grammar
 //! files and no runtime cost beyond the CSS rules it already downloads.
 //!
-//! A single theme, `base16-ocean.dark`, serves both the light and the dark
-//! reader. It is a mid-tone palette rather than a near-white one, so the same
-//! colours stay legible on either surface; a per-theme variant would only mean
-//! emitting a second block of CSS under `:root[data-theme="light"]`.
+//! Two themes, one per reader surface: `base16-ocean.dark` for the dark
+//! reader and `base16-ocean.light` for the light one. The dark sheet is
+//! global; the light sheet is scoped at build time to the two light paths the
+//! reader's own stylesheet uses — the explicit `data-theme="light"` attribute
+//! and the system-preference media query — so a reader who chose dark keeps
+//! the dark palette even on a light system. Neither sheet paints a
+//! background: the block surface stays with the reader's own tokens, and the
+//! generated rules carry colours only.
 //!
 //! One fence is *not* code: ` ```mermaid ` is a diagram. It is routed before the
 //! highlighter, so the block leaves the build as `<pre class="mermaid">` with
@@ -29,8 +33,12 @@ use syntect::html::{ClassStyle, ClassedHTMLGenerator, css_for_theme_with_class_s
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
-/// Highlight theme used for the light and the dark reader alike.
+/// Highlight theme of the dark reader.
 pub const THEME_NAME: &str = "base16-ocean.dark";
+
+/// Highlight theme of the light reader, scoped by [`light_theme_css`] to the
+/// reader's two light paths.
+pub const LIGHT_THEME_NAME: &str = "base16-ocean.light";
 
 /// Class of the `<pre>` wrapper around every code block.
 ///
@@ -51,6 +59,7 @@ pub const MERMAID_CLASS: &str = "mermaid";
 struct HighlightAssets {
     syntaxes: SyntaxSet,
     theme: Theme,
+    light_theme: Theme,
 }
 
 /// Load the syntax set and the theme on first use.
@@ -63,10 +72,14 @@ fn assets() -> &'static HighlightAssets {
             .themes
             .remove(THEME_NAME)
             .unwrap_or_else(|| panic!("the built-in syntect theme set has no `{THEME_NAME}`"));
+        let light_theme = themes.themes.remove(LIGHT_THEME_NAME).unwrap_or_else(|| {
+            panic!("the built-in syntect theme set has no `{LIGHT_THEME_NAME}`")
+        });
 
         HighlightAssets {
             syntaxes: SyntaxSet::load_defaults_newlines(),
             theme,
+            light_theme,
         }
     })
 }
@@ -195,6 +208,84 @@ pub fn theme_css() -> &'static str {
         css_for_theme_with_class_style(&assets().theme, ClassStyle::Spaced)
             .expect("syntect must generate CSS for a built-in theme")
     })
+}
+
+/// Class-based CSS for [`LIGHT_THEME_NAME`], scoped to the reader's two light
+/// paths, generated once per process.
+///
+/// The reader's stylesheet repeats its light tokens under both light paths —
+/// the explicit `data-theme="light"` attribute and the system-preference
+/// media query behind `:not([data-theme="dark"])` — and the generated rules
+/// follow the same convention, one copy each. Both prefixes lift specificity
+/// above the unscoped dark rules, and the media copy keeps the choice
+/// honest: with `data-theme="dark"` set, `:not(...)` fails at the root and
+/// the dark palette stays. Like [`theme_css`], the output is stable across
+/// builds because it is derived from the theme dump alone.
+pub fn light_theme_css() -> &'static str {
+    static CSS: OnceLock<String> = OnceLock::new();
+
+    CSS.get_or_init(|| {
+        let raw = css_for_theme_with_class_style(&assets().light_theme, ClassStyle::Spaced)
+            .expect("syntect must generate CSS for a built-in theme");
+
+        let explicit = scoped_css(&raw, ":root[data-theme=\"light\"]");
+        let system = scoped_css(&raw, ":root:not([data-theme=\"dark\"])");
+
+        let mut css = String::with_capacity(explicit.len() + system.len() + 128);
+        css.push_str("/* Code colours for the light reader, from `base16-ocean.light`.\n");
+        css.push_str("   The block surface stays with the reader's own tokens, so the\n");
+        css.push_str("   theme's background is not carried over. */\n\n");
+        css.push_str(&explicit);
+        css.push('\n');
+        css.push_str("@media (prefers-color-scheme: light) {\n");
+        css.push_str(&system);
+        css.push_str("}\n");
+        css
+    })
+}
+
+/// Prefix every rule of a generated theme stylesheet with `scope`.
+///
+/// The generator's shape is pinned by `Cargo.lock`: a header comment, then one
+/// rule per line — the base `.code` rule, then the scope rules whose selectors
+/// are bare class lists, several of which share a line through a comma. Every
+/// selector is prefixed on its own, so a comma can never carry a scoped colour
+/// past its scope into the other reader. The base rule's `background-color` is
+/// stripped on the way through: the reader's stylesheet controls the block
+/// surface with its own tokens, in the dark reader as well as the light one.
+/// Scope rules keep theirs — the theme pairs each with its own foreground, so
+/// the pair reads on any surface.
+fn scoped_css(raw: &str, scope: &str) -> String {
+    let body = match raw.find("*/\n\n") {
+        Some(end) => &raw[end + "*/\n\n".len()..],
+        None => raw,
+    };
+
+    let mut out = String::with_capacity(body.len() + body.len() / 2);
+    let mut in_base_rule = false;
+
+    for line in body.lines() {
+        if let Some(selectors) = line.strip_suffix(" {") {
+            in_base_rule = selectors == ".code";
+
+            let prefixed: Vec<String> = selectors
+                .split(", ")
+                .map(|selector| format!("{scope} {selector}"))
+                .collect();
+            out.push_str(&prefixed.join(", "));
+            out.push_str(" {\n");
+            continue;
+        }
+
+        if in_base_rule && line.trim_start().starts_with("background-color:") {
+            continue;
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    out
 }
 
 /// Highlight one block, returning `None` if the highlighter rejects the input.
@@ -485,6 +576,96 @@ mod tests {
         let second = theme_css();
 
         assert!(std::ptr::eq(first, second), "CSS must come from the cache");
+    }
+
+    #[test]
+    fn light_theme_css_is_scoped_to_both_light_paths() {
+        let css = light_theme_css();
+
+        assert!(
+            css.contains(":root[data-theme=\"light\"] .code {"),
+            "css: {css}"
+        );
+        assert!(
+            css.contains("@media (prefers-color-scheme: light) {"),
+            "css: {css}"
+        );
+        assert!(
+            css.contains(":root:not([data-theme=\"dark\"]) .code {"),
+            "css: {css}"
+        );
+
+        // Every selector of every rule carries a scope — a bare selector line
+        // would leak the light palette into the dark reader. The `@media` block
+        // opens the one brace the check must let through.
+        for line in css.lines() {
+            if line.ends_with(" {") && !line.starts_with("@media") {
+                assert!(
+                    line.starts_with(":root[data-theme=\"light\"] ")
+                        || line.starts_with(":root:not([data-theme=\"dark\"]) "),
+                    "a selector escaped the light scope: {line}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn both_light_paths_carry_the_same_rules() {
+        let css = light_theme_css();
+
+        // Every selector carries its scope prefix exactly once, so counting
+        // the prefixes counts the rules each path ships.
+        let explicit = css.matches(":root[data-theme=\"light\"] ").count();
+        let system = css.matches(":root:not([data-theme=\"dark\"]) ").count();
+
+        assert!(
+            explicit > 40,
+            "expected the full rule set in both paths, got {explicit}"
+        );
+        assert_eq!(explicit, system, "css: {css}");
+    }
+
+    #[test]
+    fn light_theme_css_keeps_the_surface_with_the_tokens() {
+        let css = light_theme_css();
+
+        for marker in [
+            ":root[data-theme=\"light\"] .code {",
+            ":root:not([data-theme=\"dark\"]) .code {",
+        ] {
+            let start = css.find(marker).unwrap_or_else(|| panic!("css lacks {marker}"));
+            let rule = css[start..].split('}').next().expect("a rule has a body");
+
+            assert!(
+                !rule.contains("background-color"),
+                "the block surface belongs to the reader's tokens: {rule}"
+            );
+        }
+    }
+
+    #[test]
+    fn light_and_dark_plain_text_colours_differ() {
+        let dark = plain_text_color(theme_css()).expect("dark css has a base colour");
+        let light = plain_text_color(light_theme_css()).expect("light css has a base colour");
+
+        assert_ne!(dark, light, "the light reader needs its own palette");
+    }
+
+    #[test]
+    fn light_theme_css_is_generated_once() {
+        let first = light_theme_css();
+        let second = light_theme_css();
+
+        assert!(std::ptr::eq(first, second), "CSS must come from the cache");
+    }
+
+    /// The `color:` value of the first base `.code` rule, without the `#`.
+    fn plain_text_color(css: &str) -> Option<&str> {
+        let body = css.split(".code {").nth(1)?;
+        let body = body.split('}').next()?;
+        let value = body.split("color: #").nth(1)?;
+
+        value.split(';').next()
     }
 
     #[test]

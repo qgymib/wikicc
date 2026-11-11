@@ -48,7 +48,7 @@ use minijinja::{Environment, UndefinedBehavior, context};
 
 use crate::assets::asset_hash;
 use crate::error::{Error, Result};
-use crate::markdown::highlight::theme_css;
+use crate::markdown::highlight::{light_theme_css, theme_css};
 use crate::markdown::sections::Block;
 use crate::markdown::toc::TocEntry;
 use crate::site::{Edge, SiteBundle, Stats, flatten_headings};
@@ -113,19 +113,23 @@ impl RenderedSite {
     }
 }
 
-/// Reader stylesheet: the hand-written rules, the highlighting theme and the
-/// math renderer's sheet with its fonts embedded.
+/// Reader stylesheet: the hand-written rules, the dark highlighting theme,
+/// the light theme scoped to the reader's two light paths, and the math
+/// renderer's sheet with its fonts embedded.
 ///
-/// All three are static, so the concatenation is built once and shared.
+/// All of them are static, so the concatenation is built once and shared.
 pub fn shell_css() -> &'static str {
     static CSS: OnceLock<String> = OnceLock::new();
 
     CSS.get_or_init(|| {
-        let mut css =
-            String::with_capacity(SHELL_CSS.len() + theme_css().len() + KATEX_CSS.len() + 2);
+        let mut css = String::with_capacity(
+            SHELL_CSS.len() + theme_css().len() + light_theme_css().len() + KATEX_CSS.len() + 3,
+        );
         css.push_str(SHELL_CSS);
         css.push('\n');
         css.push_str(theme_css());
+        css.push('\n');
+        css.push_str(light_theme_css());
         css.push('\n');
         css.push_str(KATEX_CSS);
         css
