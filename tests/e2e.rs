@@ -193,6 +193,117 @@ fn the_theme_switch_sits_beside_search_in_the_top_bar() {
 }
 
 #[test]
+fn the_switch_lives_in_the_leftmost_rail() {
+    let page = render(&build(&fixture_root(), "Fixture"));
+
+    // The leftmost strip of the page is a bar of its own, and the switch that
+    // shows and hides the document list lives in it: the rail never moves with
+    // the list, so the control sits at the page's top-left whether the list is
+    // out or put away. The top bar keeps only the drawer's toggle.
+    let rail = page.html.find(r#"class="rail""#).expect("rail");
+    let collapse = page
+        .html
+        .find(r#"id="sidebar-collapse""#)
+        .expect("collapse switch");
+    let sidebar = page.html.find(r#"class="sidebar""#).expect("sidebar");
+    let bar = page.html.find(r#"class="topbar""#).expect("top bar");
+    let drawer = page
+        .html
+        .find(r#"id="sidebar-toggle""#)
+        .expect("drawer toggle");
+    let search = page
+        .html
+        .find(r#"id="search-toggle""#)
+        .expect("search button");
+
+    assert!(rail < collapse, "the switch belongs to the rail");
+    assert!(
+        collapse < sidebar,
+        "the rail precedes the list whose room it gives back"
+    );
+    assert!(
+        bar < sidebar,
+        "the list follows the bar in the page's columns"
+    );
+    assert!(
+        bar < drawer && drawer < search,
+        "the drawer's toggle stays the top bar's first control"
+    );
+    assert!(
+        page.html.contains(r#"aria-controls="sidebar""#),
+        "the switch names the region it shows and hides"
+    );
+}
+
+#[test]
+fn a_hidden_document_list_folds_without_leaving_the_grid() {
+    // The list folds with `visibility`, not `display`: it keeps the grid cell
+    // it was already placed in while the shared `--sidebar-width` narrows to
+    // nothing, so the article takes the room and the rail, the top bar and the
+    // panels keep their columns without their placement being spelled out. The
+    // phone's drawer never answers the attribute, and the rail never leaves at
+    // all — the switch has to outlive the list it switches.
+    let css = SHELL_CSS;
+    let app = rule_of(css, ".app {");
+    assert!(
+        app.contains("var(--rail-width)") && app.contains("var(--sidebar-width)"),
+        "the page's columns start at the rail, then the list: {app}"
+    );
+
+    let wide = media_block(css, "min-width: 641px");
+
+    // The columns are named by position only in the two rules that place the
+    // regions the grid cannot infer: the bar and the panels share the last
+    // one, past the rail and the list, and a rule left one column behind
+    // slides the panels into the middle of the page.
+    let inspector = main_inspector_rule(css);
+    assert_eq!(
+        declaration(inspector, "grid-column"),
+        Some("4"),
+        "the panels hold the column past the rail and the list: {inspector}"
+    );
+    let collapsed = rule_of(wide, "body[data-sidebar=\"hidden\"] {");
+    assert_eq!(
+        declaration(collapsed, "--sidebar-width"),
+        Some("0px"),
+        "the attribute gives the list's room back: {collapsed}"
+    );
+    let folded = rule_of(wide, "body[data-sidebar=\"hidden\"] .sidebar {");
+    assert_eq!(declaration(folded, "visibility"), Some("hidden"));
+    assert_eq!(declaration(folded, "padding"), Some("0"));
+    assert_eq!(declaration(folded, "border-right"), Some("0"));
+
+    assert_eq!(
+        declaration(rule_of(wide, "#sidebar-collapse {"), "display"),
+        Some("inline-flex"),
+        "the rail's switch shows wherever the list is a column"
+    );
+    let base_hidden = rule_of(css, ".topbar-title,");
+    assert!(
+        base_hidden.contains("#sidebar-toggle") && base_hidden.contains("#sidebar-collapse"),
+        "the drawer's toggle and the rail's switch both start hidden: {base_hidden}"
+    );
+
+    let drawer = media_block(css, "max-width: 640px");
+    assert!(
+        !drawer.contains("data-sidebar"),
+        "the drawer's widths never answer the wide layout's attribute"
+    );
+    assert!(
+        !drawer.contains("#sidebar-collapse"),
+        "the drawer is closed by its own toggle, not by the rail's switch"
+    );
+    assert!(
+        drawer.contains("#sidebar-toggle"),
+        "the drawer's toggle comes back on the narrow strip"
+    );
+    assert!(
+        drawer.contains(".rail {"),
+        "the rail itself leaves the phone, whose switch is in the strip"
+    );
+}
+
+#[test]
 fn the_page_is_a_utf8_html_document() {
     let page = render(&build(&fixture_root(), "Fixture"));
 

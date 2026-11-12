@@ -36,6 +36,12 @@ import * as Banner from "./banner.js";
 /** `localStorage` key holding the explicit theme choice. */
 var THEME_KEY = "wikicc.theme";
 
+/** `localStorage` key holding the document list's visibility. */
+var SIDEBAR_KEY = "wikicc.sidebar";
+
+/** The media query below which the document list is a drawer, not a column. */
+var DRAWER_QUERY = "(max-width: 640px)";
+
 /** Class of the banner shown when a chapter anchor does not exist. */
 export var ALERT_CLASS = Banner.BANNER_CLASS;
 
@@ -85,6 +91,23 @@ function storeTheme(theme) {
     globalThis.localStorage.setItem(THEME_KEY, theme);
   } catch (_error) {
     /* Storage can be disabled; the theme still applies for this page. */
+  }
+}
+
+/** Whether the document list was put away on an earlier visit. */
+function storedSidebar() {
+  try {
+    return globalThis.localStorage.getItem(SIDEBAR_KEY) === "hidden";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function storeSidebar(hidden) {
+  try {
+    globalThis.localStorage.setItem(SIDEBAR_KEY, hidden ? "hidden" : "visible");
+  } catch (_error) {
+    /* Storage can be disabled; the list still hides for this page. */
   }
 }
 
@@ -151,6 +174,7 @@ export function start() {
   var stats = document.getElementById("stats");
   var inspector = document.getElementById("inspector");
   var sidebarToggle = document.getElementById("sidebar-toggle");
+  var sidebarCollapse = document.getElementById("sidebar-collapse");
   var backdrop = document.getElementById("drawer-backdrop");
   var themeToggle = document.getElementById("theme-toggle");
   var tabs = Array.prototype.slice.call(
@@ -373,6 +397,37 @@ export function start() {
     }
     if (backdrop) {
       backdrop.hidden = !open;
+    }
+  }
+
+  /** Whether the reader is at a width where the document list is a drawer. */
+  function drawerMode() {
+    return (
+      typeof globalThis.matchMedia === "function" &&
+      globalThis.matchMedia(DRAWER_QUERY).matches
+    );
+  }
+
+  /**
+   * Put the document list's column away or bring it back.
+   *
+   * The wide layouts hide the list through the body attribute alone; the
+   * drawer's state is a different attribute and never touched here. The
+   * header's switch answers for the column — collapsed, it is the rail the
+   * reader brings the list back from, so its accessible state and the label
+   * it offers follow the list, not the gesture.
+   */
+  function setSidebarHidden(hidden) {
+    if (hidden) {
+      document.body.setAttribute("data-sidebar", "hidden");
+    } else {
+      document.body.removeAttribute("data-sidebar");
+    }
+    if (sidebarCollapse) {
+      var label = hidden ? "Show document list" : "Hide document list";
+      sidebarCollapse.setAttribute("aria-expanded", hidden ? "false" : "true");
+      sidebarCollapse.setAttribute("aria-label", label);
+      sidebarCollapse.setAttribute("title", label);
     }
   }
 
@@ -996,10 +1051,27 @@ export function start() {
   }
   syncPanelGutter();
 
-  if (sidebarToggle) {
-    sidebarToggle.addEventListener("click", function () {
+  /**
+   * One gesture for both switches: the drawer's, on the narrow strip, and the
+   * list header's, on the wide layouts. Which one answers depends on the
+   * width the reader is reading at, not on which button was pressed.
+   */
+  function toggleSidebar() {
+    if (drawerMode()) {
       setDrawer(document.body.getAttribute("data-drawer") !== "open");
-    });
+      return;
+    }
+    var hidden = document.body.getAttribute("data-sidebar") !== "hidden";
+    setSidebarHidden(hidden);
+    storeSidebar(hidden);
+  }
+
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener("click", toggleSidebar);
+  }
+
+  if (sidebarCollapse) {
+    sidebarCollapse.addEventListener("click", toggleSidebar);
   }
 
   if (backdrop) {
@@ -1069,6 +1141,9 @@ export function start() {
   // consulted: their `href`s start with the route prefix, not with `data:`.
   AssetLinks.listenForInlineDataLinks(document);
 
+  // The drawer starts closed; the document list's column starts where the
+  // reader last left it, which the toggle's accessible state then follows.
   setDrawer(false);
+  setSidebarHidden(storedSidebar());
   render();
 }

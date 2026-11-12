@@ -33,6 +33,7 @@ const SHELL_IDS = [
   "stats",
   "inspector",
   "sidebar-toggle",
+  "sidebar-collapse",
   "drawer-backdrop",
   "theme-toggle",
   "doc-list",
@@ -528,9 +529,12 @@ function lazyCorpus() {
  *
  * `options.hash` is where the reader arrives; `options.lazy` swaps the
  * embedded payload for the pages manifest and serves its chunks through
- * `options.fetchImpl` (or, with `options.broken`, serves nothing). The object
- * handed to `body` exposes the pieces a test asserts on: the headings the
- * session can find by id, the address bar, and the frame queue.
+ * `options.fetchImpl` (or, with `options.broken`, serves nothing); `options.drawer`
+ * holds the session at the width where the document list is a drawer; and
+ * `options.storage` seeds the fake `localStorage`, whose map comes back on the
+ * session so a test can read what the reader wrote. The object handed to
+ * `body` exposes the pieces a test asserts on: the headings the session can
+ * find by id, the address bar, and the frame queue.
  */
 async function withSession(options, body) {
   const previous = {
@@ -704,14 +708,24 @@ async function withSession(options, body) {
   globalThis.document = doc;
   globalThis.location = location;
   globalThis.history = history;
-  globalThis.matchMedia = function () {
-    return { matches: false };
+  // The theme query stays light-hostile so the reader stays dark; a test that
+  // sets `options.drawer` moves the session to the width where the document
+  // list is a drawer, which is the only other query the session branches on.
+  globalThis.matchMedia = function (query) {
+    return {
+      matches: Boolean(options.drawer) && query === "(max-width: 640px)",
+    };
   };
+  // The store starts empty; `options.storage` seeds it, and the same map is
+  // handed back on the session for the tests that read a write back.
+  const storageMap = options.storage || {};
   globalThis.localStorage = {
-    getItem() {
-      return null;
+    getItem(key) {
+      return Object.hasOwn(storageMap, key) ? storageMap[key] : null;
     },
-    setItem() {},
+    setItem(key, value) {
+      storageMap[key] = String(value);
+    },
   };
   // `start()` listens for `hashchange` on the window, which is `globalThis` in
   // a page and in this fake one too.
@@ -758,6 +772,7 @@ async function withSession(options, body) {
       frames,
       headings,
       fetchCalls,
+      storage: storageMap,
       /**
        * Change the address the way the browser does and let the session hear
        * about it, which is what a followed block reference looks like.
@@ -921,6 +936,109 @@ test("the document list keeps every document and highlights the open one", async
       "both documents are listed",
     );
   });
+});
+
+test("the toggle puts the document list away and brings it back", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const toggle = session.shell.get("sidebar-collapse");
+
+    assert.equal(
+      body.getAttribute("data-sidebar"),
+      null,
+      "the list starts showing on a wide screen",
+    );
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(toggle.getAttribute("aria-label"), "Hide document list");
+
+    toggle.fire("click");
+    assert.equal(body.getAttribute("data-sidebar"), "hidden");
+    assert.equal(
+      toggle.getAttribute("aria-expanded"),
+      "false",
+      "the toggle answers for the list it hid",
+    );
+    assert.equal(
+      toggle.getAttribute("aria-label"),
+      "Show document list",
+      "the rail's switch now offers to bring the list back",
+    );
+
+    toggle.fire("click");
+    assert.equal(body.getAttribute("data-sidebar"), null);
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(toggle.getAttribute("aria-label"), "Hide document list");
+  });
+});
+
+test("a navigation keeps the document list put away", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+    session.shell.get("sidebar-collapse").fire("click");
+    assert.equal(session.doc.body.getAttribute("data-sidebar"), "hidden");
+
+    // Following a document closes only the drawer's state: the wide layout's
+    // hidden column is the reader's choice, not a navigation side effect.
+    session.follow("#/doc/guide/intro.md#getting-started");
+    assert.equal(session.doc.body.getAttribute("data-sidebar"), "hidden");
+    assert.equal(session.doc.body.getAttribute("data-drawer"), "closed");
+  });
+});
+
+test("the narrow screen's toggle still drives the drawer", async () => {
+  withSession({ hash: "#/doc/index.md", drawer: true }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const toggle = session.shell.get("sidebar-toggle");
+
+    assert.equal(body.getAttribute("data-drawer"), "closed");
+
+    toggle.fire("click");
+    assert.equal(body.getAttribute("data-drawer"), "open");
+    assert.equal(
+      body.getAttribute("data-sidebar"),
+      null,
+      "the drawer's switch never touches the wide layout's attribute",
+    );
+
+    toggle.fire("click");
+    assert.equal(body.getAttribute("data-drawer"), "closed");
+  });
+});
+
+test("putting the list away writes the choice down", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const toggle = session.shell.get("sidebar-collapse");
+    toggle.fire("click");
+    assert.equal(session.storage["wikicc.sidebar"], "hidden");
+
+    toggle.fire("click");
+    assert.equal(session.storage["wikicc.sidebar"], "visible");
+  });
+});
+
+test("the reader remembers the list was put away", async () => {
+  withSession(
+    { hash: "#/doc/index.md", storage: { "wikicc.sidebar": "hidden" } },
+    (session) => {
+      startSession();
+
+      assert.equal(
+        session.doc.body.getAttribute("data-sidebar"),
+        "hidden",
+        "the stored choice is applied when the session starts",
+      );
+      assert.equal(
+        session.shell.get("sidebar-collapse").getAttribute("aria-expanded"),
+        "false",
+      );
+    },
+  );
 });
 
 /** How many document links the list holds. */

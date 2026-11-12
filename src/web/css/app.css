@@ -22,6 +22,7 @@
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
   --radius: 14px;
   --radius-sm: 9px;
+  --rail-width: 44px;
   --sidebar-width: 260px;
   --inspector-width: 320px;
   --topbar-height: 52px;
@@ -127,7 +128,7 @@ a {
    page with nothing over them. */
 .app {
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
+  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
   grid-template-rows: var(--topbar-height) auto;
   align-items: start;
   min-height: 100vh;
@@ -153,7 +154,7 @@ a {
   top: 0;
   z-index: 25;
   grid-row: 1;
-  grid-column: 3;
+  grid-column: 4;
   display: flex;
   /* Pinned to its row's top edge, so it stays on screen while the panels
     underneath scroll. `stretch` gives it the row's height; the bar's own
@@ -173,9 +174,10 @@ a {
   background: linear-gradient(180deg, var(--shell-top), var(--shell-top));
 }
 
-/* Only the panel column starts under the toolbar; the document list and the
-   article have no bar over them, so they run from the very top of the page —
-   which is what the two-row grid is for. */
+/* Only the panel column starts under the toolbar; the rail, the document
+   list and the article have no bar over them, so they run from the very top
+   of the page — which is what the two-row grid is for. */
+.rail,
 .sidebar,
 .content {
   grid-row: 1 / span 2;
@@ -186,7 +188,8 @@ a {
 }
 
 .topbar-title,
-#sidebar-toggle {
+#sidebar-toggle,
+#sidebar-collapse {
   display: none;
 }
 
@@ -222,7 +225,28 @@ a {
   color: var(--text-dim);
 }
 
-/* ---------- sidebar ---------- */
+/* ---------- rail and sidebar ---------- */
+
+/* The rail and the list share one surface: the leftmost strip of chrome and
+   the column beside it read as one panel family, divided by their rules. */
+.rail,
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(17, 23, 31, 0.92), rgba(11, 15, 20, 0.88));
+  backdrop-filter: blur(16px);
+}
+
+.rail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  height: 100vh;
+  padding: 14px 0 12px;
+  z-index: 10;
+}
 
 .sidebar {
   position: sticky;
@@ -234,17 +258,16 @@ a {
   gap: 12px;
   height: 100vh;
   padding: 18px 14px 12px;
-  border-right: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(17, 23, 31, 0.92), rgba(11, 15, 20, 0.88));
-  backdrop-filter: blur(16px);
   z-index: 10;
 }
 
+:root[data-theme="light"] .rail,
 :root[data-theme="light"] .sidebar {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
 }
 
 @media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .rail,
   :root:not([data-theme="dark"]) .sidebar {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
   }
@@ -331,6 +354,22 @@ a {
   :root:not([data-theme="dark"]) #theme-toggle .icon-moon {
     display: none;
   }
+}
+
+/* The header switch's glyph follows the state it offers: a chevron pointing
+   out of the page while the list shows, back toward the page while it does
+   not. The button's own `aria-expanded` is the state, so the swap and the
+   accessible answer cannot drift apart. */
+#sidebar-collapse .icon-expand {
+  display: none;
+}
+
+#sidebar-collapse[aria-expanded="false"] .icon-collapse {
+  display: none;
+}
+
+#sidebar-collapse[aria-expanded="false"] .icon-expand {
+  display: block;
 }
 
 .doc-list {
@@ -1962,7 +2001,7 @@ a {
   flex-direction: column;
   gap: 14px;
   height: calc(100vh - var(--topbar-height));
-  grid-column: 3;
+  grid-column: 4;
   /* The air under the bar's buttons is the gap the panels are held apart by:
      the 52px bar centres its 28px buttons and leaves 12px under them, so the
      column itself carries only the remaining 2px of the 14px rhythm. */
@@ -2703,6 +2742,31 @@ a {
 
 /* ---------- responsive ---------- */
 
+/* Putting the document list away is available at every width where the list
+   is a column of the grid; the phone's drawer below has its own switch. The
+   switch lives in the rail, the leftmost strip, which stays put whether the
+   list is out or not: the attribute narrows the shared `--sidebar-width` to
+   nothing, so the wide grid's four columns and the middle grid's three give
+   the list's room back by one move. The list folds with `visibility`, not
+   `display`, so it keeps the grid cell it was already placed in — the article
+   slides into the room without the placement of everything else around it
+   having to be spelled out. */
+@media (min-width: 641px) {
+  #sidebar-collapse {
+    display: inline-flex;
+  }
+
+  body[data-sidebar="hidden"] {
+    --sidebar-width: 0px;
+  }
+
+  body[data-sidebar="hidden"] .sidebar {
+    visibility: hidden;
+    padding: 0;
+    border-right: 0;
+  }
+}
+
 @media (max-width: 1200px) {
   :root {
     --inspector-width: 280px;
@@ -2714,7 +2778,7 @@ a {
    across the top of the page, and the panels go back to starting under it. */
 @media (max-width: 900px) {
   .app {
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
     grid-template-rows: none;
   }
 
@@ -2736,13 +2800,15 @@ a {
     padding-right: 16px;
   }
 
-  /* The bar is across the top again, so the two regions that were spanning
+  /* The bar is across the top again, so the three regions that were spanning
      both rows go back to being ordinary row items under it. */
+  .rail,
   .sidebar,
   .content {
     grid-row: auto;
   }
 
+  .rail,
   .sidebar {
     top: var(--topbar-height);
     height: calc(100vh - var(--topbar-height));
@@ -2795,6 +2861,12 @@ a {
   .app {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: none;
+  }
+
+  /* The rail belongs to the wide layouts; the phone's drawer switch lives in
+     the strip, so the leftmost column has nothing to carry here. */
+  .rail {
+    display: none;
   }
 
   /* The narrow screen brings back the drawer toggle and gives the site title
