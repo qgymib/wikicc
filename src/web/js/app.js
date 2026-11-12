@@ -39,6 +39,12 @@ var THEME_KEY = "wikicc.theme";
 /** `localStorage` key holding the document list's visibility. */
 var SIDEBAR_KEY = "wikicc.sidebar";
 
+/**
+ * `localStorage` key holding which panels were put away: the hidden set as
+ * `none`, one panel's name, or `both`.
+ */
+var PANELS_KEY = "wikicc.panels";
+
 /** The media query below which the document list is a drawer, not a column. */
 var DRAWER_QUERY = "(max-width: 640px)";
 
@@ -111,6 +117,37 @@ function storeSidebar(hidden) {
   }
 }
 
+/** The panel set that was put away on an earlier visit, or `null` for none. */
+function storedPanels() {
+  try {
+    var value = globalThis.localStorage.getItem(PANELS_KEY);
+    return value === "graph" ||
+      value === "outline" ||
+      value === "both" ||
+      value === "none"
+      ? value
+      : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function storePanels(graphHidden, outlineHidden) {
+  var value =
+    graphHidden && outlineHidden
+      ? "both"
+      : graphHidden
+        ? "graph"
+        : outlineHidden
+          ? "outline"
+          : "none";
+  try {
+    globalThis.localStorage.setItem(PANELS_KEY, value);
+  } catch (_error) {
+    /* Storage can be disabled; the panels still fold for this page. */
+  }
+}
+
 /** Theme currently in effect: the explicit choice, or the system preference. */
 function currentTheme() {
   return document.documentElement.getAttribute("data-theme") || systemTheme();
@@ -177,9 +214,8 @@ export function start() {
   var sidebarCollapse = document.getElementById("sidebar-collapse");
   var backdrop = document.getElementById("drawer-backdrop");
   var themeToggle = document.getElementById("theme-toggle");
-  var tabs = Array.prototype.slice.call(
-    document.querySelectorAll(".inspector-tab"),
-  );
+  var graphToggle = document.getElementById("graph-toggle");
+  var outlineToggle = document.getElementById("outline-toggle");
 
   /**
    * The index over the whole site, and the records its answers are cut from.
@@ -429,6 +465,35 @@ export function start() {
       sidebarCollapse.setAttribute("aria-label", label);
       sidebarCollapse.setAttribute("title", label);
     }
+  }
+
+  /**
+   * Put one of the panels away or bring it back.
+   *
+   * Each panel answers to its own body attribute, so the two can be combined
+   * freely — both showing, one, neither; the stylesheet folds the whole column
+   * when neither shows. The switch is rail furniture like the list's: its
+   * accessible state and the label it offers follow the panel, not the
+   * gesture, and the toolbar's gutter follows the panel that is actually on
+   * the column's right-hand axis.
+   */
+  function setPanelHidden(panel, hidden) {
+    var attribute = panel === "graph" ? "data-graph" : "data-outline";
+    var button = panel === "graph" ? graphToggle : outlineToggle;
+    if (hidden) {
+      document.body.setAttribute(attribute, "hidden");
+    } else {
+      document.body.removeAttribute(attribute);
+    }
+    if (button) {
+      var label =
+        (hidden ? "Show " : "Hide ") +
+        (panel === "graph" ? "graph panel" : "outline panel");
+      button.setAttribute("aria-expanded", hidden ? "false" : "true");
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+    }
+    syncPanelGutter();
   }
 
   /**
@@ -1022,21 +1087,28 @@ export function start() {
    * really reserved — one custom scrollbar under a classic scrollbar, none
    * under an overlay one — so the two right-hand axes stay one line whatever
    * the platform draws. The collapsed inspector hides the panel and pins the
-   * bar's padding by the same media rules, so there is nothing to measure.
+   * bar's padding by the same media rules, so there is nothing to measure —
+   * and the switch that puts a panel away answers through the same exit: the
+   * panel left on the axis is the one measured, and with both away there is
+   * no panel left to measure.
    */
   var graphPanel = document.getElementById("graph-panel");
+  var tocPanel = document.getElementById("toc-panel");
 
   function syncPanelGutter() {
-    if (!inspector || !graphPanel) {
+    if (!inspector) {
       return;
     }
 
-    var panel = graphPanel.getBoundingClientRect();
-    if (panel.width === 0) {
+    var box = graphPanel ? graphPanel.getBoundingClientRect() : null;
+    if (!box || box.width === 0) {
+      box = tocPanel ? tocPanel.getBoundingClientRect() : null;
+    }
+    if (!box || box.width === 0) {
       return;
     }
 
-    var inset = inspector.getBoundingClientRect().right - panel.right - 16;
+    var inset = inspector.getBoundingClientRect().right - box.right - 16;
     document.documentElement.style.setProperty("--panel-gutter", inset + "px");
   }
 
@@ -1080,18 +1152,31 @@ export function start() {
     });
   }
 
-  tabs.forEach(function (tab) {
-    tab.addEventListener("click", function () {
-      var panel = tab.getAttribute("data-panel");
-      if (!panel || !inspector) {
-        return;
-      }
-      inspector.setAttribute("data-panel", panel);
-      tabs.forEach(function (other) {
-        other.setAttribute("aria-selected", other === tab ? "true" : "false");
-      });
+  /**
+   * One gesture per switch: flip the panel it answers for and remember the
+   * pair, so the arrangement the reader leaves survives a reload.
+   */
+  function togglePanel(panel) {
+    var attribute = panel === "graph" ? "data-graph" : "data-outline";
+    var hidden = document.body.getAttribute(attribute) === "hidden";
+    setPanelHidden(panel, !hidden);
+    storePanels(
+      document.body.getAttribute("data-graph") === "hidden",
+      document.body.getAttribute("data-outline") === "hidden",
+    );
+  }
+
+  if (graphToggle) {
+    graphToggle.addEventListener("click", function () {
+      togglePanel("graph");
     });
-  });
+  }
+
+  if (outlineToggle) {
+    outlineToggle.addEventListener("click", function () {
+      togglePanel("outline");
+    });
+  }
 
   document.addEventListener("keydown", function (event) {
     // `Ctrl`/`Cmd`+`F` is the reader asking for search, wherever the focus is.
@@ -1141,9 +1226,13 @@ export function start() {
   // consulted: their `href`s start with the route prefix, not with `data:`.
   AssetLinks.listenForInlineDataLinks(document);
 
-  // The drawer starts closed; the document list's column starts where the
-  // reader last left it, which the toggle's accessible state then follows.
+  // The drawer starts closed; the document list's column and the panels start
+  // where the reader last left them, which the switches' accessible states
+  // then follow.
   setDrawer(false);
   setSidebarHidden(storedSidebar());
+  var panels = storedPanels();
+  setPanelHidden("graph", panels === "graph" || panels === "both");
+  setPanelHidden("outline", panels === "outline" || panels === "both");
   render();
 }

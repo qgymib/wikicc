@@ -273,10 +273,17 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
     assert_eq!(declaration(folded, "padding"), Some("0"));
     assert_eq!(declaration(folded, "border-right"), Some("0"));
 
+    // The rail's switch shares its rule with the panels' two — all rail
+    // furniture, shown wherever the layout has rails at all.
+    let switches = rule_of(wide, "#sidebar-collapse,");
     assert_eq!(
-        declaration(rule_of(wide, "#sidebar-collapse {"), "display"),
+        declaration(switches, "display"),
         Some("inline-flex"),
-        "the rail's switch shows wherever the list is a column"
+        "the rails' switches show wherever the layout has rails: {switches}"
+    );
+    assert!(
+        switches.contains("#graph-toggle") && switches.contains("#outline-toggle"),
+        "the panels' switches come back with the list's own: {switches}"
     );
     let base_hidden = rule_of(css, ".topbar-title,");
     assert!(
@@ -300,6 +307,151 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
     assert!(
         drawer.contains(".rail {"),
         "the rail itself leaves the phone, whose switch is in the strip"
+    );
+}
+
+#[test]
+fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
+    // The right rail is the left one across the page: the same strip of chrome
+    // at the far edge, carrying one switch per panel instead of the tabs. The
+    // switches answer independently — both panels out, one, none — so a body
+    // attribute per panel hides it alone, and putting both away folds the
+    // column the way the list folds. The phone has no rails, so it keeps both
+    // panels and answers to no attribute.
+    let page = render(&build(&fixture_root(), "Fixture"));
+    let css = SHELL_CSS;
+
+    // The rail stands after the panels in the markup, and each switch names
+    // the region it shows and hides, lit while its panel is showing.
+    let panels = page.html.find(r#"id="toc-panel""#).expect("outline panel");
+    let rail = page.html.find(r#"class="rail rail-end""#).expect("right rail");
+    let graph = page.html.find(r#"id="graph-toggle""#).expect("graph switch");
+    let outline = page.html.find(r#"id="outline-toggle""#).expect("outline switch");
+    assert!(
+        panels < rail && rail < graph && graph < outline,
+        "the rail closes the page behind the panels, one switch per panel"
+    );
+
+    let head = &page.html[graph..];
+    let head = &head[..head.find('>').expect("the switch's open tag ends")];
+    assert!(
+        head.contains(r#"aria-controls="graph-panel""#)
+            && head.contains(r#"aria-expanded="true""#),
+        "the graph's switch names its panel and starts lit: {head}"
+    );
+
+    let head = &page.html[outline..];
+    let head = &head[..head.find('>').expect("the switch's open tag ends")];
+    assert!(
+        head.contains(r#"aria-controls="toc-panel""#)
+            && head.contains(r#"aria-expanded="true""#),
+        "the outline's switch names its panel and starts lit: {head}"
+    );
+
+    assert!(
+        !page.html.contains("inspector-tab") && !page.html.contains(r#"data-panel="toc""#),
+        "the panels' switching lives in the rail, not in a tablist"
+    );
+
+    // The grid books the page with rails at both edges: the wide layout's five
+    // columns end where they began, in a rail's width.
+    let app = rule_of(css, ".app {");
+    assert!(
+        app.contains("var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--inspector-width) var(--rail-width)"),
+        "the grid is bookended by the two rails: {app}"
+    );
+
+    // The right rail is the left one mirrored: its column is named, its rule
+    // runs on the side that faces the page, and nothing else of the strip is
+    // restated — the surface, the sticky height and the light variants are the
+    // left rail's own rules, shared through the class.
+    let rail = rule_of(css, ".rail-end {");
+    assert_eq!(
+        declaration(rail, "grid-column"),
+        Some("5"),
+        "the rail closes the grid at the far edge: {rail}"
+    );
+    assert_eq!(
+        declaration(rail, "border-right"),
+        Some("0"),
+        "the strip's rule runs on the side that faces the page: {rail}"
+    );
+    assert_eq!(
+        declaration(rail, "border-left"),
+        Some("1px solid var(--border)"),
+        "the strip's rule runs on the side that faces the page: {rail}"
+    );
+
+    // One attribute per panel, each taking that panel out of the column's flow
+    // alone, wherever the layout has rails.
+    let wide = media_block(css, "min-width: 641px");
+    let graph_hidden = rule_of(wide, r#"body[data-graph="hidden"] .graph-panel {"#);
+    assert_eq!(
+        declaration(graph_hidden, "display"),
+        Some("none"),
+        "a switch puts its own panel away: {graph_hidden}"
+    );
+    let outline_hidden = rule_of(wide, r#"body[data-outline="hidden"] .toc-panel {"#);
+    assert_eq!(
+        declaration(outline_hidden, "display"),
+        Some("none"),
+        "a switch puts its own panel away: {outline_hidden}"
+    );
+
+    // Both put away fold the column like the list folds: the shared token
+    // narrows to nothing and the column keeps its cell with `visibility`, so
+    // neither rail nor article has to move. The bar stops being the column's
+    // head and lies over the article alone — short of the right rail's column,
+    // whose switches stand at the page's very top.
+    let fold = media_block(css, "min-width: 901px");
+    let both = r#"body[data-graph="hidden"][data-outline="hidden"]"#;
+    let folded = rule_of(fold, &format!("{both} {{"));
+    assert_eq!(
+        declaration(folded, "--inspector-width"),
+        Some("0px"),
+        "both switches narrow the column to nothing: {folded}"
+    );
+    let column = rule_of(fold, &format!("{both} .inspector {{"));
+    assert_eq!(declaration(column, "visibility"), Some("hidden"));
+    assert_eq!(declaration(column, "padding"), Some("0"));
+    assert_eq!(declaration(column, "border-left"), Some("0"));
+    let bar = rule_of(fold, &format!("{both} .topbar {{"));
+    assert_eq!(
+        declaration(bar, "grid-column"),
+        Some("3 / 5"),
+        "the bar lies over the article alone, short of the right rail: {bar}"
+    );
+    assert_eq!(
+        declaration(bar, "backdrop-filter"),
+        Some("blur(16px)"),
+        "a strip over moving content lets the page show through: {bar}"
+    );
+
+    // The bar crossing the article's own column is why the article's column
+    // is named in the switch rules' width: an article placed freely would
+    // trail the bar into an implicit column while it lies there.
+    let article = rule_of(wide, ".content {");
+    assert_eq!(
+        declaration(article, "grid-column"),
+        Some("3"),
+        "the article holds its own column however the bar moves: {article}"
+    );
+
+    // The middle grid keeps the rail too, so there the whole panel row goes.
+    let middle = media_block(css, "and (max-width: 900px)");
+    let row = rule_of(middle, &format!("{both} .inspector {{"));
+    assert_eq!(
+        declaration(row, "display"),
+        Some("none"),
+        "the middle grid hides the panel row outright: {row}"
+    );
+
+    // The phone has no rails, so no switch answers there: the attributes the
+    // switches write must not reach below them.
+    let drawer = media_block(css, "max-width: 640px");
+    assert!(
+        !drawer.contains("data-graph") && !drawer.contains("data-outline"),
+        "the phone shows both panels and answers to no switch"
     );
 }
 
@@ -1270,8 +1422,9 @@ fn a_hit_is_marked_in_the_document_without_shouting() {
 }
 
 /// The main `.inspector` rule, found by its position: the sheet declares
-/// `.inspector` four times — an early grid-placement rule, the main one that
-/// carries the scroll behaviour, and the two breakpoint overrides. The main
+/// `.inspector` several times — an early grid-placement rule, the main one
+/// that carries the scroll behaviour, and the breakpoint overrides below it
+/// (including the folded-column rules, which end in `.inspector {`). The main
 /// rule is the second occurrence, so the search starts after the first.
 fn main_inspector_rule(css: &str) -> &str {
     let first = css.find(".inspector {").expect("inspector rule");

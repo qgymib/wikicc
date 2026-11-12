@@ -59,11 +59,7 @@
     <div class="doc-alert" id="doc-alert" role="status" aria-live="polite" aria-hidden="true" hidden></div>
     <article class="doc-article" id="doc-article"></article>
   </main>
-  <aside class="inspector" id="inspector" data-panel="toc" aria-label="Graph and outline">
-    <div class="inspector-tabs" id="inspector-tabs" role="tablist" aria-label="Inspector panels">
-      <button class="inspector-tab" type="button" role="tab" data-panel="graph" aria-selected="false" aria-controls="graph-panel">Graph</button>
-      <button class="inspector-tab" type="button" role="tab" data-panel="toc" aria-selected="true" aria-controls="toc-panel">Outline</button>
-    </div>
+  <aside class="inspector" id="inspector" aria-label="Graph and outline">
     <section class="panel graph-panel" id="graph-panel" aria-labelledby="graph-heading">
       <div class="panel-header">
         <h2 class="panel-heading" id="graph-heading">Graph</h2>
@@ -79,6 +75,19 @@
       <nav class="toc" id="toc" aria-label="Chapter outline"></nav>
     </section>
   </aside>
+  <!-- The right rail mirrors the left one across the page: the same strip of
+       chrome closing the grid at the far edge, and the home of the panels'
+       switches. Each switch answers for one panel — the graph, the outline —
+       so either can be put away on its own, and putting both away folds the
+       whole column; a lit switch is a panel that is showing. -->
+  <div class="rail rail-end" id="rail-end">
+    <button class="icon-button" id="graph-toggle" type="button" aria-label="Hide graph panel" aria-expanded="true" aria-controls="graph-panel" title="Hide graph panel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="6.5" r="2.5"/><circle cx="18.5" cy="6.5" r="2.5"/><circle cx="12" cy="17.5" r="2.5"/><path d="M7.6 8.4 10.6 15.7M16.4 8.4 13.4 15.7M8 6.5h8"/></svg>
+    </button>
+    <button class="icon-button" id="outline-toggle" type="button" aria-label="Hide outline panel" aria-expanded="true" aria-controls="toc-panel" title="Hide outline panel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M8 12h12M8 18h8"/></svg>
+    </button>
+  </div>
   <!-- The search panel drops from the top bar, so it belongs to the app and
        not to the panel whose picture it would otherwise cover. -->
   <div class="search-panel" id="search-panel" hidden></div>

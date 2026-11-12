@@ -128,7 +128,11 @@ a {
    page with nothing over them. */
 .app {
   display: grid;
-  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
+  /* The two rails bookend the page: the left one carries the list's switch,
+     the right one the panels'. The middle grid keeps the list's three
+     columns — and the rightmost names the rail again, so a fifth item cannot
+     spill past it. */
+  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--inspector-width) var(--rail-width);
   grid-template-rows: var(--topbar-height) auto;
   align-items: start;
   min-height: 100vh;
@@ -189,7 +193,9 @@ a {
 
 .topbar-title,
 #sidebar-toggle,
-#sidebar-collapse {
+#sidebar-collapse,
+#graph-toggle,
+#outline-toggle {
   display: none;
 }
 
@@ -246,6 +252,16 @@ a {
   height: 100vh;
   padding: 14px 0 12px;
   z-index: 10;
+}
+
+/* The right rail is the left one mirrored: the same strip, closing the grid
+   at the far edge. Its rule runs on its left — the side that faces the page —
+   and its column is named, because the rail is the last item in the markup
+   and auto-placement would otherwise drop it into the toolbar's row. */
+.rail-end {
+  grid-column: 5;
+  border-right: 0;
+  border-left: 1px solid var(--border);
 }
 
 .sidebar {
@@ -2016,34 +2032,6 @@ a {
   scrollbar-gutter: stable;
 }
 
-.inspector-tabs {
-  display: none;
-  gap: 6px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: var(--bg-panel);
-}
-
-.inspector-tab {
-  flex: 1;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color 150ms ease, background 150ms ease;
-}
-
-.inspector-tab[aria-selected="true"] {
-  color: var(--text);
-  background: var(--accent-soft);
-}
-
 .panel {
   padding: 13px 14px 15px;
   border: 1px solid var(--border);
@@ -2746,13 +2734,20 @@ a {
    is a column of the grid; the phone's drawer below has its own switch. The
    switch lives in the rail, the leftmost strip, which stays put whether the
    list is out or not: the attribute narrows the shared `--sidebar-width` to
-   nothing, so the wide grid's four columns and the middle grid's three give
+   nothing, so the wide grid's five columns and the middle grid's four give
    the list's room back by one move. The list folds with `visibility`, not
    `display`, so it keeps the grid cell it was already placed in — the article
    slides into the room without the placement of everything else around it
-   having to be spelled out. */
+   having to be spelled out.
+
+   The panels' switches answer the same way, one body attribute per panel:
+   each narrows to a hidden panel by taking that panel out of the column's
+   flow alone, so the panels can be combined freely — both out, one, none.
+   Both switches and the list's switch live wherever the layout has rails. */
 @media (min-width: 641px) {
-  #sidebar-collapse {
+  #sidebar-collapse,
+  #graph-toggle,
+  #outline-toggle {
     display: inline-flex;
   }
 
@@ -2765,6 +2760,51 @@ a {
     padding: 0;
     border-right: 0;
   }
+
+  body[data-graph="hidden"] .graph-panel {
+    display: none;
+  }
+
+  body[data-outline="hidden"] .toc-panel {
+    display: none;
+  }
+
+  /* The article's column is named, because the toolbar moves between columns
+     as its panels come and go: an article placed freely would trail the bar
+     into an implicit column whenever the bar lies across the article's own. */
+  .content {
+    grid-column: 3;
+  }
+}
+
+/* With both panels put away the panel column has nothing to show, so the
+   attribute narrows the shared `--inspector-width` to nothing and the column
+   folds like the list does — `visibility`, not `display`, so it keeps the
+   cell it was placed in and neither rail nor article has to move. The toolbar
+   loses the column it was the head of, so it goes back to being a strip over
+   the article alone (it does not reach the right rail's column: the rail's
+   switches sit at the page's very top, under nothing). */
+@media (min-width: 901px) {
+  body[data-graph="hidden"][data-outline="hidden"] {
+    --inspector-width: 0px;
+  }
+
+  body[data-graph="hidden"][data-outline="hidden"] .inspector {
+    visibility: hidden;
+    padding: 0;
+    border-left: 0;
+  }
+
+  body[data-graph="hidden"][data-outline="hidden"] .topbar {
+    grid-column: 3 / 5;
+    border-left: 0;
+    border-bottom: 1px solid var(--shell-line);
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px);
+    /* No panel column, no scrollbar gutter to meet: the strip's controls go
+       back to the plain 16px axis the article's own edge keeps. */
+    padding-right: 16px;
+  }
 }
 
 @media (max-width: 1200px) {
@@ -2773,12 +2813,14 @@ a {
   }
 }
 
-/* Below the inspector's own width the third column is gone, so there is no
-   panel column for the toolbar to sit over: it goes back to being the strip
-   across the top of the page, and the panels go back to starting under it. */
+/* Below the inspector's own width the panel column is gone, so there is no
+   column for the toolbar to sit over: it goes back to being the strip across
+   the top of the page, and the panels go back to starting under it. The two
+   rails survive — the switches answer at every width that has them — so the
+   row keeps a strip at each edge and the panels lie between. */
 @media (max-width: 900px) {
   .app {
-    grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
     grid-template-rows: none;
   }
 
@@ -2814,25 +2856,26 @@ a {
     height: calc(100vh - var(--topbar-height));
   }
 
+  /* The right rail is the last item in the markup, behind the panels: placed
+     freely it would fall into a row of its own under them, so it is pinned
+     beside the list instead, in the row the other regions share. */
+  .rail-end {
+    grid-row: 2;
+    grid-column: 4;
+  }
+
   .inspector {
     position: static;
     grid-row: auto;
-    grid-column: 1 / -1;
+    /* The row stops short of the right rail's column, so the panels do not
+       run underneath the strip that stands there. */
+    grid-column: 1 / -2;
     height: auto;
     border-top: 1px solid var(--border);
     border-left: 0;
     /* The collapsed panel no longer scrolls — the page does — so a reserved
        gutter would just be an empty strip on its right edge. */
     scrollbar-gutter: auto;
-  }
-
-  .inspector-tabs {
-    display: flex;
-  }
-
-  .inspector[data-panel="graph"] .toc-panel,
-  .inspector[data-panel="toc"] .graph-panel {
-    display: none;
   }
 
   .toc {
@@ -2854,6 +2897,15 @@ a {
      the ellipsis does the rest. */
   .search-result {
     grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
+  }
+}
+
+/* The middle grid keeps the rail on the right too, so a page with both panels
+   put away has no panel row at all: the row the panels share is taken out, and
+   the article's own sections are the only thing left under it. */
+@media (min-width: 641px) and (max-width: 900px) {
+  body[data-graph="hidden"][data-outline="hidden"] .inspector {
+    display: none;
   }
 }
 

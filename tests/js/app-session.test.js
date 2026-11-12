@@ -34,6 +34,8 @@ const SHELL_IDS = [
   "inspector",
   "sidebar-toggle",
   "sidebar-collapse",
+  "graph-toggle",
+  "outline-toggle",
   "drawer-backdrop",
   "theme-toggle",
   "doc-list",
@@ -122,9 +124,9 @@ function fakeElement(tagName) {
     /**
      * Answer a selector over this element's subtree.
      *
-     * The session asks two questions — the article's document body by class,
-     * and the inspector's tabs — so both are honoured over children, which is
-     * the shape the browser answers them in.
+     * The session asks one question by class — the article's document body —
+     * so it is honoured over children, which is the shape the browser answers
+     * it in.
      */
     querySelector(selector) {
       const found = this.querySelectorAll(selector);
@@ -662,10 +664,7 @@ async function withSession(options, body) {
     querySelector() {
       return null;
     },
-    querySelectorAll(selector) {
-      if (selector === ".inspector-tab") {
-        return [];
-      }
+    querySelectorAll() {
       return [];
     },
     createElement(tagName) {
@@ -1035,6 +1034,109 @@ test("the reader remembers the list was put away", async () => {
       );
       assert.equal(
         session.shell.get("sidebar-collapse").getAttribute("aria-expanded"),
+        "false",
+      );
+    },
+  );
+});
+
+test("the rail's switches put each panel away on its own", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const graph = session.shell.get("graph-toggle");
+    const outline = session.shell.get("outline-toggle");
+
+    assert.equal(body.getAttribute("data-graph"), null);
+    assert.equal(
+      body.getAttribute("data-outline"),
+      null,
+      "both panels start showing",
+    );
+    assert.equal(graph.getAttribute("aria-expanded"), "true");
+    assert.equal(graph.getAttribute("aria-label"), "Hide graph panel");
+    assert.equal(outline.getAttribute("aria-expanded"), "true");
+    assert.equal(outline.getAttribute("aria-label"), "Hide outline panel");
+
+    graph.fire("click");
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(
+      body.getAttribute("data-outline"),
+      null,
+      "the other panel's attribute is never touched",
+    );
+    assert.equal(
+      graph.getAttribute("aria-expanded"),
+      "false",
+      "the switch answers for the panel it hid",
+    );
+    assert.equal(
+      graph.getAttribute("aria-label"),
+      "Show graph panel",
+      "the rail's switch now offers to bring the panel back",
+    );
+    assert.equal(
+      outline.getAttribute("aria-label"),
+      "Hide outline panel",
+      "the other switch keeps its own answer",
+    );
+
+    outline.fire("click");
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(body.getAttribute("data-outline"), "hidden");
+    assert.equal(outline.getAttribute("aria-expanded"), "false");
+    assert.equal(outline.getAttribute("aria-label"), "Show outline panel");
+
+    graph.fire("click");
+    assert.equal(body.getAttribute("data-graph"), null);
+    assert.equal(
+      body.getAttribute("data-outline"),
+      "hidden",
+      "the panels answer independently, one at a time",
+    );
+  });
+});
+
+test("putting the panels away writes the choice down", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const graph = session.shell.get("graph-toggle");
+    const outline = session.shell.get("outline-toggle");
+
+    graph.fire("click");
+    assert.equal(session.storage["wikicc.panels"], "graph");
+
+    outline.fire("click");
+    assert.equal(session.storage["wikicc.panels"], "both");
+
+    graph.fire("click");
+    assert.equal(session.storage["wikicc.panels"], "outline");
+
+    outline.fire("click");
+    assert.equal(session.storage["wikicc.panels"], "none");
+  });
+});
+
+test("the reader remembers which panels were put away", async () => {
+  withSession(
+    { hash: "#/doc/index.md", storage: { "wikicc.panels": "both" } },
+    (session) => {
+      startSession();
+
+      assert.equal(
+        session.doc.body.getAttribute("data-graph"),
+        "hidden",
+        "the stored choice is applied when the session starts",
+      );
+      assert.equal(session.doc.body.getAttribute("data-outline"), "hidden");
+      assert.equal(
+        session.shell.get("graph-toggle").getAttribute("aria-expanded"),
+        "false",
+      );
+      assert.equal(
+        session.shell.get("outline-toggle").getAttribute("aria-expanded"),
         "false",
       );
     },
