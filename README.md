@@ -171,6 +171,30 @@ wikicc --init-config path/to/docs         # writes path/to/docs/.wikicc.json
 A successful build prints a summary line and reports diagnostics on stderr;
 `--quiet` suppresses the summary only.
 
+### Environment variables
+
+Every setting can also come from a `WIKICC_*` environment variable, spelled in
+upper case. The command line overrides the variables; the variables override
+`.wikicc.json`.
+
+| Variable | Meaning |
+| --- | --- |
+| `WIKICC_OUT` | Output directory; relative to the working directory, like `--out` |
+| `WIKICC_FORMAT` | `single-html`, `html-dir` or `pages` |
+| `WIKICC_TITLE` | Site title |
+| `WIKICC_STRICT` | Fail the build on warnings; `true`, `false`, `1` or `0` |
+| `WIKICC_HOME` | Document the reader opens first |
+| `WIKICC_EXCLUDE` | Comma-separated directories kept out of the site |
+| `WIKICC_FAVICON` | Favicon file relative to the input folder |
+
+A variable that is not set, or whose value is blank, did not speak: the next
+source down decides. A value that cannot be understood — an unknown format, an
+unparseable boolean, an empty exclusion entry — fails the build with an error
+naming the variable. Only the seven names above count; any other `WIKICC_*`
+variable in the environment is ignored, because that namespace belongs to
+other programs too. `--force`, `--quiet`, `--init-config` and the input
+directory exist only on the command line, never as variables.
+
 ### Output directory
 
 - A missing directory is created; an empty one is used as it is.
@@ -184,8 +208,9 @@ A successful build prints a summary line and reports diagnostics on stderr;
 ### Configuration file
 
 A site can carry an optional `.wikicc.json` in the **input folder root**. The
-file is JSON and knows keys — the same settings the command line takes,
-so each of them can also be overridden by a flag:
+file is JSON and knows keys — the same settings the command line and the
+`WIKICC_*` environment variables take, so each of them can also be overridden
+by a flag or a set variable:
 
 | Key | Meaning |
 | --- | --- |
@@ -214,7 +239,8 @@ many directories were pruned as a note line.
 `out` is resolved against the **input folder** — the directory the
 configuration file sits in — so a relative value builds to the same place no
 matter which working directory the build was started from. A command line
-`--out` keeps its own convention: relative to the working directory.
+`--out` keeps its own convention: relative to the working directory. So does
+`WIKICC_OUT` — the variable speaks from the shell or CI job that exports it.
 
 `favicon` is a file path relative to the input folder (`\` is read as `/`, a
 leading `./` is dropped; an absolute path is taken as it is). Every page
@@ -236,8 +262,12 @@ the executable at build time.
 }
 ```
 
-**Every value the file names is a default; an explicit flag wins.**
+**Every value the file names is a default; a set `WIKICC_*` variable wins
+over it, and an explicit flag wins over the variable.**
 
+- `WIKICC_OUT`, `WIKICC_FORMAT`, `WIKICC_TITLE`, `WIKICC_STRICT`, `WIKICC_HOME`,
+  `WIKICC_EXCLUDE` and `WIKICC_FAVICON` override their configured counterparts;
+  the command line flags below override the variables again.
 - `--home` replaces the configured `home`.
 - `--exclude` **replaces** the configured list entirely; repeat the flag for
   several directories.

@@ -23,8 +23,9 @@
 //!   cannot be read is a hard error.
 //! - `strict`: whether warnings fail the build, spelled as a JSON boolean.
 //!
-//! Every value the file names is a default: an explicit command line flag
-//! overrides it.
+//! Every value the file names is a default: a set `WIKICC_*` environment
+//! variable overrides it, and an explicit command line flag overrides the
+//! variable.
 //!
 //! Failure policy follows the file's role as an explicit build instruction:
 //!

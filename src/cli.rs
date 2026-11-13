@@ -1,8 +1,8 @@
 //! Command line surface: clap definitions and raw argument collection.
 //!
 //! This module only describes *what the user typed*. Merging it with the
-//! configuration file and deriving defaults happens in [`crate::options`], so
-//! the pipeline never has to look at clap types.
+//! environment and the configuration file, and deriving defaults, happens in
+//! [`crate::options`], so the pipeline never has to look at clap types.
 
 use std::path::PathBuf;
 
@@ -29,7 +29,8 @@ pub struct Cli {
     #[arg(value_name = "INPUT_DIR", required_unless_present = "init_config")]
     pub input: Option<PathBuf>,
 
-    /// Everything `.wikicc.json` can also carry; an explicit flag wins.
+    /// Everything `.wikicc.json` and the WIKICC_* environment variables can
+    /// also carry; an explicit flag wins.
     #[command(flatten)]
     pub settings: Settings,
 

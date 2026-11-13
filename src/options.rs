@@ -1,8 +1,9 @@
 //! Resolved build options: defaults, lexical path normalization and safety guards.
 //!
-//! [`Settings`] is the shared shape of everything the command line and
-//! `.wikicc.json` can both express; [`Options::resolve`] merges the two
-//! sources — command line over file over built-in defaults — into the
+//! [`Settings`] is the shared shape of everything the command line, the
+//! `WIKICC_*` environment variables (see [`crate::env`]) and `.wikicc.json`
+//! can all express; [`Options::resolve`] merges the three sources — command
+//! line over environment over file over built-in defaults — into the
 //! [`Options`] the pipeline consumes.
 
 use std::ffi::OsString;
@@ -69,9 +70,10 @@ impl FromStr for OutputFormat {
     }
 }
 
-/// Settings both the command line and the configuration file can express.
+/// Settings the command line, the environment and the configuration file can
+/// all express.
 ///
-/// Every field is `None` until one of the two sources names it, so both
+/// Every field is `None` until one of the three sources names it, so all
 /// surfaces share one shape, one normalization and one validation. `None`
 /// never means "off" — it means "this source did not speak".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Parser)]
@@ -167,20 +169,26 @@ pub struct Options {
 }
 
 impl Options {
-    /// Merge the command line over the configuration file over the built-in
-    /// defaults, and normalize and validate what the winning source wrote.
+    /// Merge the command line over the environment over the configuration
+    /// file over the built-in defaults, and normalize and validate what the
+    /// winning source wrote.
     ///
-    /// Pure: no I/O and no filesystem access. A configuration `out` was
-    /// already resolved against the input folder when the file was read, so
-    /// both sources carry the same kind of value here. A `home` that is empty
-    /// after normalization, an `exclude` entry that escapes the input folder
-    /// and a `favicon` that is empty after normalization or escapes the
-    /// input folder are hard errors, whatever the source.
-    pub fn resolve(request: &Request, file: &Settings) -> Result<Self> {
+    /// Pure: no I/O and no filesystem access. The environment settings were
+    /// read before the call ([`crate::env::settings`]), and a configuration
+    /// `out` was already resolved against the input folder when the file was
+    /// read, so all sources carry the same kind of value here. A `home` that
+    /// is empty after normalization, an `exclude` entry that escapes the
+    /// input folder and a `favicon` that is empty after normalization or
+    /// escapes the input folder are hard errors, whatever the source.
+    pub fn resolve(request: &Request, env: &Settings, file: &Settings) -> Result<Self> {
         let cli = &request.settings;
         let input = &request.input;
 
-        let home = cli.home.clone().or_else(|| file.home.clone());
+        let home = cli
+            .home
+            .clone()
+            .or_else(|| env.home.clone())
+            .or_else(|| file.home.clone());
         if let Some(raw) = &home
             && normalize_candidate(raw).is_empty()
         {
@@ -192,9 +200,15 @@ impl Options {
         let exclude = cli
             .exclude
             .clone()
+            .or_else(|| env.exclude.clone())
             .or_else(|| file.exclude.clone())
             .unwrap_or_default();
-        let favicon = match cli.favicon.clone().or_else(|| file.favicon.clone()) {
+        let favicon = match cli
+            .favicon
+            .clone()
+            .or_else(|| env.favicon.clone())
+            .or_else(|| file.favicon.clone())
+        {
             Some(raw) => Some(normalize_favicon(&raw)?),
             None => None,
         };
@@ -204,15 +218,21 @@ impl Options {
             out: cli
                 .out
                 .clone()
+                .or_else(|| env.out.clone())
                 .or_else(|| file.out.clone())
                 .unwrap_or_else(|| input.join(DEFAULT_OUT_DIR)),
-            format: cli.format.or(file.format).unwrap_or_default(),
+            format: cli
+                .format
+                .or(env.format)
+                .or(file.format)
+                .unwrap_or_default(),
             title: cli
                 .title
                 .clone()
+                .or_else(|| env.title.clone())
                 .or_else(|| file.title.clone())
                 .unwrap_or_else(|| default_title(input)),
-            strict: cli.strict.or(file.strict).unwrap_or(false),
+            strict: cli.strict.or(env.strict).or(file.strict).unwrap_or(false),
             force: request.force,
             quiet: request.quiet,
             home,
@@ -387,7 +407,7 @@ pub(crate) fn normalize_candidate(raw: &str) -> String {
     candidate
 }
 
-/// Normalize and validate the `exclude` entries of either source.
+/// Normalize and validate the `exclude` entries of any source.
 ///
 /// Each entry becomes a `/`-separated directory path relative to the input
 /// folder: trimmed, `\` read as `/`, a leading `./` and any trailing `/`
@@ -421,7 +441,7 @@ pub(crate) fn normalize_excludes(entries: &[String]) -> Result<Vec<String>> {
     Ok(excludes)
 }
 
-/// Normalize a `favicon` value of either source.
+/// Normalize a `favicon` value of any source.
 ///
 /// The value becomes a `/`-separated file path relative to the input folder:
 /// trimmed, `\` read as `/`, a leading `./` and a trailing `/` dropped. A
@@ -466,7 +486,8 @@ mod tests {
             force: false,
             quiet: false,
         };
-        Options::resolve(&request, &Settings::default()).expect("the request resolves")
+        Options::resolve(&request, &Settings::default(), &Settings::default())
+            .expect("the request resolves")
     }
 
     /// Resolve a request with explicit command line settings.
@@ -479,6 +500,22 @@ mod tests {
                 quiet: false,
             },
             &Settings::default(),
+            &Settings::default(),
+        )
+    }
+
+    /// Resolve a request with explicit environment settings and a silent
+    /// command line.
+    fn resolve_env(input: &Path, env: Settings, file: Settings) -> Result<Options> {
+        Options::resolve(
+            &Request {
+                input: input.to_path_buf(),
+                settings: Settings::default(),
+                force: false,
+                quiet: false,
+            },
+            &env,
+            &file,
         )
     }
 
@@ -491,6 +528,7 @@ mod tests {
                 force: false,
                 quiet: false,
             },
+            &Settings::default(),
             &file,
         )
     }
@@ -644,7 +682,8 @@ mod tests {
             favicon: Some("file.png".to_string()),
         };
 
-        let options = Options::resolve(&request, &file).expect("valid settings");
+        let options =
+            Options::resolve(&request, &Settings::default(), &file).expect("valid settings");
 
         assert_eq!(options.out, PathBuf::from("from-cli"));
         assert_eq!(options.format, OutputFormat::HtmlDir);
@@ -672,7 +711,8 @@ mod tests {
             ..Settings::default()
         };
 
-        let options = Options::resolve(&request, &file).expect("valid settings");
+        let options =
+            Options::resolve(&request, &Settings::default(), &file).expect("valid settings");
 
         assert!(
             !options.strict,
@@ -697,7 +737,8 @@ mod tests {
             ..Settings::default()
         };
 
-        let options = Options::resolve(&request, &file).expect("valid settings");
+        let options =
+            Options::resolve(&request, &Settings::default(), &file).expect("valid settings");
 
         assert_eq!(
             options.exclude,
@@ -837,6 +878,138 @@ mod tests {
                 .contains("is not a file path inside the input folder"),
             "unexpected message: {file_error}"
         );
+    }
+
+    #[test]
+    fn the_environment_fills_in_where_the_command_line_is_silent() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let env = Settings {
+            out: Some(PathBuf::from("from-env")),
+            format: Some(OutputFormat::HtmlDir),
+            title: Some("From Env".to_string()),
+            strict: Some(true),
+            home: Some("env.md".to_string()),
+            exclude: Some(vec!["env-drafts".to_string()]),
+            favicon: Some("env.png".to_string()),
+        };
+
+        let options = resolve_env(dir.path(), env, Settings::default()).expect("valid settings");
+
+        assert_eq!(options.out, PathBuf::from("from-env"));
+        assert_eq!(options.format, OutputFormat::HtmlDir);
+        assert_eq!(options.title, "From Env");
+        assert!(options.strict);
+        assert_eq!(options.home.as_deref(), Some("env.md"));
+        assert_eq!(options.exclude, ["env-drafts"]);
+        assert_eq!(options.favicon.as_deref(), Some("env.png"));
+    }
+
+    #[test]
+    fn the_environment_overrides_the_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let env = Settings {
+            title: Some("From Env".to_string()),
+            strict: Some(false),
+            ..Settings::default()
+        };
+        let file = Settings {
+            title: Some("From Config".to_string()),
+            strict: Some(true),
+            ..Settings::default()
+        };
+
+        let options = resolve_env(dir.path(), env, file).expect("valid settings");
+
+        assert_eq!(options.title, "From Env");
+        assert!(!options.strict, "the environment wins even when it says no");
+    }
+
+    #[test]
+    fn the_command_line_overrides_the_environment_over_the_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cli = Settings {
+            out: Some(PathBuf::from("from-cli")),
+            format: Some(OutputFormat::HtmlDir),
+            title: Some("From CLI".to_string()),
+            strict: Some(false),
+            home: Some("cli.md".to_string()),
+            exclude: Some(vec!["cli-drafts".to_string()]),
+            favicon: Some("cli.png".to_string()),
+        };
+        let env = Settings {
+            out: Some(PathBuf::from("from-env")),
+            format: Some(OutputFormat::Pages),
+            title: Some("From Env".to_string()),
+            strict: Some(true),
+            home: Some("env.md".to_string()),
+            exclude: Some(vec!["env-drafts".to_string()]),
+            favicon: Some("env.png".to_string()),
+        };
+        let file = Settings {
+            out: Some(dir.path().join("from-file")),
+            format: Some(OutputFormat::SingleHtml),
+            title: Some("From Config".to_string()),
+            strict: Some(true),
+            home: Some("file.md".to_string()),
+            exclude: Some(vec!["file-drafts".to_string()]),
+            favicon: Some("file.png".to_string()),
+        };
+
+        let options = Options::resolve(
+            &Request {
+                input: dir.path().to_path_buf(),
+                settings: cli,
+                force: false,
+                quiet: false,
+            },
+            &env,
+            &file,
+        )
+        .expect("valid settings");
+
+        assert_eq!(options.out, PathBuf::from("from-cli"));
+        assert_eq!(options.format, OutputFormat::HtmlDir);
+        assert_eq!(options.title, "From CLI");
+        assert!(
+            !options.strict,
+            "the command line wins even when it says no"
+        );
+        assert_eq!(options.home.as_deref(), Some("cli.md"));
+        assert_eq!(options.exclude, ["cli-drafts"]);
+        assert_eq!(options.favicon.as_deref(), Some("cli.png"));
+    }
+
+    #[test]
+    fn the_sources_fill_in_field_by_field() {
+        // The command line only names `title`, the environment names `out`
+        // and `strict`, the file names `format`: every field falls back down
+        // the chain on its own.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                title: Some("From CLI".to_string()),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+        let env = Settings {
+            out: Some(PathBuf::from("from-env")),
+            strict: Some(true),
+            ..Settings::default()
+        };
+        let file = Settings {
+            format: Some(OutputFormat::Pages),
+            ..Settings::default()
+        };
+
+        let options = Options::resolve(&request, &env, &file).expect("valid settings");
+
+        assert_eq!(options.title, "From CLI");
+        assert_eq!(options.out, PathBuf::from("from-env"));
+        assert!(options.strict);
+        assert_eq!(options.format, OutputFormat::Pages);
     }
 
     #[test]

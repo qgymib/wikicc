@@ -4,10 +4,12 @@
 //! `docs/design.md` into one run. The order is a contract:
 //!
 //! 1. validate the input directory,
-//! 2. read the optional `.wikicc.json` configuration from the input root,
-//! 3. merge the command line over the configuration over the built-in
-//!    defaults, guard the output directory and resolve the favicon (the
-//!    configured file, else the default embedded in the executable),
+//! 2. read the `WIKICC_*` environment variables and the optional
+//!    `.wikicc.json` configuration from the input root,
+//! 3. merge the command line over the environment over the configuration
+//!    over the built-in defaults, guard the output directory and resolve the
+//!    favicon (the configured file, else the default embedded in the
+//!    executable),
 //! 4. scan the input directory, pruning the directories the `exclude`
 //!    entries name,
 //! 5. assemble the payload and resolve links and assets,
@@ -31,6 +33,7 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crate::config;
+use crate::env;
 use crate::error::{Error, Result};
 use crate::favicon;
 use crate::options::{self, Options, OutputFormat, Request};
@@ -99,17 +102,19 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
 
     options::validate_input(&request.input)?;
 
-    // The configuration is an explicit instruction, so a file that cannot be
-    // read or understood aborts the build here, before anything is reported
-    // or written. The command line is merged over it right after the read,
-    // and only then are the output-directory guards applied, because an
-    // `out` that arrived through the file must be guarded exactly like one
-    // typed on the command line. The scan waits for the merge because the
+    // The environment and the configuration are explicit instructions, so a
+    // variable or a file that cannot be understood aborts the build here,
+    // before anything is reported or written. The command line is merged
+    // over the environment over the file right after the reads, and only
+    // then are the output-directory guards applied, because an `out` that
+    // arrived through either source must be guarded exactly like one typed
+    // on the command line. The scan waits for the merge because the
     // `exclude` entries must be in effect while the tree is walked; resolving
     // `home` still waits for the scan, since it needs the document ids. A
     // `home` that matches no document only warns.
     let site_config = config::load(&request.input)?;
-    let options = Options::resolve(request, &site_config.settings)?;
+    let env_settings = env::settings()?;
+    let options = Options::resolve(request, &env_settings, &site_config.settings)?;
     options::validate_paths(&options.input, &options.out)?;
 
     // The favicon is an explicit instruction like the configuration itself:
@@ -224,7 +229,8 @@ mod tests {
 
     /// The resolved [`Options`] of a request, for assertions on the summary.
     fn resolved(request: &Request) -> Options {
-        Options::resolve(request, &Settings::default()).expect("the request resolves")
+        Options::resolve(request, &Settings::default(), &Settings::default())
+            .expect("the request resolves")
     }
 
     /// A directory with one document and one referenced asset.

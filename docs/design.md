@@ -39,7 +39,7 @@ scan ──▶ parse ──▶ resolve ──▶ assemble ──▶ render ─�
 
 | Stage | Input → output | Module |
 | --- | --- | --- |
-| validate | raw arguments + `.wikicc.json` → merged, guarded `Options` | `cli`, `options`, `config` |
+| validate | raw arguments + `WIKICC_*` environment + `.wikicc.json` → merged, guarded `Options` | `cli`, `env`, `options`, `config` |
 | config | input root → optional `.wikicc.json` → `SiteConfig` | `config` |
 | scan | directory + `Options.exclude` → `ScanReport` | `scan` |
 | parse | `SourceDoc` → HTML, TOC, plain text | `markdown` |
@@ -61,12 +61,15 @@ src/main.rs                 binary: parse arguments, dispatch --init-config, run
                             map errors to exit codes
 src/lib.rs                  library root and re-exports
 src/cli.rs                  clap definitions
-src/options.rs              the shared Settings of the CLI and the configuration file,
-                            the CLI-over-file merge, defaults, path guards
+src/options.rs              the shared Settings of the CLI, the WIKICC_* environment
+                            variables and the configuration file, the three-source
+                            merge, defaults, path guards
 src/error.rs                error type and exit-code mapping
 src/pipeline.rs             stage order, strict gate, summary lines
 src/scan.rs                 discovery, ordering, ids, titles, diagnostics
 src/config.rs               the optional `.wikicc.json` site configuration and its initializer
+src/env.rs                  the WIKICC_* environment variables: reading, parsing,
+                            blank-value and unknown-name policy, error messages
 src/favicon.rs              the site favicon: the configured file, else the
                             default embedded from docs/logo.svg at build time
 src/markdown/               render orchestration, heading text, slugs, TOC, chapter blocks,
@@ -85,7 +88,9 @@ tools/make-icon.mjs         packs the rendered icon sizes into docs/logo.ico
 Dependency direction is one-way: `cli` → `options` → `scan` → `markdown` →
 `site` → `render` → `writers` → `pipeline`. `config` reads only its own file
 and imports `options` (the shared `Settings`) and `scan` (the diagnostic
-type), so it feeds the scan without anything reaching back into it.
+type), so it feeds the scan without anything reaching back into it. `env`
+reads only the process environment and imports `options`, so the same shape
+flows in from every source.
 `markdown::links` never depends on `site`, so link resolution stays testable
 on its own.
 
@@ -171,8 +176,9 @@ one is stated as a contract rather than left to the implementation.
 - **The configuration file.** `.wikicc.json` sits in the input folder root and
   is optional. It carries seven keys — `home`, `exclude`, `out`, `format`,
   `title`, `favicon`, `strict` — exactly the `Settings` shape the command line
-  also expresses, and every value it names is a default the command line
-  overrides. A relative `out` is resolved against the input folder (the
+  and the `WIKICC_*` environment variables also express, and every value it
+  names is a default: a set variable overrides it, an explicit flag overrides
+  the variable. A relative `out` is resolved against the input folder (the
   folder the file sits in), so the build lands in the same place whatever the
   working directory. The file is read once, before the scan (the `exclude`
   entries must be in effect while the tree is walked; resolving `home` still
@@ -190,7 +196,7 @@ one is stated as a contract rather than left to the implementation.
   into a directory that already exists, and a file that is already there is
   never overwritten.
 - **The favicon.** Every page carries a favicon: the `favicon` setting of
-  either source, else the wikicc logo that `build.rs` stages from
+  any source, else the wikicc logo that `build.rs` stages from
   `docs/logo.svg` (LF-normalized, like the page skeleton) and the binary
   embeds. The value is a file path relative to the input folder, normalized
   and guarded like the other path-shaped settings; a configured file that
@@ -201,16 +207,17 @@ one is stated as a contract rather than left to the implementation.
   and the rendered head addresses them by the asset placeholder the
   registration returns, so the writers inline a data URI in `single-html`
   and write a sibling file in the other two formats.
-- **CLI surface.** `cli` defines the arguments; `options` owns the shared
-  `Settings` (the shape both the command line and the configuration file
-  express), merges the command line over the file over the built-in defaults
-  into `Options`, and owns the output-directory guards (missing and empty are
-  used, a previous artifact is emptied, anything else needs `--force`, and
-  the output directory may not be the input root, its ancestor or the working
-  directory). Three combinations are rejected before anything is written.
-  `--home` and a repeatable `--exclude` replace the configured values, and
-  `--strict` is three-state: a bare flag turns the gate on, `--strict=false`
-  turns it off.
+- **CLI surface.** `cli` defines the arguments; `env` defines the `WIKICC_*`
+  variables (upper case only, blank means unset, unknown names are ignored);
+  `options` owns the shared `Settings` (the shape all three sources express),
+  merges the command line over the environment over the file over the
+  built-in defaults into `Options`, and owns the output-directory guards
+  (missing and empty are used, a previous artifact is emptied, anything else
+  needs `--force`, and the output directory may not be the input root, its
+  ancestor or the working directory). Three combinations are rejected before
+  anything is written. `--home` and a repeatable `--exclude` replace the
+  configured values, and `--strict` is three-state: a bare flag turns the
+  gate on, `--strict=false` turns it off.
 - **Exit codes.** `error` maps every failure to `0` (success, possibly with
   warnings), `1` (runtime failure, including `--strict` with warnings) or `2`
   (usage error, reported by `clap`). The mapping is centralised so a new stage

@@ -22,6 +22,7 @@
 pub mod assets;
 pub mod cli;
 pub mod config;
+pub mod env;
 pub mod error;
 pub mod favicon;
 pub mod markdown;

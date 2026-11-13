@@ -614,3 +614,206 @@ fn init_config_writes_the_favicon_key() {
         "the starter names every key this version knows: {content}"
     );
 }
+
+/// An environment fixture: a configuration file the variables must override.
+fn fixture_with_config() -> TempDir {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join(".wikicc.json"),
+        r#"{"out": "from-file", "format": "single-html"}"#,
+    )
+    .expect("write config");
+    dir
+}
+
+#[test]
+fn an_environment_variable_overrides_the_configuration_file() {
+    let dir = fixture_with_config();
+    let out = dir.path().join("from-env");
+
+    wikicc()
+        .arg(dir.path())
+        .env("WIKICC_OUT", path_string(&out))
+        .env("WIKICC_FORMAT", "pages")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "-> {} (pages) in ",
+            path_string(&out)
+        )));
+}
+
+#[test]
+fn the_command_line_overrides_the_environment_variable() {
+    let dir = fixture_with_config();
+    let env_out = dir.path().join("from-env");
+    let cli_out = dir.path().join("from-cli");
+
+    wikicc()
+        .arg(dir.path())
+        .env("WIKICC_OUT", path_string(&env_out))
+        .env("WIKICC_FORMAT", "pages")
+        .args(["--out", &path_string(&cli_out), "--format", "single-html"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "-> {} (single-html) in ",
+            path_string(&cli_out)
+        )));
+
+    assert!(
+        !env_out.exists(),
+        "the overridden environment output directory is never created"
+    );
+}
+
+#[test]
+fn an_invalid_environment_value_exits_with_1() {
+    let dir = fixture();
+
+    wikicc()
+        .arg(dir.path())
+        .env("WIKICC_FORMAT", "pdf")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "environment variable 'WIKICC_FORMAT': invalid format 'pdf', expected one of: single-html, html-dir, pages",
+        ));
+}
+
+#[test]
+fn the_strict_environment_variable_turns_the_gate_on_and_off() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        dir.path().join("intro.md"),
+        "# Intro\n\n[gone](missing.md)\n",
+    )
+    .expect("write fixture");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .env("WIKICC_STRICT", "true")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "1 warning treated as an error (--strict)",
+        ));
+    assert!(!out.exists(), "the environment gate refused the build");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .env("WIKICC_STRICT", "0")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("1 warning (use --strict to fail)"));
+    assert!(out.join("index.html").is_file());
+}
+
+#[test]
+fn the_environment_home_overrides_the_configuration_file() {
+    let dir = fixture();
+    std::fs::write(dir.path().join("second.md"), "# Second\n").expect("write second doc");
+    std::fs::write(dir.path().join(".wikicc.json"), r#"{"home": "intro.md"}"#)
+        .expect("write config");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .env("WIKICC_HOME", "second")
+        .assert()
+        .success();
+
+    let shell = std::fs::read_to_string(out.join("index.html")).expect("read shell");
+    assert!(
+        shell.contains(r#""home":"second.md""#),
+        "the environment home wins over the configured one"
+    );
+}
+
+#[test]
+fn the_exclude_environment_variable_replaces_the_configured_list() {
+    let dir = fixture();
+    for (name, body) in [("drafts/wip.md", "# Wip\n"), ("archive/old.md", "# Old\n")] {
+        let path = dir.path().join(name);
+        std::fs::create_dir(path.parent().expect("parent")).expect("create directory");
+        std::fs::write(path, body).expect("write fixture");
+    }
+    std::fs::write(
+        dir.path().join(".wikicc.json"),
+        r#"{"exclude": ["drafts"]}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .env("WIKICC_EXCLUDE", "archive")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("compiled 2 documents, 1 asset"));
+
+    let shell = std::fs::read_to_string(out.join("index.html")).expect("read shell");
+    assert!(
+        shell.contains(r#""id":"drafts/wip.md""#),
+        "the configured draft is back when the environment replaces the list"
+    );
+    assert!(
+        !shell.contains(r#""id":"archive/old.md""#),
+        "the environment exclusion applies"
+    );
+}
+
+#[test]
+fn the_favicon_environment_variable_reaches_the_artifact() {
+    let dir = fixture();
+    std::fs::write(dir.path().join("icon.png"), b"png").expect("write favicon");
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .env("WIKICC_FAVICON", "icon.png")
+        .assert()
+        .success();
+
+    let html = std::fs::read_to_string(out.join("index.html")).expect("read shell");
+    assert!(
+        html.contains(r#"<link rel="icon" href="data:image/png;base64,cG5n">"#),
+        "the head links the environment favicon"
+    );
+}
+
+#[test]
+fn a_blank_environment_value_does_not_override_the_configuration() {
+    let dir = fixture();
+    std::fs::write(dir.path().join(".wikicc.json"), r#"{"out": "site"}"#).expect("write config");
+    let out = dir.path().join("site");
+
+    wikicc()
+        .arg(dir.path())
+        .env("WIKICC_OUT", "   ")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(path_string(&out)));
+
+    assert!(out.join("index.html").is_file());
+}
+
+#[test]
+fn an_unknown_wikicc_variable_is_ignored() {
+    let dir = fixture();
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(&out)])
+        .env("WIKICC_TITEL", "a typo")
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+}
