@@ -397,6 +397,50 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font-size: 13px;
 }
 
+/* ---------- sealed documents ---------- */
+
+/* A sealed document has no body to show: the lock page holds the path, the
+   title and one line that says what the lock means. The title is the page's
+   only control — a button that looks like a heading, because a heading is
+   what it answers as — and selecting it opens the unlock dialog. */
+.doc-locked-title {
+  margin: 0 0 12px;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.doc-locked-open {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.doc-locked-open:hover,
+.doc-locked-open:focus-visible {
+  color: var(--accent);
+  outline: none;
+}
+
+.doc-locked-open:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.doc-locked {
+  margin: 12px 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
 .sidebar-footer {
   padding: 10px 4px 2px;
   border-top: 1px solid var(--border);
@@ -1935,8 +1979,142 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   }
 }
 
+/* ---------- unlock dialog ---------- */
+
+/* The one modal the reader owns. The backdrop covers the whole app — the
+   reader cannot read what it cannot unlock — and the focus sits in the
+   field from the first frame, so the password is the only thing between
+   the reader and the document. */
+.unlock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 7, 10, 0.62);
+}
+
+.unlock-overlay[hidden] {
+  display: none;
+}
+
+.unlock-dialog {
+  width: min(400px, 100%);
+  padding: 22px 22px 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+}
+
+.unlock-heading {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.unlock-lede {
+  margin: 0 0 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.unlock-form {
+  display: grid;
+  gap: 8px;
+}
+
+.unlock-label {
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.unlock-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.unlock-input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.unlock-error {
+  margin: 0;
+  color: rgba(240, 160, 64, 0.95);
+  font-size: 12.5px;
+}
+
+.unlock-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.unlock-cancel,
+.unlock-submit {
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.unlock-cancel:disabled,
+.unlock-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.unlock-cancel {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.unlock-cancel:hover,
+.unlock-cancel:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.unlock-submit {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.unlock-submit:hover {
+  background: #6ba1ff;
+}
+
+.unlock-submit:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
 @media print {
   .doc-alert {
+    display: none;
+  }
+
+  /* A printed lock page has no dialog to open, and no backdrop to cover
+     the paper: the title and the note are the only things worth ink. */
+  .unlock-overlay {
     display: none;
   }
 

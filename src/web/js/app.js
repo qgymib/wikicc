@@ -32,6 +32,8 @@ import * as DiagramView from "./diagram-view.js";
 import * as PreviewView from "./preview-view.js";
 import * as Anchor from "./anchor.js";
 import * as Banner from "./banner.js";
+import * as Lock from "./lock.js";
+import * as LockView from "./lock-view.js";
 
 /** `localStorage` key holding the explicit theme choice. */
 var THEME_KEY = "wikicc.theme";
@@ -229,6 +231,50 @@ export function start() {
   // `home` key of .wikicc.json; anything else falls back to the first one.
   var home = typeof bundle.home === "string" ? bundle.home : null;
   var store = DocStore.createDocStore(bundle);
+
+  /**
+   * The passwords this session has seen, and the one dialog that asks for
+   * the next one. Both live here rather than in the views: the table is
+   * the session's memory — page-lifetime, memory-only, never written to
+   * any storage — and the dialog only reports what a password did.
+   */
+  var unlockPasswords = Lock.createSessionPasswords();
+
+  var unlockDialog = LockView.createUnlockDialog({
+    host: document.body,
+    // The attempt belongs to the store: `decrypt` is the one door, and a
+    // password that opened a document is remembered for the session, so
+    // the next sealed page — or this one again — never asks twice.
+    onSubmit: function (password, doc) {
+      if (!doc || !doc.id) {
+        return Promise.resolve(false);
+      }
+      return store.decrypt(doc.id, password).then(function (unlocked) {
+        if (!unlocked) {
+          return false;
+        }
+        unlockPasswords.remember(doc.id, password);
+        return true;
+      });
+    },
+  });
+
+  // An unlock anywhere in the reader re-renders the document the reader is
+  // looking at: the sealed placeholder they saw is the full body now. The
+  // route still names the document, so the address bar keeps its say — an
+  // arrival that carried a chapter finally reaches it here. A navigation
+  // away leaves the other document untouched, and the unlock still stands:
+  // its password is in the session, so coming back is a quiet success.
+  store.onDecrypted(function (unlocked) {
+    if (!currentId || currentId !== unlocked.id) {
+      return;
+    }
+    // The route has not moved, so a plain render would see no change;
+    // dropping the id makes the next render rebuild the article from the
+    // model the password just opened.
+    currentId = null;
+    render();
+  });
 
   var content = document.getElementById("doc-content");
   var article = document.getElementById("doc-article");
@@ -806,28 +852,87 @@ export function start() {
   }
 
   /**
-   * Show the title of a sealed document and say what the lock means.
+   * The passwords this session holds, tried quietly, one attempt at a time.
    *
-   * A sealed document carries no markup: its html, outline, blocks and text
-   * are emptied by the build, and the ciphertext they became is for the
-   * unlock to open, not for this page to render. Until that unlock exists
-   * the reader sees the document's id, the title the lists already showed,
-   * and one line that says the contents are hidden. No diagrams, no
-   * formulas, no preview tagging: there is no markup to enhance, and a
-   * placeholder that pretended otherwise would be a blank page in disguise.
+   * A sealed document whose password the reader already entered — for this
+   * document, or for any other the site seals under the same one — opens
+   * without a dialog ever appearing: the attempt starts as soon as the
+   * lock page paints, and the answer re-renders through the store's
+   * notification. One attempt per document runs at a time; a navigation
+   * away abandons the rest of the queue, and nothing here ever writes the
+   * passwords anywhere but memory.
+   */
+  var silentUnlocks = new Map();
+
+  function attemptSilentUnlock(doc) {
+    if (silentUnlocks.has(doc.id)) {
+      return;
+    }
+    var passwords = unlockPasswords.candidates(doc.id);
+    if (!passwords.length) {
+      return;
+    }
+
+    var attempt = passwords.reduce(function (chain, password) {
+      return chain.then(function (opened) {
+        if (opened || currentId !== doc.id) {
+          return opened;
+        }
+        return store.decrypt(doc.id, password).then(function (result) {
+          if (result) {
+            unlockPasswords.remember(doc.id, password);
+          }
+          return result;
+        });
+      });
+    }, Promise.resolve(null));
+
+    silentUnlocks.set(doc.id, attempt);
+    var forget = function () {
+      silentUnlocks.delete(doc.id);
+    };
+    attempt.then(forget, forget);
+  }
+
+  /**
+   * Show the title of a sealed document and name the one door it carries.
+   *
+   * A sealed document has no markup to render: its html, outline, blocks
+   * and text are emptied by the build, and the ciphertext they became is
+   * what a password opens, not what this page shows. The page therefore
+   * holds three facts — the path, the title the lists already showed, and
+   * one line that says the contents are hidden — and the title is a
+   * control: selecting it opens the password dialog, whose success
+   * re-renders this document through the store's notification. No
+   * diagrams, no formulas, no preview tagging: there is no markup to
+   * enhance, and a placeholder that pretended otherwise would be a blank
+   * page in disguise.
    */
   function renderLocked(doc) {
     var path = document.createElement("p");
     path.className = "doc-path";
     path.textContent = doc.id;
 
+    var title = document.createElement("h1");
+    title.className = "doc-locked-title";
+    var open = document.createElement("button");
+    open.className = "doc-locked-open";
+    open.setAttribute("type", "button");
+    open.setAttribute("aria-haspopup", "dialog");
+    open.textContent = doc.title;
+    open.addEventListener("click", function () {
+      unlockDialog.open(doc, open);
+    });
+    title.appendChild(open);
+
     var note = document.createElement("p");
     note.className = LOCKED_CLASS;
     note.textContent =
-      "This document is encrypted. Its contents stay hidden until it is unlocked.";
+      "This document is encrypted. Its contents stay hidden until it is unlocked \u2014 select its title to enter the password.";
 
     mountArticle();
     article.appendChild(path);
+    article.appendChild(title);
     article.appendChild(note);
   }
 
@@ -901,6 +1006,9 @@ export function start() {
     if (changed) {
       if (locked) {
         renderLocked(doc);
+        // A password the session already holds is tried before the reader
+        // has to ask: one that fits re-renders through the notification.
+        attemptSilentUnlock(doc);
       } else {
         renderDocument(doc);
       }

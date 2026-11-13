@@ -1883,7 +1883,35 @@ test("a pages session lands the search's passage when the document arrives", asy
 
 /* ---------- sealed documents ---------- */
 
-/** The embedded payload with its second document sealed. */
+/**
+ * The blob the committed interop vector sealed `guide/intro.md` with — the
+ * same constants `tests/js/lock.test.js` and `tests/js/doc-store.test.js`
+ * pin, which `src/crypto.rs` keeps honest on the build side. Its plaintext
+ * is the chapter-shaped body the outline and the anchor walk read.
+ */
+const SEALED_BLOB = {
+  v: 1,
+  kdf: "pbkdf2-sha256",
+  iters: 600000,
+  salt: "EBESExQVFhcYGRobHB0eHw==",
+  nonce: "sLGys7S1tre4ubq7",
+  ct: "FdagYCNSGn2CfXUj43AcxGe/uvxMLy0VH4U/18evqxKAIAcqJPR1NabxtlrnYoUnGJefjCc/TROQPdMXpo/eVe5UoWQ7K26y9P+/pSWha4gzM5bA+GF8xRSXnA1x4auaYpG4OMQJZm3cZ3+bfWV+G7/p9Yc2s0shQb16Amq8yeJMwos8Uj/uIfxkjTS1FH9PshBkceKsQ46A73b2wvGyLcjJekcz2Pi7gndVRJVs73pszogDQk8iQbiSz/ISVb/wV8r0cQH8vlfHQFqyLtLFRfZSGeB8vEKGrQlAj00EiMWkx9NnhwzwqrnvuHy4GFte0fJhmUieET7Jnvkm3wjEFi0Y/F9HaI+IbzUv7gxDhYbNVrKBRp/ji2OPb+NVUMN4vXgNPBpb/mnrWRFD4Gc9EGZxGX1ULQ==",
+};
+
+/** The interop vector sealed `guide/other.md` with, under the same password. */
+const OTHER_BLOB = {
+  v: 1,
+  kdf: "pbkdf2-sha256",
+  iters: 600000,
+  salt: "ICEiIyQlJicoKSorLC0uLw==",
+  nonce: "wMHCw8TFxsfIycrL",
+  ct: "OH0yPKUuQm3nBjfjjxk27eenmLO5yntFrYoZc2X508M0aVGiD7n5djyHsLg4ozn8WpYOduZNxGruKOS6/E239D+h7zKJkC8oDlDIRaOuceMC0FJrfdI/GLc5K5axNHdGJnkiXH7SRg==",
+};
+
+/** The password both interop vectors answer to. */
+const SEALED_PASSWORD = "密码 secret";
+
+/** The embedded payload with two sealed documents beside the public one. */
 function lockedDocs() {
   return [
     payload().docs[0],
@@ -1894,14 +1922,16 @@ function lockedDocs() {
       text: "",
       toc: [],
       blocks: [],
-      enc: {
-        v: 1,
-        kdf: "pbkdf2-sha256",
-        iters: 600000,
-        salt: "salt",
-        nonce: "nonce",
-        ct: "ciphertext",
-      },
+      enc: SEALED_BLOB,
+    },
+    {
+      id: "guide/other.md",
+      title: "Other",
+      html: "",
+      text: "",
+      toc: [],
+      blocks: [],
+      enc: OTHER_BLOB,
     },
   ];
 }
@@ -1938,19 +1968,54 @@ function lockedChunks() {
       toc: [],
       blocks: [],
       text: "",
-      enc: {
-        v: 1,
-        kdf: "pbkdf2-sha256",
-        iters: 600000,
-        salt: "salt",
-        nonce: "nonce",
-        ct: "ciphertext",
-      },
+      enc: SEALED_BLOB,
     },
   };
 }
 
-test("a sealed document opens as a locked placeholder, not a blank page", () => {
+/**
+ * Poll `probe` until it passes.
+ *
+ * A key derivation runs on Node's own Web Crypto, off the fake timer queue
+ * the session installs, and takes real time at the shipped iteration count:
+ * a fixed settle would race it. Five seconds is generous; a failure to
+ * unlock by then is what the probe asserts anyway.
+ */
+async function waitFor(probe, what) {
+  const deadline = Date.now() + 5000;
+  while (!probe()) {
+    if (Date.now() > deadline) {
+      throw new Error("timed out waiting for " + what);
+    }
+    await new Promise((resolve) => realSetTimeout(resolve, 5));
+  }
+}
+
+/** The unlock dialog's overlay on the fake page body. */
+function unlockOverlay(session) {
+  const body = session.doc.body;
+  return (
+    body.children.find(function (child) {
+      return child.className === "unlock-overlay";
+    }) || null
+  );
+}
+
+/** Put `password` in the field and press the dialog's unlock action. */
+function submitPassword(session, password) {
+  const overlay = unlockOverlay(session);
+  const form = overlay.children[0].children[2];
+  const input = form.children[1];
+  input.value = password;
+  form.fire("submit", { preventDefault() {} });
+}
+
+/** The lock page's title button, which is the one door the page carries. */
+function lockedTitleButton(article) {
+  return article.children[1].children[0];
+}
+
+test("a sealed document opens as a locked page that names its one door", () => {
   withSession(
     { hash: "#/doc/guide/intro.md", docs: lockedDocs() },
     (session) => {
@@ -1962,21 +2027,38 @@ test("a sealed document opens as a locked placeholder, not a blank page", () => 
         "guide/intro.md",
         "the path stays public",
       );
+      const title = article.children[1];
       assert.match(
-        article.children[1].className,
-        /doc-locked/,
-        "the placeholder names the lock",
+        title.className,
+        /doc-locked-title/,
+        "the title stands where the body's own would",
       );
-      assert.match(article.children[1].textContent, /encrypted/);
+      assert.equal(title.children.length, 1, "the title carries one control");
+      const button = title.children[0];
+      assert.equal(button.tagName, "BUTTON");
       assert.equal(
-        article.children[1].children.length,
-        0,
-        "the placeholder holds text only",
+        button.textContent,
+        "Intro",
+        "the title the lists show is what the door is named",
       );
+      assert.equal(
+        button.getAttribute("aria-haspopup"),
+        "dialog",
+        "the control says what it opens",
+      );
+      const note = article.children[2];
+      assert.match(note.className, /doc-locked/);
+      assert.match(note.textContent, /encrypted/);
+      assert.equal(note.children.length, 0, "the note holds text only");
       assert.equal(
         document.title,
         "Intro · Fixture",
         "the title the lists show is still the document's",
+      );
+      assert.equal(
+        unlockOverlay(session).hidden,
+        true,
+        "no dialog until the reader asks for it",
       );
     },
   );
@@ -2022,6 +2104,219 @@ test("a sealed document stays quiet about a chapter it cannot reach", () => {
   });
 });
 
+test("selecting the title of a sealed document opens the password dialog", () => {
+  withSession(
+    { hash: "#/doc/guide/intro.md", docs: lockedDocs() },
+    (session) => {
+      startSession();
+
+      const article = session.shell.get("doc-article");
+      lockedTitleButton(article).fire("click");
+
+      const overlay = unlockOverlay(session);
+      assert.equal(overlay.hidden, false, "the modal is up");
+      const lede = overlay.children[0].children[1];
+      assert.match(lede.textContent, /Intro/);
+      const input = overlay.children[0].children[2].children[1];
+      assert.equal(input.focused, true, "the reader is already in the field");
+      assert.equal(input.value, "", "the field starts empty");
+    },
+  );
+});
+
+test("a wrong password says so, and the right one opens the document", async () => {
+  await withSession(
+    { hash: "#/doc/guide/intro.md", docs: lockedDocs(), storage: {} },
+    async (session) => {
+      startSession();
+      const article = session.shell.get("doc-article");
+      lockedTitleButton(article).fire("click");
+
+      submitPassword(session, "not the password");
+      await waitFor(function () {
+        return (
+          unlockOverlay(session).children[0].children[2].children[2].hidden ===
+          false
+        );
+      }, "the wrong-password error");
+      assert.match(
+        unlockOverlay(session).children[0].children[2].children[2].textContent,
+        /did not unlock/,
+      );
+      assert.match(
+        article.children[1].className,
+        /doc-locked-title/,
+        "the document stays sealed",
+      );
+
+      submitPassword(session, SEALED_PASSWORD);
+      await waitFor(function () {
+        return (
+          unlockOverlay(session).hidden &&
+          /doc-body/.test(article.children[1].className)
+        );
+      }, "the unlocked document");
+
+      assert.equal(article.children[0].textContent, "guide/intro.md");
+      assert.match(article.children[1].innerHTML, /intro body/);
+      assert.equal(
+        session.shell.get("toc").children.length,
+        1,
+        "the outline the seal hid is on screen",
+      );
+      assert.equal(
+        unlockOverlay(session).hidden,
+        true,
+        "the success closes the dialog",
+      );
+
+      // The password the session heard lives in memory alone: whatever the
+      // reader wrote down between visits, it is not this.
+      Object.keys(session.storage).forEach(function (key) {
+        assert.ok(
+          String(session.storage[key]).indexOf(SEALED_PASSWORD) === -1,
+          "the storage holds no password: " + key,
+        );
+        assert.ok(
+          key.indexOf("password") === -1,
+          "no storage key speaks of passwords: " + key,
+        );
+      });
+    },
+  );
+});
+
+test("the chapter the address named is reached once the document is open", async () => {
+  await withSession(
+    { hash: "#/doc/guide/intro.md#getting-started", docs: lockedDocs() },
+    async (session) => {
+      startSession();
+      const article = session.shell.get("doc-article");
+      assert.match(
+        article.children[1].className,
+        /doc-locked-title/,
+        "the arrival shows the lock first",
+      );
+
+      lockedTitleButton(article).fire("click");
+      submitPassword(session, SEALED_PASSWORD);
+      await waitFor(function () {
+        return /doc-body/.test(article.children[1].className);
+      }, "the unlocked document");
+
+      // The walk itself, before the settling frames repeat it: the arrival
+      // the route named is reached as soon as the body is on screen.
+      assert.deepEqual(
+        session.headings.get("getting-started").scrollCalls,
+        [{ block: "start" }],
+        "the deep link lands on its chapter after the unlock",
+      );
+    },
+  );
+});
+
+test("a password the session holds opens the next sealed document without asking", async () => {
+  await withSession(
+    { hash: "#/doc/guide/intro.md", docs: lockedDocs() },
+    async (session) => {
+      startSession();
+      const article = session.shell.get("doc-article");
+
+      lockedTitleButton(article).fire("click");
+      submitPassword(session, SEALED_PASSWORD);
+      await waitFor(function () {
+        return /doc-body/.test(article.children[1].className);
+      }, "the first unlocked document");
+
+      session.follow("#/doc/guide/other.md");
+      await waitFor(function () {
+        return /doc-body/.test(article.children[1].className);
+      }, "the second document");
+
+      assert.equal(article.children[0].textContent, "guide/other.md");
+      assert.match(article.children[1].innerHTML, /另一篇/);
+      assert.equal(
+        unlockOverlay(session).hidden,
+        true,
+        "no dialog ever appeared for the second document",
+      );
+    },
+  );
+});
+
+test("a fresh session has to ask for the password again", async () => {
+  await withSession(
+    { hash: "#/doc/guide/intro.md", docs: lockedDocs() },
+    async (session) => {
+      startSession();
+      const article = session.shell.get("doc-article");
+      lockedTitleButton(article).fire("click");
+      submitPassword(session, SEALED_PASSWORD);
+      await waitFor(function () {
+        return /doc-body/.test(article.children[1].className);
+      }, "the unlocked document");
+    },
+  );
+
+  // The second session is what a reload looks like: the password the first
+  // one heard went with it, so the document seals itself again.
+  await withSession(
+    { hash: "#/doc/guide/intro.md", docs: lockedDocs() },
+    async (session) => {
+      startSession();
+      const article = session.shell.get("doc-article");
+
+      assert.match(
+        article.children[1].className,
+        /doc-locked-title/,
+        "the document is sealed again",
+      );
+      assert.equal(
+        unlockOverlay(session).hidden,
+        true,
+        "and nothing opens it by itself",
+      );
+    },
+  );
+});
+
+test("a pages session unlocks through the dialog over the fetched chunk", async () => {
+  await withSession(
+    {
+      hash: "#/doc/guide/intro.md",
+      lazy: true,
+      payload: lockedManifest(),
+      chunks: lockedChunks(),
+    },
+    async (session) => {
+      startSession();
+      await session.settle();
+
+      const article = session.shell.get("doc-article");
+      assert.equal(article.children[0].textContent, "guide/intro.md");
+      assert.match(article.children[1].className, /doc-locked-title/);
+      assert.deepEqual(
+        session.fetchCalls,
+        ["pages/guide/intro.md.json?v=h1"],
+        "the sealed chunk is fetched like any other",
+      );
+
+      lockedTitleButton(article).fire("click");
+      submitPassword(session, SEALED_PASSWORD);
+      await waitFor(function () {
+        return /doc-body/.test(article.children[1].className);
+      }, "the unlocked document");
+
+      assert.match(article.children[1].innerHTML, /intro body/);
+      assert.deepEqual(
+        session.fetchCalls,
+        ["pages/guide/intro.md.json?v=h1"],
+        "the unlock costs no further request",
+      );
+    },
+  );
+});
+
 test("a pages session shows the locked placeholder from the fetched chunk", async () => {
   await withSession(
     {
@@ -2036,7 +2331,7 @@ test("a pages session shows the locked placeholder from the fetched chunk", asyn
 
       const article = session.shell.get("doc-article");
       assert.equal(article.children[0].textContent, "guide/intro.md");
-      assert.match(article.children[1].className, /doc-locked/);
+      assert.match(article.children[1].className, /doc-locked-title/);
       assert.deepEqual(
         session.fetchCalls,
         ["pages/guide/intro.md.json?v=h1"],

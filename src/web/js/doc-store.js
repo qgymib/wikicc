@@ -27,9 +27,21 @@
  * The search corpus of the pages format lives in one file as well; it is
  * fetched once, on the first global search, through the same cache-once rule.
  *
+ * Encrypted documents travel sealed. Their payload entry carries an `enc`
+ * blob instead of a body — the html, outline, blocks and plain text are
+ * emptied by the build — and `decrypt` is the one door that opens one: the
+ * password derives the key with the reader's own Web Crypto (`lock.js`),
+ * the plaintext that authenticates replaces the sealed model in place, and
+ * every listener registered through `onDecrypted` hears about it. A
+ * password that does not authenticate answers `null` and leaves the cache
+ * sealed; a `null` is also what a document that is not encrypted answers,
+ * so a caller cannot be tricked into treating a public document as a
+ * locked one.
+ *
  * Pure: no DOM. The fetcher is injected, so `node --test` can drive it.
  */
 import { encodeId } from "./router.js";
+import * as Lock from "./lock.js";
 
 /** Where the search corpus lives, relative to the page. */
 export var SEARCH_CORPUS_PATH = "search.json";
@@ -69,6 +81,7 @@ export function createDocStore(bundle, fetchImpl) {
   );
   var inflight = new Map();
   var corpus = null;
+  var decryptedListeners = [];
 
   /** The document `id`, or `null` when the payload does not hold it. */
   function embedded(id) {
@@ -140,6 +153,55 @@ export function createDocStore(bundle, fetchImpl) {
     return request;
   }
 
+  /**
+   * Open the sealed body of `id` with `password`.
+   *
+   * The chunk travels first when the build split the site — a sealed
+   * document is no different from any other until it is on hand. The
+   * plaintext that authenticates becomes the document's full model in
+   * place of the sealed one, and the listeners hear about it; a password
+   * that does not authenticate answers `null` and the cache stays sealed.
+   * A document that is not encrypted, or is unknown, answers `null` too.
+   */
+  function decryptDoc(id, password) {
+    return Promise.resolve()
+      .then(function () {
+        return load(id);
+      })
+      .then(function (doc) {
+        if (!doc || !doc.enc) {
+          return null;
+        }
+        return Lock.unlock(doc.enc, password, id);
+      })
+      .then(function (body) {
+        if (body === null) {
+          return null;
+        }
+
+        var entry = byId.get(id) || {};
+        var full = {
+          id: id,
+          path: typeof entry.path === "string" ? entry.path : id,
+          title: typeof entry.title === "string" ? entry.title : "",
+          html: typeof body.html === "string" ? body.html : "",
+          toc: Array.isArray(body.toc) ? body.toc : [],
+          blocks: Array.isArray(body.blocks) ? body.blocks : [],
+          text: typeof body.text === "string" ? body.text : "",
+        };
+        byId.set(id, full);
+        notifyDecrypted(full);
+        return full;
+      });
+  }
+
+  /** Hand a decrypted document to every listener still registered. */
+  function notifyDecrypted(doc) {
+    decryptedListeners.slice().forEach(function (listener) {
+      listener(doc);
+    });
+  }
+
   /** Fetch, parse and cache the search corpus; resolves `null` on failure. */
   function fetchCorpus() {
     if (!lazy) {
@@ -187,6 +249,35 @@ export function createDocStore(bundle, fetchImpl) {
     /** The document `id`, fetched first when the build split the site. */
     get: function (id) {
       return load(id);
+    },
+    /** Whether `id`'s body is sealed: the payload carries no plaintext for it. */
+    isEncrypted: function (id) {
+      var entry = byId.get(id);
+      return !!entry && !!entry.enc;
+    },
+    /**
+     * Open the sealed body of `id` with `password`.
+     *
+     * Resolves the full model when the password authenticates — from then
+     * on the document reads like a never-encrypted one — and `null` when
+     * it does not. Everything the reader cannot fix by retyping (a format
+     * it does not speak, a context without Web Crypto) rejects.
+     */
+    decrypt: function (id, password) {
+      return decryptDoc(id, password);
+    },
+    /**
+     * Hear about every successful decryption, until the returned function
+     * is called.
+     */
+    onDecrypted: function (listener) {
+      decryptedListeners.push(listener);
+      return function () {
+        var index = decryptedListeners.indexOf(listener);
+        if (index !== -1) {
+          decryptedListeners.splice(index, 1);
+        }
+      };
     },
     /** The search corpus records, fetched once; `null` for the embedded payload. */
     corpus: function () {

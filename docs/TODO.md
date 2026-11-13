@@ -206,29 +206,61 @@ flowchart TD
 
 ### 阶段二：阅读器解锁流程
 
-**状态**：未开始
+**状态**：已完成（2026-11-13，`add reader unlock flow for encrypted articles`）
 
 **范围**
-1. `src/web/js/lock.js`：`deriveKey` / `unlock`（Web Crypto PBKDF2 + AES-GCM，参数与构建端一致）+ 会话密码表（纯内存 `Map`）+ 模态对话框。
-2. `doc-store.js`：`isEncrypted(id)`、`decrypt(id, password)`，成功后以完整模型替换缓存。
-3. `app.js`：锁定页（仅标题）+ 点击标题弹框 + 错误密码可重试 + 解锁后重渲染正文/目录/图表/公式/预览链接重挂。
-4. `app.css`：锁定页与对话框样式。
+1. `src/web/js/lock.js`：`deriveKey` / `unlock`（Web Crypto PBKDF2 + AES-GCM，参数与构建端一致）+ 会话密码表（纯内存 `Map`），纯逻辑无 DOM。
+2. `src/web/js/lock-view.js`：解锁模态对话框（居中模态、焦点管理、Esc 关闭、错误提示可重试）——DOM 视图独立成模块，沿 `*-view.js` 命名约定。
+3. `doc-store.js`：`isEncrypted(id)`、`decrypt(id, password)`，成功后以完整模型替换缓存并通知监听者。
+4. `app.js`：锁定页（仅标题）+ 点击标题弹框 + 错误密码可重试 + 解锁后重渲染正文/目录/图表/公式/预览链接重挂。
+5. `app.css`：锁定页与对话框样式。
 
-**涉及文件**：`src/web/js/{lock.js[新],doc-store.js,app.js,main.js,router.js?}`、`src/web/css/app.css`；测试 `tests/js/lock.test.js`[新]、doc-store/app-session 用例扩展、`tests/e2e.rs` 解锁流程。
+**涉及文件**：`src/web/js/{lock.js[新],lock-view.js[新],doc-store.js,app.js}`、`src/web/css/app.css`、`src/crypto.rs`（互操作向量钉死测试）；测试 `tests/js/{lock,lock-view}.test.js`[新]、doc-store/app-session 用例扩展、`tests/e2e.rs` 解锁机制字面量断言。`main.js`/`router.js` 不动：lock.js 经 app.js 引入后 esbuild 自动入 bundle。
 
 **实现要点**
-- 派生密钥按 password 缓存复用：共享全局密码的多文档解锁不重复执行 600k 次 KDF。
+- 派生密钥按 `password + iters + salt` 缓存复用（修订：阶段一落定为逐文档随机 salt，同密码跨文档的派生输入必然不同，按 password 单独缓存不可行——缓存省下的是同一文档重复解锁与静默重试的重复 KDF）。
 - 解锁尝试前先静默试已知密码（会话密码表），命中即免询问（满足"不再重复询问"）。
 - 密码表与派生密钥均只在内存；**绝不写 `localStorage`/`sessionStorage`/cookie**。
 - 对话框：居中模态、焦点管理、Esc 关闭、错误提示可重试。
 - 解密成功复用现有 render 路径：正文、目录、hover 预览、表格/图表/公式增强照常工作。
 
 **测试与验收标准**
-- 互操作测试：用构建端导出的固定测试向量（固定 salt/nonce/ct）验证 JS 端解密结果，锁死两端参数一致性。
+- 互操作测试：构建端导出固定测试向量（固定 salt/nonce/ct），ASCII 密码与 UTF-8 中文密码/正文两组，Rust 与 JS 两端各自钉死同一组常量，任一侧参数漂移即失败。
 - node --test：`unlock` 成功/失败；doc-store 解密后 `get` 返回完整模型、失败不污染缓存。
 - app-session harness：点击标题弹框 → 正确密码解锁渲染 → 重建会话（模拟刷新）后需重输。
-- e2e（无头浏览器）：`file://` 打开单文件产物，完整解锁流程可用；验证 `crypto.subtle` 在 file:// 下可用。
+- e2e（自动化）：`tests/e2e.rs` 断言产物 bundle 携带解锁机制字面量（esbuild minify 保留字符串）；`file://` 下完整解锁流程与 `crypto.subtle` 可用性按 tests/README「套件不启动浏览器」约定以无头浏览器**手测**确认，结论记录于本节完成记录。
 - 断言解锁后 `localStorage`/`sessionStorage` 无密码痕迹。
+
+**完成记录**（2026-11-13）
+
+实际改动：
+- `src/crypto.rs`：测试模块加 `interop_vectors()`——三个固定 salt/nonce 的互操作向量（ASCII 密码 plain body、UTF-8 密码带章节结构的 body——heading id/toc/blocks，供锚点与目录断言、同一 UTF-8 密码绑定另一文档），Rust `open` 逐向量断言 + 错密码断言；任一侧参数漂移即失败。
+- `src/web/js/lock.js`[新]：`unlock(blob, password, docId)`（Web Crypto PBKDF2-HMAC-SHA256 + AES-256-GCM，`additionalData=UTF-8(docId)`、`tagLength=128`、`ct=ciphertext||tag` 与构建端布局一致；鉴权失败 resolve `null`——错密码/错 AAD/篡改一个答案；`v`/`kdf`/iters/长度/base64 校验失败 reject Error）；`deriveKey`（派生 Promise 按 `password\u0000iters\u0000salt` 缓存，同输入共享一次 KDF）；`createSessionPasswords`（纯内存会话表：`remember`/`passwordFor`/`candidates`——本文档密码优先、其余最新优先）。无 DOM，Node 原生 Web Crypto 可测。
+- `src/web/js/lock-view.js`[新]：解锁模态对话框（`role=dialog`/`aria-modal`/`aria-labelledby`，打开聚焦密码框并归还焦点给 opener，Esc/取消关闭，busy 态禁用动作并显示 "Unlocking…"，错误 `role=alert` 可重试、输入即清，关闭清空输入框，迟到的判定不重开不抢焦点）。构建一次仅切换，沿 banner 先例；`document` 可注入。
+- `src/web/js/doc-store.js`：`isEncrypted(id)`（manifest `enc:true` 标记或文档携带 enc blob）；`decrypt(id, password)`——解锁的唯一入口（先 `load` 保证 pages chunk 在手，成功以完整模型替换缓存并通知，失败 `null` 不污染缓存，非加密/未知文档 `null`）；`onDecrypted(listener)` 返回注销函数。
+- `src/web/js/app.js`：`renderLocked` 重设计（路径 + `h1.doc-locked-title` 内标题按钮 `aria-haspopup="dialog"` + 说明段）；点击标题弹框；`attemptSilentUnlock`——锁定页渲染后静默试会话密码（每文档单飞守卫、导航竞态守卫、命中即免询问）；`store.onDecrypted` 监听把 `currentId` 置空后 `render()`——复用完整渲染路径（正文/目录/图表/公式/预览重挂），hash 锚点随之落地；对话框 `onSubmit` 走 `store.decrypt` 并在成功时 `remember`。
+- `src/web/css/app.css`：锁定页标题按钮/说明样式 + 对话框遮罩/面板/输入/动作/错误样式（全走既有 tokens，`.unlock-overlay[hidden]` 守卫 display:flex 覆盖 UA 规则，打印排除）。
+- `tests/js/lock.test.js`[新] 8 用例：互操作向量成功（ASCII + UTF-8 两端同常量）、错密码/错 AAD/翻字节（解码后翻转再编码，避开 base64 padding 位陷阱）resolve null、畸形参数 reject 矩阵、派生缓存同一性、会话表语义。
+- `tests/js/lock-view.test.js`[新] 12 用例：开合、聚焦、无障碍契约、无操作幂等、正确密码关闭清场归还焦点、错误重试、输入清错、不可用尝试、Esc/取消、busy、迟到判定不重开。
+- `tests/js/doc-store.test.js` +5 用例：两模式 `isEncrypted`/`decrypt`、失败不污染、通知与注销、非加密拒绝。
+- `tests/js/app-session.test.js`：占位用例更新为新结构（标题按钮/说明）；新增 7 用例——弹框、错误重试+解锁渲染+存储无密码痕迹、锚点深链解锁后落地、跨文档同密码免询问、新会话重锁、pages 解锁（chunk 仅 fetch 一次）；harness 增 `waitFor` 轮询（真实 Web Crypto KDF 耗时不可用固定 settle 等待）。
+- `tests/e2e.rs`：`a_sealed_page_carries_the_unlock_machinery`——`--password` 构建加密站点 single-html 产物，断言 payload 携带 `enc` 且 bundle 携带解锁机制字面量（类名/字段 id/文案）。
+
+与计划的偏离（均已在本文件先行修订）：
+- 派生密钥缓存键为 `password + iters + salt`：阶段一逐文档随机 salt 使「按 password 缓存跨文档复用」不可行（见实现要点修订）。
+- 对话框独立为 `lock-view.js`：沿仓库「DOM 访问只在 `*-view.js`/`banner.js`/`app.js`」惯例，TODO §2.5 原表把对话框列在 lock.js。
+- 「e2e（无头浏览器）」改为「e2e.rs 字面量断言 + 无头浏览器手测记录」：对齐 tests/README「套件不启动浏览器」约定（阶段一先例相同）。
+- 互操作向量 2 明文带章节结构（heading id/toc/blocks），使 app-session 能断言锚点与目录在解锁后落地；UTF-8 内容钉死由向量 3 承担。
+- 已知边界沿阶段一：加密文档内 `wikicc-asset:` 占位符随密文密封，解密后即可见（阶段五文档记录）。
+
+验收结果：
+- 互操作向量：`crypto::tests::the_committed_interop_vectors_open_to_the_canonical_json_bodies` 与 `a_wrong_password_cannot_open_a_committed_interop_vector`（Rust 端）；`tests/js/lock.test.js` 同常量经 Web Crypto 解出同明文（含 UTF-8 密码/正文），错密码/错 AAD/翻字节均 `null`，畸形参数 reject——两端参数一致性被双份常量锁死。
+- node --test：lock 8/8、lock-view 12/12、doc-store 15/15（解密后 `peek`/`get` 返回完整模型且 `isEncrypted` 翻转为 false、错密码 `null` 缓存保持 sealed、通知与注销）。
+- app-session 48/48：点击标题弹框→错误密码 alert 提示→正确密码解锁渲染（正文/目录）→深链锚点落地→跨文档同密码免询问（无对话框）→新会话重锁需重输→pages 格式解锁且 chunk 仅 fetch 一次→`session.storage` 断言无密码键值。
+- e2e：加密产物含 `"enc":{` 与全部解锁机制字面量（`doc-locked-title`/`unlock-overlay`/`unlock-password`/`Unlock this document` 等）。
+- 无头浏览器手测（Chromium，`file://` 打开 single-html 产物）：`crypto.subtle` 可用（`window.crypto.subtle === true`）；锁定页仅路径/标题/说明，正文明文不可见；点击标题弹框且密码框聚焦；错误密码 alert 提示；正确密码解锁渲染正文与章节；`localStorage`/`sessionStorage` 全程为空；会话内导航离开再回免询问直接渲染；reload 后重新锁定。**结论：`file://` 被 Chromium 视为 trustworthy source，Web Crypto 原生可用，无需纯 JS 回退**。
+- 四道质量门：`cargo fmt --check` ✓；`cargo clippy --all-targets -- -D warnings` ✓；`npm run check`（biome `--error-on-warnings`，50 文件无告警）✓；`cargo test` 全绿（585 lib + 全部集成文件 + JS 套件桥接 20 文件）。
+- 未加密站点回归：阶段二未动任何 Rust 序列化路径，reproducibility（三格式逐字节重建一致）与 payload 形状契约测试全绿。
 
 ### 阶段三：搜索闭环
 

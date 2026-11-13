@@ -170,6 +170,8 @@ fn encrypt(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], plaintext: &[u8], aad: 
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
     use super::*;
 
     /// The document id every test binds its ciphertext to.
@@ -359,5 +361,101 @@ mod tests {
             OpenError::Authenticated.to_string(),
             "authentication failed: wrong password or altered bytes"
         );
+    }
+
+    /// One committed interop vector: a sealing whose bytes the front-end
+    /// suite hardcodes as well, so both implementations are pinned to the
+    /// same constants.
+    struct InteropVector {
+        /// Base64 of the 16-byte salt.
+        salt: &'static str,
+        /// Base64 of the 12-byte nonce.
+        nonce: &'static str,
+        /// Base64 of `ciphertext || tag`.
+        ct: &'static str,
+        /// The password that opens the vector.
+        password: &'static str,
+        /// The additional data the tag binds: the document id.
+        aad: &'static [u8],
+        /// The plaintext that opens out of it: the canonical JSON body.
+        plain: &'static [u8],
+    }
+
+    /// The vectors the reader opens with Web Crypto (`tests/js/lock.test.js`
+    /// hardcodes the very same base64 constants): an ASCII password over a
+    /// plain body, a UTF-8 password whose body carries the outline and block
+    /// shapes the reader renders (heading ids, entries, one block), and the
+    /// same UTF-8 password with UTF-8 content bound to another document. The
+    /// salts are the rising byte patterns `0x00..`, `0x10..` and `0x20..`,
+    /// the nonces `0xa0..`, `0xb0..` and `0xc0..`, and every derivation ran
+    /// the shipped iteration count. Either implementation that drifts — a
+    /// different hash, a different tag order, a different encoding — fails
+    /// its own suite.
+    fn interop_vectors() -> Vec<InteropVector> {
+        vec![
+            InteropVector {
+                salt: "AAECAwQFBgcICQoLDA0ODw==",
+                nonce: "oKGio6Slpqeoqaqr",
+                ct: "Ot7jawfrLAgrtf9BzAo4ToeFtOQhRqosE6+NwQ+xpHKqnVdyzIOv/NfjzoCnKpHC+WPp4Cz1RkYxSUHalQR/lvIbXvOm6+eIDQuTQR6uSs91CCHv3xw0",
+                password: "reader unlock",
+                aad: b"guide/intro.md",
+                plain: br#"{"html":"<p>sealed body</p>","toc":[],"blocks":[],"text":"sealed body"}"#,
+            },
+            InteropVector {
+                salt: "EBESExQVFhcYGRobHB0eHw==",
+                nonce: "sLGys7S1tre4ubq7",
+                ct: "FdagYCNSGn2CfXUj43AcxGe/uvxMLy0VH4U/18evqxKAIAcqJPR1NabxtlrnYoUnGJefjCc/TROQPdMXpo/eVe5UoWQ7K26y9P+/pSWha4gzM5bA+GF8xRSXnA1x4auaYpG4OMQJZm3cZ3+bfWV+G7/p9Yc2s0shQb16Amq8yeJMwos8Uj/uIfxkjTS1FH9PshBkceKsQ46A73b2wvGyLcjJekcz2Pi7gndVRJVs73pszogDQk8iQbiSz/ISVb/wV8r0cQH8vlfHQFqyLtLFRfZSGeB8vEKGrQlAj00EiMWkx9NnhwzwqrnvuHy4GFte0fJhmUieET7Jnvkm3wjEFi0Y/F9HaI+IbzUv7gxDhYbNVrKBRp/ji2OPb+NVUMN4vXgNPBpb/mnrWRFD4Gc9EGZxGX1ULQ==",
+                password: "密码 secret",
+                aad: b"guide/intro.md",
+                plain: "{\"html\":\"<h2 id=\\\"getting-started\\\">Getting Started</h2><p>intro body</p>\",\"toc\":[{\"id\":\"getting-started\",\"text\":\"Getting Started\",\"level\":2,\"children\":[]}],\"blocks\":[{\"id\":\"getting-started\",\"level\":2,\"parent\":null,\"html\":\"<p>intro body</p>\",\"subtree\":[0]}],\"text\":\"getting started intro body\"}".as_bytes(),
+            },
+            InteropVector {
+                salt: "ICEiIyQlJicoKSorLC0uLw==",
+                nonce: "wMHCw8TFxsfIycrL",
+                ct: "OH0yPKUuQm3nBjfjjxk27eenmLO5yntFrYoZc2X508M0aVGiD7n5djyHsLg4ozn8WpYOduZNxGruKOS6/E239D+h7zKJkC8oDlDIRaOuceMC0FJrfdI/GLc5K5axNHdGJnkiXH7SRg==",
+                password: "密码 secret",
+                aad: b"guide/other.md",
+                plain: "{\"html\":\"<p>另一篇 已密封</p>\",\"toc\":[],\"blocks\":[],\"text\":\"另一篇 已密封\"}".as_bytes(),
+            },
+        ]
+    }
+
+    /// The vector opens only with its own password and its own document id:
+    /// the constants pin PBKDF2-HMAC-SHA-256, the iteration count, the
+    /// `ciphertext || tag` layout and the additional data the browser side
+    /// must reproduce.
+    #[test]
+    fn the_committed_interop_vectors_open_to_the_canonical_json_bodies() {
+        for vector in interop_vectors() {
+            let opened = open(
+                SealedRef {
+                    salt: &STANDARD.decode(vector.salt).expect("the salt decodes"),
+                    nonce: &STANDARD.decode(vector.nonce).expect("the nonce decodes"),
+                    ct: &STANDARD.decode(vector.ct).expect("the ct decodes"),
+                },
+                vector.password,
+                vector.aad,
+            )
+            .expect("the documented password opens the vector");
+
+            assert_eq!(opened, vector.plain);
+        }
+    }
+
+    #[test]
+    fn a_wrong_password_cannot_open_a_committed_interop_vector() {
+        let vector = interop_vectors().remove(0);
+        let error = open(
+            SealedRef {
+                salt: &STANDARD.decode(vector.salt).expect("the salt decodes"),
+                nonce: &STANDARD.decode(vector.nonce).expect("the nonce decodes"),
+                ct: &STANDARD.decode(vector.ct).expect("the ct decodes"),
+            },
+            "not the password",
+            vector.aad,
+        )
+        .expect_err("a wrong password cannot open the vector");
+
+        assert_eq!(error, OpenError::Authenticated);
     }
 }
