@@ -16,11 +16,13 @@
 <noscript><p class="noscript">This reader needs JavaScript to display the documents.</p></noscript>
 <div class="app" id="app">
   <!-- The rail is the page's leftmost strip and never moves: a fixed home for
-       the switches that show and hide the document list beside it. The drawer's
-       toggle answers on the phone, where the list is a drawer over the page;
-       the collapse switch answers on the wider layouts, where the list is a
-       column. Either way the control sits at the page's top-left whether the
-       list is out or put away. -->
+       the switches that answer for the sidebar's two views. The drawer's
+       toggle and the collapse switch select the document list — the drawer's
+       toggle on the phone, where the sidebar is a drawer over the page, the
+       collapse switch on the wider layouts, where it is a column — and the
+       outline's switch under them selects the chapter outline. The views are
+       mutually exclusive: one shows at a time, and the switch whose view is
+       showing puts the sidebar away when pressed again. -->
   <div class="rail" id="rail">
     <button class="icon-button" id="sidebar-toggle" type="button" aria-label="Toggle document list" aria-expanded="false" aria-controls="sidebar">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -29,16 +31,27 @@
       <svg class="icon-collapse" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg>
       <svg class="icon-expand" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg>
     </button>
+    <button class="icon-button" id="outline-toggle" type="button" aria-label="Show outline panel" aria-expanded="false" aria-controls="toc-panel" title="Show outline panel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M8 12h12M8 18h8"/></svg>
+    </button>
   </div>
   <aside class="sidebar" id="sidebar" aria-label="Document navigation">
     <header class="sidebar-header">
       <p class="site-title" title="{{ title }}">{{ title }}</p>
     </header>
-    <!-- The sidebar is the site's table of contents and nothing else: a search
-         field here would be a second way in to the same documents, and it
-         cannot show what it found. Searching lives in the right rail. -->
-    <nav class="doc-list" id="doc-list" aria-label="Documents"></nav>
-    <footer class="sidebar-footer" id="stats"></footer>
+    <!-- The sidebar shows one view at a time. The list is the site's table of
+         contents and nothing else: a search field here would be a second way
+         in to the same documents, and it cannot show what it found —
+         searching lives in the right rail. The outline is the open document's
+         chapters. The rail's switches trade one view for the other. -->
+    <div class="side-docs" id="side-docs">
+      <nav class="doc-list" id="doc-list" aria-label="Documents"></nav>
+      <footer class="sidebar-footer" id="stats"></footer>
+    </div>
+    <section class="toc-panel" id="toc-panel" aria-labelledby="toc-heading">
+      <h2 class="panel-heading" id="toc-heading">Outline</h2>
+      <nav class="toc" id="toc" aria-label="Chapter outline"></nav>
+    </section>
   </aside>
   <main class="content" id="doc-content" tabindex="-1">
     <!-- The banner slot is filled once by `banner.js` and only toggled
@@ -46,7 +59,7 @@
     <div class="doc-alert" id="doc-alert" role="status" aria-live="polite" aria-hidden="true" hidden></div>
     <article class="doc-article" id="doc-article"></article>
   </main>
-  <aside class="inspector" id="inspector" aria-label="Graph and outline">
+  <aside class="inspector" id="inspector" aria-label="Graph">
     <section class="panel graph-panel" id="graph-panel" aria-labelledby="graph-heading">
       <div class="panel-header">
         <h2 class="panel-heading" id="graph-heading">Graph</h2>
@@ -57,26 +70,19 @@
       </div>
       <div class="graph" id="graph"></div>
     </section>
-    <section class="panel toc-panel" id="toc-panel" aria-labelledby="toc-heading">
-      <h2 class="panel-heading" id="toc-heading">Outline</h2>
-      <nav class="toc" id="toc" aria-label="Chapter outline"></nav>
-    </section>
   </aside>
   <!-- The right rail mirrors the left one across the page: the same strip of
        chrome closing the grid at the far edge, and the home of the reader's
-       app-level controls and the panels' switches. Search and the theme belong
-       to the whole reader; the graph and the outline answer for one panel
-       each — so either can be put away on its own, and putting both away folds
-       the whole column; a lit switch is a panel that is showing. -->
+       app-level controls and the graph's switch. Search and the theme belong
+       to the whole reader; the graph answers for one panel — so it can be put
+       away on its own, folding the column; a lit switch is a panel that is
+       showing. The sidebar's views answer to the left rail instead. -->
   <div class="rail rail-end" id="rail-end">
     <button class="icon-button" id="search-toggle" type="button" aria-label="Search documents" aria-expanded="false" aria-controls="search-panel" title="Search documents (Ctrl+F)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
     </button>
     <button class="icon-button" id="graph-toggle" type="button" aria-label="Hide graph panel" aria-expanded="true" aria-controls="graph-panel" title="Hide graph panel">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="6.5" r="2.5"/><circle cx="18.5" cy="6.5" r="2.5"/><circle cx="12" cy="17.5" r="2.5"/><path d="M7.6 8.4 10.6 15.7M16.4 8.4 13.4 15.7M8 6.5h8"/></svg>
-    </button>
-    <button class="icon-button" id="outline-toggle" type="button" aria-label="Hide outline panel" aria-expanded="true" aria-controls="toc-panel" title="Hide outline panel">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M8 12h12M8 18h8"/></svg>
     </button>
     <button class="icon-button" id="theme-toggle" type="button" aria-label="Switch colour theme" aria-pressed="false" title="Switch colour theme">
       <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>

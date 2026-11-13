@@ -163,13 +163,14 @@ fn the_search_panel_stays_outside_the_article_column() {
 }
 
 #[test]
-fn the_right_rail_reads_search_graph_outline_theme() {
+fn the_right_rail_reads_search_graph_theme() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
     // The theme is an app-level control like search, so both belong to the
-    // right rail, and the panels' switches sit between them: search, graph,
-    // outline, theme, top to bottom. The sidebar header is left holding
-    // nothing but the site title.
+    // right rail, and the graph's switch sits between them: search, graph,
+    // theme, top to bottom. The outline's switch answers for the sidebar's
+    // views, so it lives in the left rail; the sidebar header is left
+    // holding nothing but the site title.
     let rail = page
         .html
         .find(r#"class="rail rail-end""#)
@@ -182,10 +183,6 @@ fn the_right_rail_reads_search_graph_outline_theme() {
         .html
         .find(r#"id="graph-toggle""#)
         .expect("graph switch");
-    let outline = page
-        .html
-        .find(r#"id="outline-toggle""#)
-        .expect("outline switch");
     let theme = page
         .html
         .find(r#"id="theme-toggle""#)
@@ -201,8 +198,8 @@ fn the_right_rail_reads_search_graph_outline_theme() {
 
     assert!(rail < search, "search belongs to the right rail");
     assert!(
-        search < graph && graph < outline && outline < theme,
-        "the rail reads search, graph, outline, theme, top to bottom"
+        search < graph && graph < theme,
+        "the rail reads search, graph, theme, top to bottom"
     );
     assert!(
         !page.html[header..header_end].contains("theme-toggle"),
@@ -214,11 +211,13 @@ fn the_right_rail_reads_search_graph_outline_theme() {
 fn the_switches_live_in_the_leftmost_rail() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
-    // The leftmost strip of the page is a bar of its own, and both switches
-    // that show and hide the document list live in it: the drawer's toggle
-    // answers on the phone, the collapse switch on the wider layouts. The
-    // rail never moves with the list, so the control sits at the page's
-    // top-left whether the list is out or put away.
+    // The leftmost strip of the page is a bar of its own, and the switches
+    // that answer for the sidebar's views live in it: the drawer's toggle
+    // and the collapse switch select the document list — the drawer's
+    // toggle on the phone, the collapse switch on the wider layouts — and
+    // the outline's switch under them selects the chapter outline. The rail
+    // never moves with the sidebar, so the controls sit at the page's
+    // top-left whether a view is out or put away.
     let rail = page.html.find(r#"class="rail""#).expect("rail");
     let drawer = page
         .html
@@ -228,6 +227,10 @@ fn the_switches_live_in_the_leftmost_rail() {
         .html
         .find(r#"id="sidebar-collapse""#)
         .expect("collapse switch");
+    let outline = page
+        .html
+        .find(r#"id="outline-toggle""#)
+        .expect("outline switch");
     let sidebar = page.html.find(r#"class="sidebar""#).expect("sidebar");
 
     assert!(rail < drawer, "the drawer's toggle belongs to the rail");
@@ -236,8 +239,12 @@ fn the_switches_live_in_the_leftmost_rail() {
         "the collapse switch is the rail's second button"
     );
     assert!(
-        collapse < sidebar,
-        "the rail precedes the list whose room it gives back"
+        collapse < outline,
+        "the outline switch is the rail's third button"
+    );
+    assert!(
+        outline < sidebar,
+        "the rail precedes the region whose views it trades"
     );
     assert!(
         page.html.contains(r#"aria-controls="sidebar""#),
@@ -283,8 +290,8 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
     assert_eq!(declaration(folded, "padding"), Some("0"));
     assert_eq!(declaration(folded, "border-right"), Some("0"));
 
-    // The rail's switch shares its rule with the panels' two — all rail
-    // furniture, shown wherever the layout has rails at all.
+    // The list's switch shares its rule with the outline's and the graph's —
+    // all rail furniture, shown wherever the layout has rails at all.
     let switches = rule_of(wide, "#sidebar-collapse,");
     assert_eq!(
         declaration(switches, "display"),
@@ -317,6 +324,10 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
         "the drawer's toggle comes back in the left rail"
     );
     assert!(
+        drawer.contains("#outline-toggle"),
+        "the outline's switch comes back on the phone too: the drawer carries both views"
+    );
+    assert!(
         !drawer.contains(".rail {"),
         "the rail itself never leaves the phone: only its switch changes"
     );
@@ -334,20 +345,26 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
 }
 
 #[test]
-fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
-    // The right rail is the left one across the page: the same strip of chrome
-    // at the far edge, carrying the app-level controls and one switch per
-    // panel instead of the tabs. The switches answer independently — both
-    // panels out, one, none — so a body attribute per panel hides it alone,
-    // and putting both away folds the column the way the list folds. The
-    // phone keeps both panels: the panels' switches are wide-screen furniture.
+fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
+    // The sidebar is one column with two views: the document list and the
+    // chapter outline. The rail's switches trade them through one body
+    // attribute, so only one view shows at a time and a second press on the
+    // showing switch folds the column the way the list folds today. The
+    // graph keeps its own switch in the right rail: one attribute hides it
+    // alone, and putting it away folds the panel column.
     let page = render(&build(&fixture_root(), "Fixture"));
     let css = SHELL_CSS;
 
-    // The rail stands after the panels in the markup, and each switch names
-    // the region it shows and hides, lit while its panel is showing. Search
-    // and the theme are the rail's own bookends around the panels' switches.
-    let panels = page.html.find(r#"id="toc-panel""#).expect("outline panel");
+    // The outline panel lives in the sidebar now, after the document list
+    // and before the column of panels; its switch sits in the left rail, and
+    // the rail closes the page behind the panels, search and theme at its
+    // ends.
+    let list = page.html.find(r#"id="doc-list""#).expect("document list");
+    let outline_panel = page.html.find(r#"id="toc-panel""#).expect("outline panel");
+    let inspector = page
+        .html
+        .find(r#"class="inspector""#)
+        .expect("panel column");
     let rail = page
         .html
         .find(r#"class="rail rail-end""#)
@@ -360,16 +377,16 @@ fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
         .html
         .find(r#"id="graph-toggle""#)
         .expect("graph switch");
-    let outline = page
-        .html
-        .find(r#"id="outline-toggle""#)
-        .expect("outline switch");
     let theme = page
         .html
         .find(r#"id="theme-toggle""#)
         .expect("theme switch");
     assert!(
-        panels < rail && rail < search && search < graph && graph < outline && outline < theme,
+        list < outline_panel && outline_panel < inspector && inspector < rail,
+        "the outline shares the sidebar's column, the graph keeps its own"
+    );
+    assert!(
+        rail < search && search < graph && graph < theme,
         "the rail closes the page behind the panels, search and theme at its ends"
     );
 
@@ -380,16 +397,24 @@ fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
         "the graph's switch names its panel and starts lit: {head}"
     );
 
-    let head = &page.html[outline..];
+    // The outline's switch starts offering the view: the list is what a page
+    // shows before a press, so the switch is unlit and says what it brings.
+    let outline_switch = page
+        .html
+        .find(r#"id="outline-toggle""#)
+        .expect("outline switch");
+    let head = &page.html[outline_switch..];
     let head = &head[..head.find('>').expect("the switch's open tag ends")];
     assert!(
-        head.contains(r#"aria-controls="toc-panel""#) && head.contains(r#"aria-expanded="true""#),
-        "the outline's switch names its panel and starts lit: {head}"
+        head.contains(r#"aria-controls="toc-panel""#)
+            && head.contains(r#"aria-expanded="false""#)
+            && head.contains("Show outline panel"),
+        "the outline's switch names its panel and starts offering it: {head}"
     );
 
     assert!(
         !page.html.contains("inspector-tab") && !page.html.contains(r#"data-panel="toc""#),
-        "the panels' switching lives in the rail, not in a tablist"
+        "the views' switching lives in the rail, not in a tablist"
     );
 
     // The grid books the page with rails at both edges: the wide layout's five
@@ -421,8 +446,34 @@ fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
         "the strip's rule runs on the side that faces the page: {rail}"
     );
 
-    // One attribute per panel, each taking that panel out of the column's flow
-    // alone, wherever the layout has rails.
+    // One body attribute trades the sidebar's views: the list is the default,
+    // the attribute hides the list with it, and the outline takes the column's
+    // height the way the list held it.
+    let view_off = rule_of(css, ".sidebar .toc-panel {");
+    assert_eq!(
+        declaration(view_off, "display"),
+        Some("none"),
+        "the page's first view is the document list: {view_off}"
+    );
+    let swapped = rule_of(css, r#"body[data-side-view="outline"] .side-docs {"#);
+    assert_eq!(
+        declaration(swapped, "display"),
+        Some("none"),
+        "the outline's view takes the list's place: {swapped}"
+    );
+    let shown = rule_of(
+        css,
+        r#"body[data-side-view="outline"] .sidebar .toc-panel {"#,
+    );
+    assert_eq!(
+        declaration(shown, "display"),
+        Some("flex"),
+        "the outline's view fills the column like the list does: {shown}"
+    );
+
+    // The graph's attribute takes the panel out of the column's flow alone,
+    // wherever the layout has rails; the outline answers to the side view
+    // now, so no panel attribute names it any more.
     let wide = media_block(css, "min-width: 641px");
     let graph_hidden = rule_of(wide, r#"body[data-graph="hidden"] .graph-panel {"#);
     assert_eq!(
@@ -430,44 +481,46 @@ fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
         Some("none"),
         "a switch puts its own panel away: {graph_hidden}"
     );
-    let outline_hidden = rule_of(wide, r#"body[data-outline="hidden"] .toc-panel {"#);
-    assert_eq!(
-        declaration(outline_hidden, "display"),
-        Some("none"),
-        "a switch puts its own panel away: {outline_hidden}"
+    assert!(
+        !css.contains("data-outline"),
+        "the outline answers to the side view, not to a panel attribute"
     );
 
-    // Both put away fold the column like the list folds: the shared token
-    // narrows to nothing and the column keeps its cell with `visibility`, so
+    // With the graph put away the panel column has nothing left to show, so
+    // the attribute narrows the shared token to nothing and the column folds
+    // like the sidebar folds: the column keeps its cell with `visibility`, so
     // neither rail nor article has to move.
     let fold = media_block(css, "min-width: 901px");
-    let both = r#"body[data-graph="hidden"][data-outline="hidden"]"#;
-    let folded = rule_of(fold, &format!("{both} {{"));
+    let folded = rule_of(fold, r#"body[data-graph="hidden"] {"#);
     assert_eq!(
         declaration(folded, "--inspector-width"),
         Some("0px"),
-        "both switches narrow the column to nothing: {folded}"
+        "the graph's switch narrows the column to nothing: {folded}"
     );
-    let column = rule_of(fold, &format!("{both} .inspector {{"));
+    let column = rule_of(fold, r#"body[data-graph="hidden"] .inspector {"#);
     assert_eq!(declaration(column, "visibility"), Some("hidden"));
     assert_eq!(declaration(column, "padding"), Some("0"));
     assert_eq!(declaration(column, "border-left"), Some("0"));
 
     // The middle grid keeps the rail too, so there the whole panel row goes.
     let middle = media_block(css, "and (max-width: 900px)");
-    let row = rule_of(middle, &format!("{both} .inspector {{"));
+    let row = rule_of(middle, r#"body[data-graph="hidden"] .inspector {"#);
     assert_eq!(
         declaration(row, "display"),
         Some("none"),
         "the middle grid hides the panel row outright: {row}"
     );
 
-    // The phone shows both panels and carries no panel switch: the attributes
-    // the switches write must not reach below their widths.
+    // The phone shows the graph and answers to no switch for it; the side
+    // switches answer there, so the drawer carries both views.
     let drawer = media_block(css, "max-width: 640px");
     assert!(
-        !drawer.contains("data-graph") && !drawer.contains("data-outline"),
-        "the phone shows both panels and answers to no switch"
+        !drawer.contains("data-graph"),
+        "the phone shows the graph and answers to no switch for it"
+    );
+    assert!(
+        drawer.contains("#outline-toggle"),
+        "the outline's switch answers on the phone, where the drawer carries both views"
     );
 }
 

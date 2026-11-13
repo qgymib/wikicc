@@ -119,8 +119,8 @@ a {
    reader, so the article starts at the very top of the page. */
 .app {
   display: grid;
-  /* The two rails bookend the page: the left one carries the list's
-     switches, the right one the reader's app-level controls and the panels'.
+  /* The two rails bookend the page: the left one carries the sidebar's
+     switches, the right one the reader's app-level controls and the graph's.
      The middle grid keeps the list's three columns — and the rightmost names
      the rail again, so a fifth item cannot spill past it. */
   grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--inspector-width) var(--rail-width);
@@ -129,8 +129,9 @@ a {
 }
 
 /* The four rail switches all start hidden: the width that has a use for one
-   brings it back — the drawer's toggle on the phone, the collapse switch and
-   the panels' switches on the wider layouts. */
+   brings it back — the drawer's toggle on the phone, the collapse switch on
+   the wider layouts, the outline's switch on both, and the graph's switch on
+   the wider layouts alone. */
 #sidebar-toggle,
 #sidebar-collapse,
 #graph-toggle,
@@ -220,6 +221,34 @@ a {
   :root:not([data-theme="dark"]) .sidebar {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
   }
+}
+
+/* The sidebar is one column with two views: the document list and the
+   chapter outline. The rail's switches trade them through a body attribute —
+   the list is what a page shows before any switch is pressed, so the outline
+   is the view that has to be asked for, and asking for it hides the list
+   with it. Whichever view shows takes the column's height, under the same
+   header. */
+.sidebar .toc-panel {
+  display: none;
+}
+
+.side-docs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+body[data-side-view="outline"] .side-docs {
+  display: none;
+}
+
+body[data-side-view="outline"] .sidebar .toc-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .sidebar-header {
@@ -2608,8 +2637,9 @@ a {
 }
 
 .toc {
-  max-height: calc(100vh - 260px);
-  /* The reading line is measured against this panel staying put: an inherited
+  flex: 1;
+  min-height: 0;
+  /* The reading line is measured against this view staying put: an inherited
      smooth scroll would also animate any browser-driven scroll of the outline
      and make the highlighted entry trail the document. */
   scroll-behavior: auto;
@@ -2661,20 +2691,20 @@ a {
 
 /* ---------- responsive ---------- */
 
-/* Putting the document list away is available at every width where the list
-   is a column of the grid; the phone's drawer below has its own switch. The
-   switch lives in the rail, the leftmost strip, which stays put whether the
-   list is out or not: the attribute narrows the shared `--sidebar-width` to
+/* Putting the sidebar away is available at every width where it is a column
+   of the grid; the phone's drawer below has its own switches. The switch
+   lives in the rail, the leftmost strip, which stays put whether the sidebar
+   is out or not: the attribute narrows the shared `--sidebar-width` to
    nothing, so the wide grid's five columns and the middle grid's four give
-   the list's room back by one move. The list folds with `visibility`, not
-   `display`, so it keeps the grid cell it was already placed in — the article
-   slides into the room without the placement of everything else around it
-   having to be spelled out.
+   the sidebar's room back by one move. The sidebar folds with `visibility`,
+   not `display`, so it keeps the grid cell it was already placed in — the
+   article slides into the room without the placement of everything else
+   around it having to be spelled out.
 
-   The panels' switches answer the same way, one body attribute per panel:
-   each narrows to a hidden panel by taking that panel out of the column's
-   flow alone, so the panels can be combined freely — both out, one, none.
-   Both switches and the list's switch live wherever the layout has rails. */
+   The graph's switch answers the same way for the panel column: the
+   attribute takes the graph out of the column's flow alone, and the fold
+   below narrows the column itself once the graph is all the column would
+   hold. The switches live wherever the layout has rails. */
 @media (min-width: 641px) {
   #sidebar-collapse,
   #graph-toggle,
@@ -2695,22 +2725,18 @@ a {
   body[data-graph="hidden"] .graph-panel {
     display: none;
   }
-
-  body[data-outline="hidden"] .toc-panel {
-    display: none;
-  }
 }
 
-/* With both panels put away the panel column has nothing to show, so the
+/* With the graph put away the panel column has nothing left to show, so the
    attribute narrows the shared `--inspector-width` to nothing and the column
-   folds like the list does — `visibility`, not `display`, so it keeps the
+   folds like the sidebar does — `visibility`, not `display`, so it keeps the
    cell it was placed in and neither rail nor article has to move. */
 @media (min-width: 901px) {
-  body[data-graph="hidden"][data-outline="hidden"] {
+  body[data-graph="hidden"] {
     --inspector-width: 0px;
   }
 
-  body[data-graph="hidden"][data-outline="hidden"] .inspector {
+  body[data-graph="hidden"] .inspector {
     visibility: hidden;
     padding: 0;
     border-left: 0;
@@ -2753,10 +2779,6 @@ a {
     scrollbar-gutter: auto;
   }
 
-  .toc {
-    max-height: none;
-  }
-
   /* The dialog follows the screen down: a fixed margin rather than a share of
    the viewport, so the smaller the window the closer the dialog is to
    filling it. The reading line is already one column with the list a third
@@ -2775,26 +2797,29 @@ a {
   }
 }
 
-/* The middle grid keeps the rail on the right too, so a page with both panels
-   put away has no panel row at all: the row the panels share is taken out, and
-   the article's own sections are the only thing left under it. */
+/* The middle grid keeps the rail on the right too, so a page with the graph
+   put away has no panel row at all: the row the panel shares is taken out,
+   and the article's own sections are the only thing left under it. */
 @media (min-width: 641px) and (max-width: 900px) {
-  body[data-graph="hidden"][data-outline="hidden"] .inspector {
+  body[data-graph="hidden"] .inspector {
     display: none;
   }
 }
 
 @media (max-width: 640px) {
   /* The phone keeps both rails, one button wide each: the left one carries
-     the drawer's toggle, the right one the app-level controls. The panels'
-     own switches stay wide-screen furniture — a phone shows both panels and
-     answers to no switch. */
+     the drawer's toggle and the outline's switch, the right one the
+     app-level controls. The graph's switch stays wide-screen furniture — a
+     phone shows the graph and answers to no switch for it. */
   .app {
     grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--rail-width);
   }
 
-  /* The drawer's toggle lives in the left rail at this width. */
-  #sidebar-toggle {
+  /* The drawer's toggle and the outline's switch live in the left rail at
+     this width: the drawer is the phone's sidebar, and the two switches
+     trade its contents. */
+  #sidebar-toggle,
+  #outline-toggle {
     display: inline-flex;
   }
 

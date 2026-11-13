@@ -1008,6 +1008,50 @@ test("the narrow screen's toggle still drives the drawer", async () => {
   });
 });
 
+test("the phone's switches trade the drawer's contents", async () => {
+  withSession({ hash: "#/doc/index.md", drawer: true }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const drawer = session.shell.get("sidebar-toggle");
+    const outline = session.shell.get("outline-toggle");
+
+    assert.equal(body.getAttribute("data-drawer"), "closed");
+
+    outline.fire("click");
+    assert.equal(
+      body.getAttribute("data-drawer"),
+      "open",
+      "the outline's switch opens the drawer with the outline in it",
+    );
+    assert.equal(body.getAttribute("data-side-view"), "outline");
+    assert.equal(
+      body.getAttribute("data-sidebar"),
+      null,
+      "the drawer's switches never touch the wide layout's attribute",
+    );
+
+    drawer.fire("click");
+    assert.equal(
+      body.getAttribute("data-side-view"),
+      "docs",
+      "the drawer's toggle trades the outline for the list without closing",
+    );
+    assert.equal(body.getAttribute("data-drawer"), "open");
+
+    drawer.fire("click");
+    assert.equal(
+      body.getAttribute("data-drawer"),
+      "closed",
+      "the toggle pressed again closes the drawer it opened",
+    );
+
+    outline.fire("click");
+    assert.equal(body.getAttribute("data-drawer"), "open");
+    assert.equal(body.getAttribute("data-side-view"), "outline");
+  });
+});
+
 test("putting the list away writes the choice down", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
@@ -1040,7 +1084,133 @@ test("the reader remembers the list was put away", async () => {
   );
 });
 
-test("the rail's switches put each panel away on its own", async () => {
+test("the outline switch trades the list for the outline", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const outline = session.shell.get("outline-toggle");
+    const collapse = session.shell.get("sidebar-collapse");
+
+    assert.equal(
+      body.getAttribute("data-side-view"),
+      "docs",
+      "the list is the view a page starts with",
+    );
+    assert.equal(outline.getAttribute("aria-expanded"), "false");
+    assert.equal(outline.getAttribute("aria-label"), "Show outline panel");
+
+    outline.fire("click");
+    assert.equal(body.getAttribute("data-side-view"), "outline");
+    assert.equal(
+      body.getAttribute("data-sidebar"),
+      null,
+      "bringing the outline up never folds the column",
+    );
+    assert.equal(
+      outline.getAttribute("aria-expanded"),
+      "true",
+      "the switch answers for the view it brought up",
+    );
+    assert.equal(outline.getAttribute("aria-label"), "Hide outline panel");
+    assert.equal(
+      collapse.getAttribute("aria-expanded"),
+      "false",
+      "the list's own switch now offers the list back",
+    );
+    assert.equal(collapse.getAttribute("aria-label"), "Show document list");
+
+    outline.fire("click");
+    assert.equal(
+      body.getAttribute("data-sidebar"),
+      "hidden",
+      "the switch pressed again folds the whole column",
+    );
+    assert.equal(
+      body.getAttribute("data-side-view"),
+      "outline",
+      "the view the reader chose is remembered while the column is away",
+    );
+    assert.equal(outline.getAttribute("aria-expanded"), "false");
+    assert.equal(outline.getAttribute("aria-label"), "Show outline panel");
+
+    outline.fire("click");
+    assert.equal(body.getAttribute("data-sidebar"), null);
+    assert.equal(
+      body.getAttribute("data-side-view"),
+      "outline",
+      "the column comes back with the view it was folded in",
+    );
+
+    collapse.fire("click");
+    assert.equal(
+      body.getAttribute("data-side-view"),
+      "docs",
+      "the list's switch trades the outline for the list",
+    );
+    assert.equal(body.getAttribute("data-sidebar"), null);
+    assert.equal(collapse.getAttribute("aria-expanded"), "true");
+    assert.equal(collapse.getAttribute("aria-label"), "Hide document list");
+    assert.equal(
+      outline.getAttribute("aria-expanded"),
+      "false",
+      "the two switches never answer for the same view at once",
+    );
+  });
+});
+
+test("the side switches write their choices down", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const outline = session.shell.get("outline-toggle");
+    const collapse = session.shell.get("sidebar-collapse");
+
+    outline.fire("click");
+    assert.equal(session.storage["wikicc.side-view"], "outline");
+
+    outline.fire("click");
+    assert.equal(
+      session.storage["wikicc.sidebar"],
+      "hidden",
+      "folding the column is the sidebar's own choice, written where it always was",
+    );
+    assert.equal(
+      session.storage["wikicc.side-view"],
+      "outline",
+      "the view survives the fold",
+    );
+
+    collapse.fire("click");
+    assert.equal(session.storage["wikicc.side-view"], "docs");
+    assert.equal(session.storage["wikicc.sidebar"], "visible");
+  });
+});
+
+test("the reader remembers which side view was showing", async () => {
+  withSession(
+    { hash: "#/doc/index.md", storage: { "wikicc.side-view": "outline" } },
+    (session) => {
+      startSession();
+
+      assert.equal(
+        session.doc.body.getAttribute("data-side-view"),
+        "outline",
+        "the stored view is applied when the session starts",
+      );
+      assert.equal(
+        session.shell.get("outline-toggle").getAttribute("aria-expanded"),
+        "true",
+      );
+      assert.equal(
+        session.shell.get("sidebar-collapse").getAttribute("aria-expanded"),
+        "false",
+      );
+    },
+  );
+});
+
+test("the graph's switch puts the panel away on its own", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
 
@@ -1049,22 +1219,15 @@ test("the rail's switches put each panel away on its own", async () => {
     const outline = session.shell.get("outline-toggle");
 
     assert.equal(body.getAttribute("data-graph"), null);
-    assert.equal(
-      body.getAttribute("data-outline"),
-      null,
-      "both panels start showing",
-    );
     assert.equal(graph.getAttribute("aria-expanded"), "true");
     assert.equal(graph.getAttribute("aria-label"), "Hide graph panel");
-    assert.equal(outline.getAttribute("aria-expanded"), "true");
-    assert.equal(outline.getAttribute("aria-label"), "Hide outline panel");
 
     graph.fire("click");
     assert.equal(body.getAttribute("data-graph"), "hidden");
     assert.equal(
-      body.getAttribute("data-outline"),
-      null,
-      "the other panel's attribute is never touched",
+      body.getAttribute("data-side-view"),
+      "docs",
+      "the graph's switch never touches the sidebar's view",
     );
     assert.equal(
       graph.getAttribute("aria-expanded"),
@@ -1078,48 +1241,31 @@ test("the rail's switches put each panel away on its own", async () => {
     );
     assert.equal(
       outline.getAttribute("aria-label"),
-      "Hide outline panel",
-      "the other switch keeps its own answer",
+      "Show outline panel",
+      "the side switches keep their own answer",
     );
-
-    outline.fire("click");
-    assert.equal(body.getAttribute("data-graph"), "hidden");
-    assert.equal(body.getAttribute("data-outline"), "hidden");
-    assert.equal(outline.getAttribute("aria-expanded"), "false");
-    assert.equal(outline.getAttribute("aria-label"), "Show outline panel");
 
     graph.fire("click");
     assert.equal(body.getAttribute("data-graph"), null);
-    assert.equal(
-      body.getAttribute("data-outline"),
-      "hidden",
-      "the panels answer independently, one at a time",
-    );
+    assert.equal(graph.getAttribute("aria-expanded"), "true");
   });
 });
 
-test("putting the panels away writes the choice down", async () => {
+test("putting the graph away writes the choice down", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
 
     const graph = session.shell.get("graph-toggle");
-    const outline = session.shell.get("outline-toggle");
 
     graph.fire("click");
     assert.equal(session.storage["wikicc.panels"], "graph");
 
-    outline.fire("click");
-    assert.equal(session.storage["wikicc.panels"], "both");
-
     graph.fire("click");
-    assert.equal(session.storage["wikicc.panels"], "outline");
-
-    outline.fire("click");
     assert.equal(session.storage["wikicc.panels"], "none");
   });
 });
 
-test("the reader remembers which panels were put away", async () => {
+test("the reader remembers the graph's fold, old spelling included", async () => {
   withSession(
     { hash: "#/doc/index.md", storage: { "wikicc.panels": "both" } },
     (session) => {
@@ -1128,15 +1274,15 @@ test("the reader remembers which panels were put away", async () => {
       assert.equal(
         session.doc.body.getAttribute("data-graph"),
         "hidden",
-        "the stored choice is applied when the session starts",
+        "a value the two-panel reader wrote still folds the graph",
       );
-      assert.equal(session.doc.body.getAttribute("data-outline"), "hidden");
+      assert.equal(
+        session.doc.body.getAttribute("data-side-view"),
+        "docs",
+        "the old outline spelling says nothing about the sidebar's view",
+      );
       assert.equal(
         session.shell.get("graph-toggle").getAttribute("aria-expanded"),
-        "false",
-      );
-      assert.equal(
-        session.shell.get("outline-toggle").getAttribute("aria-expanded"),
         "false",
       );
     },

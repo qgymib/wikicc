@@ -36,12 +36,20 @@ import * as Banner from "./banner.js";
 /** `localStorage` key holding the explicit theme choice. */
 var THEME_KEY = "wikicc.theme";
 
-/** `localStorage` key holding the document list's visibility. */
+/** `localStorage` key holding the sidebar's visibility. */
 var SIDEBAR_KEY = "wikicc.sidebar";
 
 /**
- * `localStorage` key holding which panels were put away: the hidden set as
- * `none`, one panel's name, or `both`.
+ * `localStorage` key holding which sidebar view is showing: the document
+ * list or the chapter outline.
+ */
+var SIDE_VIEW_KEY = "wikicc.side-view";
+
+/**
+ * `localStorage` key holding whether the graph was put away. The outline
+ * moved into the sidebar and answers to the side switches now, so the key
+ * the two panels once shared carries the graph alone — and a value the old
+ * reader wrote still parses (see `storedPanels`).
  */
 var PANELS_KEY = "wikicc.panels";
 
@@ -100,7 +108,7 @@ function storeTheme(theme) {
   }
 }
 
-/** Whether the document list was put away on an earlier visit. */
+/** Whether the sidebar was put away on an earlier visit. */
 function storedSidebar() {
   try {
     return globalThis.localStorage.getItem(SIDEBAR_KEY) === "hidden";
@@ -113,38 +121,51 @@ function storeSidebar(hidden) {
   try {
     globalThis.localStorage.setItem(SIDEBAR_KEY, hidden ? "hidden" : "visible");
   } catch (_error) {
-    /* Storage can be disabled; the list still hides for this page. */
+    /* Storage can be disabled; the sidebar still hides for this page. */
   }
 }
 
-/** The panel set that was put away on an earlier visit, or `null` for none. */
+/** The sidebar view that was left showing on an earlier visit. */
+function storedSideView() {
+  try {
+    return globalThis.localStorage.getItem(SIDE_VIEW_KEY) === "outline"
+      ? "outline"
+      : "docs";
+  } catch (_error) {
+    return "docs";
+  }
+}
+
+function storeSideView(view) {
+  try {
+    globalThis.localStorage.setItem(SIDE_VIEW_KEY, view);
+  } catch (_error) {
+    /* Storage can be disabled; the view still switches for this page. */
+  }
+}
+
+/**
+ * Whether the graph was put away on an earlier visit.
+ *
+ * The old reader wrote the two panels' state as `graph`, `outline`, `both` or
+ * `none`; `graph` and `both` meant the graph was hidden, and the other two
+ * spellings now say only that the graph was showing — the outline they named
+ * answers to the side view, not to this key.
+ */
 function storedPanels() {
   try {
     var value = globalThis.localStorage.getItem(PANELS_KEY);
-    return value === "graph" ||
-      value === "outline" ||
-      value === "both" ||
-      value === "none"
-      ? value
-      : null;
+    return value === "graph" || value === "both";
   } catch (_error) {
-    return null;
+    return false;
   }
 }
 
-function storePanels(graphHidden, outlineHidden) {
-  var value =
-    graphHidden && outlineHidden
-      ? "both"
-      : graphHidden
-        ? "graph"
-        : outlineHidden
-          ? "outline"
-          : "none";
+function storePanels(graphHidden) {
   try {
-    globalThis.localStorage.setItem(PANELS_KEY, value);
+    globalThis.localStorage.setItem(PANELS_KEY, graphHidden ? "graph" : "none");
   } catch (_error) {
-    /* Storage can be disabled; the panels still fold for this page. */
+    /* Storage can be disabled; the panel still folds for this page. */
   }
 }
 
@@ -427,12 +448,10 @@ export function start() {
 
   function setDrawer(open) {
     document.body.setAttribute("data-drawer", open ? "open" : "closed");
-    if (sidebarToggle) {
-      sidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
-    }
     if (backdrop) {
       backdrop.hidden = !open;
     }
+    syncSideControls();
   }
 
   /** Whether the reader is at a width where the document list is a drawer. */
@@ -444,13 +463,13 @@ export function start() {
   }
 
   /**
-   * Put the document list's column away or bring it back.
+   * Put the sidebar's column away or bring it back.
    *
-   * The wide layouts hide the list through the body attribute alone; the
+   * The wide layouts hide the column through the body attribute alone; the
    * drawer's state is a different attribute and never touched here. The
-   * header's switch answers for the column — collapsed, it is the rail the
-   * reader brings the list back from, so its accessible state and the label
-   * it offers follow the list, not the gesture.
+   * rail's switches answer for the column — collapsed, it is the rail the
+   * reader brings the sidebar back from, so their accessible states and the
+   * labels they offer follow the sidebar, not the gesture.
    */
   function setSidebarHidden(hidden) {
     if (hidden) {
@@ -458,38 +477,98 @@ export function start() {
     } else {
       document.body.removeAttribute("data-sidebar");
     }
+    syncSideControls();
+  }
+
+  /**
+   * The sidebar view currently selected, and whether it is showing.
+   *
+   * The view is one body attribute the stylesheet answers to; "showing" is
+   * the drawer's openness on the phone and the column's unfolded attribute
+   * on the wider layouts. The switches read both through here, so a screen
+   * reader hears the same answer whichever switch asked.
+   */
+  function currentSideView() {
+    return document.body.getAttribute("data-side-view") === "outline"
+      ? "outline"
+      : "docs";
+  }
+
+  function sideVisible() {
+    if (drawerMode()) {
+      return document.body.getAttribute("data-drawer") === "open";
+    }
+    return document.body.getAttribute("data-sidebar") !== "hidden";
+  }
+
+  /**
+   * Point every side switch at the state it now offers.
+   *
+   * Each switch speaks for the view it selects, not for the sidebar as a
+   * whole: its pressed state says whether that view is the one showing, and
+   * its label offers what a press would do — bring the view up, or put the
+   * sidebar away when the view is already up.
+   */
+  function syncSideControls() {
+    var view = currentSideView();
+    var visible = sideVisible();
+
+    if (outlineToggle) {
+      var lit = view === "outline" && visible;
+      var label = lit ? "Hide outline panel" : "Show outline panel";
+      outlineToggle.setAttribute("aria-expanded", lit ? "true" : "false");
+      outlineToggle.setAttribute("aria-label", label);
+      outlineToggle.setAttribute("title", label);
+    }
+
+    var listLit = view === "docs" && visible;
+    var listLabel = listLit ? "Hide document list" : "Show document list";
+    if (sidebarToggle) {
+      sidebarToggle.setAttribute("aria-expanded", listLit ? "true" : "false");
+      sidebarToggle.setAttribute("aria-label", listLabel);
+    }
     if (sidebarCollapse) {
-      var label = hidden ? "Show document list" : "Hide document list";
-      sidebarCollapse.setAttribute("aria-expanded", hidden ? "false" : "true");
-      sidebarCollapse.setAttribute("aria-label", label);
-      sidebarCollapse.setAttribute("title", label);
+      sidebarCollapse.setAttribute("aria-expanded", listLit ? "true" : "false");
+      sidebarCollapse.setAttribute("aria-label", listLabel);
+      sidebarCollapse.setAttribute("title", listLabel);
     }
   }
 
   /**
-   * Put one of the panels away or bring it back.
+   * Select the view the sidebar shows.
    *
-   * Each panel answers to its own body attribute, so the two can be combined
-   * freely — both showing, one, neither; the stylesheet folds the whole column
-   * when neither shows. The switch is rail furniture like the list's: its
+   * The attribute is the state the stylesheet answers to; the switches are
+   * synced by the setters that surround the write.
+   */
+  function setSideView(view) {
+    if (view === "outline") {
+      document.body.setAttribute("data-side-view", "outline");
+    } else {
+      document.body.setAttribute("data-side-view", "docs");
+    }
+    syncSideControls();
+  }
+
+  /**
+   * Put the graph panel away or bring it back.
+   *
+   * The graph answers to its own body attribute, and the stylesheet folds
+   * the panel column when the attribute is set and the width has a panel
+   * column at all. The switch is rail furniture like the side switches: its
    * accessible state and the label it offers follow the panel, not the
    * gesture.
    */
-  function setPanelHidden(panel, hidden) {
-    var attribute = panel === "graph" ? "data-graph" : "data-outline";
-    var button = panel === "graph" ? graphToggle : outlineToggle;
+  function setGraphHidden(hidden) {
     if (hidden) {
-      document.body.setAttribute(attribute, "hidden");
+      document.body.setAttribute("data-graph", "hidden");
     } else {
-      document.body.removeAttribute(attribute);
+      document.body.removeAttribute("data-graph");
     }
-    if (button) {
-      var label =
-        (hidden ? "Show " : "Hide ") +
-        (panel === "graph" ? "graph panel" : "outline panel");
-      button.setAttribute("aria-expanded", hidden ? "false" : "true");
-      button.setAttribute("aria-label", label);
-      button.setAttribute("title", label);
+    if (graphToggle) {
+      var label = hidden ? "Show graph panel" : "Hide graph panel";
+      graphToggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+      graphToggle.setAttribute("aria-label", label);
+      graphToggle.setAttribute("title", label);
     }
   }
 
@@ -1077,28 +1156,55 @@ export function start() {
   /* ---------- layout controls ---------- */
 
   /**
-   * One gesture for both switches in the left rail: the drawer's toggle, on
-   * the phone where the list is a drawer over the page, and the collapse
-   * switch, on the wider layouts where the list is a column. Which one
-   * answers depends on the width the reader is reading at, not on which
-   * button was pressed.
+   * One gesture for the side switches: the switch selects the view it names,
+   * and pressed again while that view is up, puts the sidebar away — the way
+   * an activity bar folds its panel. Which way the gesture answers depends
+   * on the width the reader is reading at, not on which button was pressed:
+   * on the phone the sidebar is a drawer over the page, so selecting the
+   * view that is already open closes the drawer, and selecting the other
+   * view swaps the drawer's contents without closing it.
    */
-  function toggleSidebar() {
+  function selectSide(view) {
     if (drawerMode()) {
-      setDrawer(document.body.getAttribute("data-drawer") !== "open");
+      var open = document.body.getAttribute("data-drawer") === "open";
+      if (currentSideView() === view && open) {
+        setDrawer(false);
+        return;
+      }
+      setSideView(view);
+      storeSideView(view);
+      setDrawer(true);
       return;
     }
-    var hidden = document.body.getAttribute("data-sidebar") !== "hidden";
-    setSidebarHidden(hidden);
-    storeSidebar(hidden);
+
+    var visible = document.body.getAttribute("data-sidebar") !== "hidden";
+    if (currentSideView() === view && visible) {
+      setSidebarHidden(true);
+      storeSidebar(true);
+      return;
+    }
+    setSideView(view);
+    storeSideView(view);
+    setSidebarHidden(false);
+    storeSidebar(false);
   }
 
   if (sidebarToggle) {
-    sidebarToggle.addEventListener("click", toggleSidebar);
+    sidebarToggle.addEventListener("click", function () {
+      selectSide("docs");
+    });
   }
 
   if (sidebarCollapse) {
-    sidebarCollapse.addEventListener("click", toggleSidebar);
+    sidebarCollapse.addEventListener("click", function () {
+      selectSide("docs");
+    });
+  }
+
+  if (outlineToggle) {
+    outlineToggle.addEventListener("click", function () {
+      selectSide("outline");
+    });
   }
 
   if (backdrop) {
@@ -1108,29 +1214,17 @@ export function start() {
   }
 
   /**
-   * One gesture per switch: flip the panel it answers for and remember the
-   * pair, so the arrangement the reader leaves survives a reload.
+   * One gesture for the graph's switch: flip the panel and remember the
+   * choice, so the arrangement the reader leaves survives a reload.
    */
-  function togglePanel(panel) {
-    var attribute = panel === "graph" ? "data-graph" : "data-outline";
-    var hidden = document.body.getAttribute(attribute) === "hidden";
-    setPanelHidden(panel, !hidden);
-    storePanels(
-      document.body.getAttribute("data-graph") === "hidden",
-      document.body.getAttribute("data-outline") === "hidden",
-    );
+  function toggleGraph() {
+    var hidden = document.body.getAttribute("data-graph") === "hidden";
+    setGraphHidden(!hidden);
+    storePanels(!hidden);
   }
 
   if (graphToggle) {
-    graphToggle.addEventListener("click", function () {
-      togglePanel("graph");
-    });
-  }
-
-  if (outlineToggle) {
-    outlineToggle.addEventListener("click", function () {
-      togglePanel("outline");
-    });
+    graphToggle.addEventListener("click", toggleGraph);
   }
 
   document.addEventListener("keydown", function (event) {
@@ -1181,13 +1275,12 @@ export function start() {
   // consulted: their `href`s start with the route prefix, not with `data:`.
   AssetLinks.listenForInlineDataLinks(document);
 
-  // The drawer starts closed; the document list's column and the panels start
-  // where the reader last left them, which the switches' accessible states
-  // then follow.
+  // The drawer starts closed; the sidebar's view and the graph start where
+  // the reader last left them, which the switches' accessible states then
+  // follow.
   setDrawer(false);
+  setSideView(storedSideView());
   setSidebarHidden(storedSidebar());
-  var panels = storedPanels();
-  setPanelHidden("graph", panels === "graph" || panels === "both");
-  setPanelHidden("outline", panels === "outline" || panels === "both");
+  setGraphHidden(storedPanels());
   render();
 }
