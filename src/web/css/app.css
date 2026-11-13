@@ -25,12 +25,8 @@
   --rail-width: 44px;
   --sidebar-width: 260px;
   --inspector-width: 320px;
-  --topbar-height: 52px;
-  /* The last column is one surface, not two. The toolbar sits at the top of the
-     panel column and the panels scroll under it, so both are painted from these
-     two stops: the toolbar takes the first one and the column starts from it.
-     Sharing the values is what makes the seam between them invisible — a
-     separate value for the bar always shows up as a step at the join. */
+  /* The panel column is one surface painted from two stops, and its left rule
+     has a token of its own. */
   --shell-top: rgba(17, 23, 31, 0.55);
   --shell-bottom: rgba(11, 15, 20, 0.35);
   --shell-line: var(--border);
@@ -79,9 +75,6 @@
 
 html {
   scroll-behavior: smooth;
-  /* The top bar is sticky at every width, so an anchor has to stop short of
-     it or the chapter it names opens underneath the bar. */
-  scroll-padding-top: var(--topbar-height);
   -webkit-text-size-adjust: 100%;
 }
 
@@ -122,87 +115,27 @@ a {
 
 /* ---------- shell ---------- */
 
-/* Two rows, not one: the first row is the toolbar's, the second is the
-   reader's. Only the third column has a toolbar above it — the toolbar is the
-   inspector's, so the document list and the article start at the top of the
-   page with nothing over them. */
+/* One row of columns, side by side: nothing lies over any region of the
+   reader, so the article starts at the very top of the page. */
 .app {
   display: grid;
-  /* The two rails bookend the page: the left one carries the list's switch,
-     the right one the panels'. The middle grid keeps the list's three
-     columns — and the rightmost names the rail again, so a fifth item cannot
-     spill past it. */
+  /* The two rails bookend the page: the left one carries the list's
+     switches, the right one the reader's app-level controls and the panels'.
+     The middle grid keeps the list's three columns — and the rightmost names
+     the rail again, so a fifth item cannot spill past it. */
   grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--inspector-width) var(--rail-width);
-  grid-template-rows: var(--topbar-height) auto;
   align-items: start;
   min-height: 100vh;
 }
 
-/* The top bar is the app's own toolbar and stays on screen at every width.
-   On a wide screen it spans the inspector's column alone — the strip sits over
-   the panel column it belongs to instead of cutting across the article — and
-   the drawer toggle and the site title are narrow-screen furniture that only
-   come back once the columns collapse.
-
-   On that wide screen the bar is not a strip laid across the column: it is the
-   column's own head. It carries the same surface (`--shell-top`, the first stop
-   of the column's gradient) and the same left rule, so the rule runs unbroken
-   from the top of the page and the paint never steps at the join. This is also
-   why there is no bottom border here — a line across the column would draw the
-   seam the shared surface is there to hide, and nothing scrolls out from under
-   a bar whose column is pinned below it anyway. The narrow-screen rule further
-   down puts the strip, its rule and its blur back, because there the bar really
-   does lie across content that scrolls beneath it. */
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 25;
-  grid-row: 1;
-  grid-column: 4;
-  display: flex;
-  /* Pinned to its row's top edge, so it stays on screen while the panels
-    underneath scroll. `stretch` gives it the row's height; the bar's own
-    height then follows that row rather than the other way round. */
-  align-self: stretch;
-  align-items: center;
-  gap: 12px;
-  /* The bar's controls share one right-hand axis with the panels below them.
-     The inspector reserves a stable scrollbar gutter, so its panels always end
-     16px of padding plus one gutter from the column edge, in every scroll
-     state; the bar pads by the same total to meet them there. The script
-     measures the gutter the engine really reserved into `--panel-gutter` —
-     8px under the custom classic scrollbar, none under an overlay one — and
-     the 8px here is only the fallback for when it has not run yet. */
-  padding: 0 calc(16px + var(--panel-gutter, 8px)) 0 16px;
-  border-left: 1px solid var(--shell-line);
-  background: linear-gradient(180deg, var(--shell-top), var(--shell-top));
-}
-
-/* Only the panel column starts under the toolbar; the rail, the document
-   list and the article have no bar over them, so they run from the very top
-   of the page — which is what the two-row grid is for. */
-.rail,
-.sidebar,
-.content {
-  grid-row: 1 / span 2;
-}
-
-.inspector {
-  grid-row: 2;
-}
-
-.topbar-title,
+/* The four rail switches all start hidden: the width that has a use for one
+   brings it back — the drawer's toggle on the phone, the collapse switch and
+   the panels' switches on the wider layouts. */
 #sidebar-toggle,
 #sidebar-collapse,
 #graph-toggle,
 #outline-toggle {
   display: none;
-}
-
-/* With the narrow-screen furniture hidden, the search button is the only
-   control left on the bar, so it takes the far end the way a toolbar does. */
-#search-toggle {
-  margin-left: auto;
 }
 
 .skip-link {
@@ -256,8 +189,8 @@ a {
 
 /* The right rail is the left one mirrored: the same strip, closing the grid
    at the far edge. Its rule runs on its left — the side that faces the page —
-   and its column is named, because the rail is the last item in the markup
-   and auto-placement would otherwise drop it into the toolbar's row. */
+   and its column is named, so the placement does not lean on the markup
+   order the auto-placement would otherwise read. */
 .rail-end {
   grid-column: 5;
   border-right: 0;
@@ -266,8 +199,8 @@ a {
 
 .sidebar {
   position: sticky;
-  /* Nothing is above the sidebar in its own column — the toolbar belongs to
-     the inspector's column — so it owns the full height of the viewport. */
+  /* Nothing is above the sidebar in its own column, so it owns the full
+     height of the viewport. */
   top: 0;
   display: flex;
   flex-direction: column;
@@ -2007,28 +1940,26 @@ a {
 
 /* ---------- inspector ---------- */
 
-/* The panel column starts below the toolbar that sits in its first row, so it
-   only has the toolbar's height to give up: it sticks to the top edge of its
-   own row, which is already under the bar. */
+/* The panel column owns the page's full height: it sticks to the top edge
+   and scrolls its panels under its own surface. */
 .inspector {
   position: sticky;
-  top: var(--topbar-height);
+  top: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  height: calc(100vh - var(--topbar-height));
+  height: 100vh;
   grid-column: 4;
-  /* The air under the bar's buttons is the gap the panels are held apart by:
-     the 52px bar centres its 28px buttons and leaves 12px under them, so the
-     column itself carries only the remaining 2px of the 14px rhythm. */
-  padding: 2px 16px 18px;
+  /* The column opens with the same 14px rhythm the panels are held apart
+     by, and keeps the article's 16px axis on its right edge. */
+  padding: 14px 16px 18px;
   border-left: 1px solid var(--shell-line);
   background: linear-gradient(180deg, var(--shell-top), var(--shell-bottom));
   overflow-y: auto;
   /* A classic scrollbar steals 8px of the panels' right edge only when the
-     content overflows, so the edge would drift from the top bar's buttons as
-     documents change height. A stable gutter pins the panels at their scrolled
-     position in every state, which is the axis the bar's buttons align to. */
+     content overflows, so the edge would drift as documents change height.
+     A stable gutter pins the panels at their scrolled position in every
+     state. */
   scrollbar-gutter: stable;
 }
 
@@ -2768,22 +2699,12 @@ a {
   body[data-outline="hidden"] .toc-panel {
     display: none;
   }
-
-  /* The article's column is named, because the toolbar moves between columns
-     as its panels come and go: an article placed freely would trail the bar
-     into an implicit column whenever the bar lies across the article's own. */
-  .content {
-    grid-column: 3;
-  }
 }
 
 /* With both panels put away the panel column has nothing to show, so the
    attribute narrows the shared `--inspector-width` to nothing and the column
    folds like the list does — `visibility`, not `display`, so it keeps the
-   cell it was placed in and neither rail nor article has to move. The toolbar
-   loses the column it was the head of, so it goes back to being a strip over
-   the article alone (it does not reach the right rail's column: the rail's
-   switches sit at the page's very top, under nothing). */
+   cell it was placed in and neither rail nor article has to move. */
 @media (min-width: 901px) {
   body[data-graph="hidden"][data-outline="hidden"] {
     --inspector-width: 0px;
@@ -2794,17 +2715,6 @@ a {
     padding: 0;
     border-left: 0;
   }
-
-  body[data-graph="hidden"][data-outline="hidden"] .topbar {
-    grid-column: 3 / 5;
-    border-left: 0;
-    border-bottom: 1px solid var(--shell-line);
-    background: var(--bg-panel);
-    backdrop-filter: blur(16px);
-    /* No panel column, no scrollbar gutter to meet: the strip's controls go
-       back to the plain 16px axis the article's own edge keeps. */
-    padding-right: 16px;
-  }
 }
 
 @media (max-width: 1200px) {
@@ -2813,47 +2723,12 @@ a {
   }
 }
 
-/* Below the inspector's own width the panel column is gone, so there is no
-   column for the toolbar to sit over: it goes back to being the strip across
-   the top of the page, and the panels go back to starting under it. The two
-   rails survive — the switches answer at every width that has them — so the
-   row keeps a strip at each edge and the panels lie between. */
+/* Below the inspector's own width the panel column is gone, so the page's
+   grid loses its middle column: the two rails survive — the switches answer
+   at every width that has them — and the panels lie between. */
 @media (max-width: 900px) {
   .app {
     grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
-    grid-template-rows: none;
-  }
-
-  /* Across the top the bar lies over content that scrolls beneath it, so it
-     goes back to being a strip: its own surface, a rule under it to stop the
-     text at the edge, and the blur that lets the page show through. The left
-     rule goes with the column it belonged to — at this width the article is on
-     that edge, not a panel. */
-  .topbar {
-    grid-row: auto;
-    grid-column: 1 / -1;
-    border-left: 0;
-    border-bottom: 1px solid var(--shell-line);
-    background: var(--bg-panel);
-    backdrop-filter: blur(16px);
-    /* Across the whole width again, so the bar no longer shares the panels'
-       column: its right edge goes back to the plain 16px axis the collapsed
-       inspector's own controls sit on. */
-    padding-right: 16px;
-  }
-
-  /* The bar is across the top again, so the three regions that were spanning
-     both rows go back to being ordinary row items under it. */
-  .rail,
-  .sidebar,
-  .content {
-    grid-row: auto;
-  }
-
-  .rail,
-  .sidebar {
-    top: var(--topbar-height);
-    height: calc(100vh - var(--topbar-height));
   }
 
   /* The right rail is the last item in the markup, behind the panels: placed
@@ -2910,33 +2785,22 @@ a {
 }
 
 @media (max-width: 640px) {
+  /* The phone keeps both rails, one button wide each: the left one carries
+     the drawer's toggle, the right one the app-level controls. The panels'
+     own switches stay wide-screen furniture — a phone shows both panels and
+     answers to no switch. */
   .app {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: none;
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--rail-width);
   }
 
-  /* The rail belongs to the wide layouts; the phone's drawer switch lives in
-     the strip, so the leftmost column has nothing to carry here. */
-  .rail {
-    display: none;
-  }
-
-  /* The narrow screen brings back the drawer toggle and gives the site title
-     the middle of the bar, so the three controls read left to right. */
+  /* The drawer's toggle lives in the left rail at this width. */
   #sidebar-toggle {
     display: inline-flex;
   }
 
-  .topbar-title {
-    display: block;
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 600;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .rail-end {
+    grid-row: 1;
+    grid-column: 3;
   }
 
   /* A drawer, so it is positioned against the viewport and keeps the height a
@@ -2968,12 +2832,6 @@ a {
 
   .content {
     padding: 26px 18px 90px;
-  }
-
-  .topbar {
-    /* The panel column narrows its padding to 14px here, so the bar follows it
-       to keep the two right-hand axes on one line. */
-    padding-right: 14px;
   }
 
   .inspector {
@@ -3064,7 +2922,6 @@ a {
 @media print {
   .sidebar,
   .inspector,
-  .topbar,
   .search-panel,
   .skip-link {
     display: none;

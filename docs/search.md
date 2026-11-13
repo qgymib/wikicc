@@ -8,7 +8,8 @@ is built.
 ## Opening the panel
 
 The panel is not on the page by default. Ask for it with the **Search
-documents** button in the toolbar, or press <kbd>Ctrl</kbd>+<kbd>F</kbd>
+documents** button at the top of the right-hand rail, or press
+<kbd>Ctrl</kbd>+<kbd>F</kbd>
 (<kbd>Cmd</kbd>+<kbd>F</kbd> on macOS). It goes away again on
 <kbd>Escape</kbd>, on a click anywhere outside it, or when you pick a result
 with the field's open gesture.

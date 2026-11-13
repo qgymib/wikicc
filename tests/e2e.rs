@@ -94,13 +94,16 @@ fn the_page_carries_every_required_marker() {
 }
 
 #[test]
-fn the_search_button_lives_in_the_top_toolbar() {
+fn the_search_button_lives_in_the_right_rail() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
     // Searching belongs to the whole reader, not to one panel: the button is
-    // the top bar's own control, and the panel it opens is a child of the app
-    // that follows the inspector instead of living inside the graph panel.
-    let bar = page.html.find(r#"class="topbar""#).expect("top bar");
+    // the right rail's own control, and the panel it opens is a child of the
+    // app that follows the rail instead of living inside the graph panel.
+    let rail = page
+        .html
+        .find(r#"class="rail rail-end""#)
+        .expect("right rail");
     let button = page
         .html
         .find(r#"id="search-toggle""#)
@@ -114,7 +117,7 @@ fn the_search_button_lives_in_the_top_toolbar() {
         .find(r#"<div class="graph" id="graph">"#)
         .expect("graph box");
 
-    assert!(bar < button, "the button belongs to the top bar");
+    assert!(rail < button, "the button belongs to the right rail");
     assert!(button < panel, "the panel follows the button that opens it");
     assert!(
         graph < panel,
@@ -160,17 +163,29 @@ fn the_search_panel_stays_outside_the_article_column() {
 }
 
 #[test]
-fn the_theme_switch_sits_beside_search_in_the_top_bar() {
+fn the_right_rail_reads_search_graph_outline_theme() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
-    // The theme is an app-level control like search, so it belongs at the far
-    // end of the top bar, after the button it sits beside. The sidebar header
-    // is left holding nothing but the site title.
-    let bar = page.html.find(r#"class="topbar""#).expect("top bar");
+    // The theme is an app-level control like search, so both belong to the
+    // right rail, and the panels' switches sit between them: search, graph,
+    // outline, theme, top to bottom. The sidebar header is left holding
+    // nothing but the site title.
+    let rail = page
+        .html
+        .find(r#"class="rail rail-end""#)
+        .expect("right rail");
     let search = page
         .html
         .find(r#"id="search-toggle""#)
         .expect("search button");
+    let graph = page
+        .html
+        .find(r#"id="graph-toggle""#)
+        .expect("graph switch");
+    let outline = page
+        .html
+        .find(r#"id="outline-toggle""#)
+        .expect("outline switch");
     let theme = page
         .html
         .find(r#"id="theme-toggle""#)
@@ -184,8 +199,11 @@ fn the_theme_switch_sits_beside_search_in_the_top_bar() {
         .expect("sidebar header end")
         + header;
 
-    assert!(bar < search, "search belongs to the top bar");
-    assert!(search < theme, "the theme switch is the bar's last control");
+    assert!(rail < search, "search belongs to the right rail");
+    assert!(
+        search < graph && graph < outline && outline < theme,
+        "the rail reads search, graph, outline, theme, top to bottom"
+    );
     assert!(
         !page.html[header..header_end].contains("theme-toggle"),
         "the sidebar header keeps nothing but the site title"
@@ -193,45 +211,37 @@ fn the_theme_switch_sits_beside_search_in_the_top_bar() {
 }
 
 #[test]
-fn the_switch_lives_in_the_leftmost_rail() {
+fn the_switches_live_in_the_leftmost_rail() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
-    // The leftmost strip of the page is a bar of its own, and the switch that
-    // shows and hides the document list lives in it: the rail never moves with
-    // the list, so the control sits at the page's top-left whether the list is
-    // out or put away. The top bar keeps only the drawer's toggle.
+    // The leftmost strip of the page is a bar of its own, and both switches
+    // that show and hide the document list live in it: the drawer's toggle
+    // answers on the phone, the collapse switch on the wider layouts. The
+    // rail never moves with the list, so the control sits at the page's
+    // top-left whether the list is out or put away.
     let rail = page.html.find(r#"class="rail""#).expect("rail");
+    let drawer = page
+        .html
+        .find(r#"id="sidebar-toggle""#)
+        .expect("drawer toggle");
     let collapse = page
         .html
         .find(r#"id="sidebar-collapse""#)
         .expect("collapse switch");
     let sidebar = page.html.find(r#"class="sidebar""#).expect("sidebar");
-    let bar = page.html.find(r#"class="topbar""#).expect("top bar");
-    let drawer = page
-        .html
-        .find(r#"id="sidebar-toggle""#)
-        .expect("drawer toggle");
-    let search = page
-        .html
-        .find(r#"id="search-toggle""#)
-        .expect("search button");
 
-    assert!(rail < collapse, "the switch belongs to the rail");
+    assert!(rail < drawer, "the drawer's toggle belongs to the rail");
+    assert!(
+        drawer < collapse,
+        "the collapse switch is the rail's second button"
+    );
     assert!(
         collapse < sidebar,
         "the rail precedes the list whose room it gives back"
     );
     assert!(
-        bar < sidebar,
-        "the list follows the bar in the page's columns"
-    );
-    assert!(
-        bar < drawer && drawer < search,
-        "the drawer's toggle stays the top bar's first control"
-    );
-    assert!(
         page.html.contains(r#"aria-controls="sidebar""#),
-        "the switch names the region it shows and hides"
+        "the switches name the region they show and hide"
     );
 }
 
@@ -239,10 +249,10 @@ fn the_switch_lives_in_the_leftmost_rail() {
 fn a_hidden_document_list_folds_without_leaving_the_grid() {
     // The list folds with `visibility`, not `display`: it keeps the grid cell
     // it was already placed in while the shared `--sidebar-width` narrows to
-    // nothing, so the article takes the room and the rail, the top bar and the
-    // panels keep their columns without their placement being spelled out. The
-    // phone's drawer never answers the attribute, and the rail never leaves at
-    // all — the switch has to outlive the list it switches.
+    // nothing, so the article takes the room and the rail and the panels keep
+    // their columns without their placement being spelled out. The phone's
+    // drawer never answers the attribute, and the rail never leaves at all —
+    // the switch has to outlive the list it switches.
     let css = SHELL_CSS;
     let app = rule_of(css, ".app {");
     assert!(
@@ -285,10 +295,12 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
         switches.contains("#graph-toggle") && switches.contains("#outline-toggle"),
         "the panels' switches come back with the list's own: {switches}"
     );
-    let base_hidden = rule_of(css, ".topbar-title,");
+    let base_hidden = rule_of(css, "#sidebar-toggle,");
     assert!(
-        base_hidden.contains("#sidebar-toggle") && base_hidden.contains("#sidebar-collapse"),
-        "the drawer's toggle and the rail's switch both start hidden: {base_hidden}"
+        base_hidden.contains("#sidebar-collapse")
+            && base_hidden.contains("#graph-toggle")
+            && base_hidden.contains("#outline-toggle"),
+        "all four rail switches start hidden and come back by width: {base_hidden}"
     );
 
     let drawer = media_block(css, "max-width: 640px");
@@ -302,49 +314,76 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
     );
     assert!(
         drawer.contains("#sidebar-toggle"),
-        "the drawer's toggle comes back on the narrow strip"
+        "the drawer's toggle comes back in the left rail"
     );
     assert!(
-        drawer.contains(".rail {"),
-        "the rail itself leaves the phone, whose switch is in the strip"
+        !drawer.contains(".rail {"),
+        "the rail itself never leaves the phone: only its switch changes"
+    );
+    let app = rule_of(drawer, ".app {");
+    assert!(
+        app.contains("var(--rail-width) minmax(0, 1fr) var(--rail-width)"),
+        "the phone's grid keeps a rail at each edge: {app}"
+    );
+    let end = rule_of(drawer, ".rail-end {");
+    assert_eq!(
+        declaration(end, "grid-column"),
+        Some("3"),
+        "the right rail closes the phone's three-column grid: {end}"
     );
 }
 
 #[test]
 fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
     // The right rail is the left one across the page: the same strip of chrome
-    // at the far edge, carrying one switch per panel instead of the tabs. The
-    // switches answer independently — both panels out, one, none — so a body
-    // attribute per panel hides it alone, and putting both away folds the
-    // column the way the list folds. The phone has no rails, so it keeps both
-    // panels and answers to no attribute.
+    // at the far edge, carrying the app-level controls and one switch per
+    // panel instead of the tabs. The switches answer independently — both
+    // panels out, one, none — so a body attribute per panel hides it alone,
+    // and putting both away folds the column the way the list folds. The
+    // phone keeps both panels: the panels' switches are wide-screen furniture.
     let page = render(&build(&fixture_root(), "Fixture"));
     let css = SHELL_CSS;
 
     // The rail stands after the panels in the markup, and each switch names
-    // the region it shows and hides, lit while its panel is showing.
+    // the region it shows and hides, lit while its panel is showing. Search
+    // and the theme are the rail's own bookends around the panels' switches.
     let panels = page.html.find(r#"id="toc-panel""#).expect("outline panel");
-    let rail = page.html.find(r#"class="rail rail-end""#).expect("right rail");
-    let graph = page.html.find(r#"id="graph-toggle""#).expect("graph switch");
-    let outline = page.html.find(r#"id="outline-toggle""#).expect("outline switch");
+    let rail = page
+        .html
+        .find(r#"class="rail rail-end""#)
+        .expect("right rail");
+    let search = page
+        .html
+        .find(r#"id="search-toggle""#)
+        .expect("search switch");
+    let graph = page
+        .html
+        .find(r#"id="graph-toggle""#)
+        .expect("graph switch");
+    let outline = page
+        .html
+        .find(r#"id="outline-toggle""#)
+        .expect("outline switch");
+    let theme = page
+        .html
+        .find(r#"id="theme-toggle""#)
+        .expect("theme switch");
     assert!(
-        panels < rail && rail < graph && graph < outline,
-        "the rail closes the page behind the panels, one switch per panel"
+        panels < rail && rail < search && search < graph && graph < outline && outline < theme,
+        "the rail closes the page behind the panels, search and theme at its ends"
     );
 
     let head = &page.html[graph..];
     let head = &head[..head.find('>').expect("the switch's open tag ends")];
     assert!(
-        head.contains(r#"aria-controls="graph-panel""#)
-            && head.contains(r#"aria-expanded="true""#),
+        head.contains(r#"aria-controls="graph-panel""#) && head.contains(r#"aria-expanded="true""#),
         "the graph's switch names its panel and starts lit: {head}"
     );
 
     let head = &page.html[outline..];
     let head = &head[..head.find('>').expect("the switch's open tag ends")];
     assert!(
-        head.contains(r#"aria-controls="toc-panel""#)
-            && head.contains(r#"aria-expanded="true""#),
+        head.contains(r#"aria-controls="toc-panel""#) && head.contains(r#"aria-expanded="true""#),
         "the outline's switch names its panel and starts lit: {head}"
     );
 
@@ -400,9 +439,7 @@ fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
 
     // Both put away fold the column like the list folds: the shared token
     // narrows to nothing and the column keeps its cell with `visibility`, so
-    // neither rail nor article has to move. The bar stops being the column's
-    // head and lies over the article alone — short of the right rail's column,
-    // whose switches stand at the page's very top.
+    // neither rail nor article has to move.
     let fold = media_block(css, "min-width: 901px");
     let both = r#"body[data-graph="hidden"][data-outline="hidden"]"#;
     let folded = rule_of(fold, &format!("{both} {{"));
@@ -415,27 +452,6 @@ fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
     assert_eq!(declaration(column, "visibility"), Some("hidden"));
     assert_eq!(declaration(column, "padding"), Some("0"));
     assert_eq!(declaration(column, "border-left"), Some("0"));
-    let bar = rule_of(fold, &format!("{both} .topbar {{"));
-    assert_eq!(
-        declaration(bar, "grid-column"),
-        Some("3 / 5"),
-        "the bar lies over the article alone, short of the right rail: {bar}"
-    );
-    assert_eq!(
-        declaration(bar, "backdrop-filter"),
-        Some("blur(16px)"),
-        "a strip over moving content lets the page show through: {bar}"
-    );
-
-    // The bar crossing the article's own column is why the article's column
-    // is named in the switch rules' width: an article placed freely would
-    // trail the bar into an implicit column while it lies there.
-    let article = rule_of(wide, ".content {");
-    assert_eq!(
-        declaration(article, "grid-column"),
-        Some("3"),
-        "the article holds its own column however the bar moves: {article}"
-    );
 
     // The middle grid keeps the rail too, so there the whole panel row goes.
     let middle = media_block(css, "and (max-width: 900px)");
@@ -446,8 +462,8 @@ fn the_right_rail_mirrors_the_left_one_with_a_switch_per_panel() {
         "the middle grid hides the panel row outright: {row}"
     );
 
-    // The phone has no rails, so no switch answers there: the attributes the
-    // switches write must not reach below them.
+    // The phone shows both panels and carries no panel switch: the attributes
+    // the switches write must not reach below their widths.
     let drawer = media_block(css, "max-width: 640px");
     assert!(
         !drawer.contains("data-graph") && !drawer.contains("data-outline"),
@@ -606,11 +622,10 @@ fn declaration<'a>(block: &'a str, property: &str) -> Option<&'a str> {
 }
 
 #[test]
-fn the_toolbar_is_painted_as_the_head_of_the_panel_column() {
-    // On a wide screen the top bar is not a strip laid across the panel column
-    // but the head of it: same surface, same left rule, no rule across the join.
-    // Asserted as a contract because the seam it removes is invisible once it
-    // is wrong — only a hue step and a broken vertical line remain.
+fn the_panel_column_is_painted_from_the_shared_surface() {
+    // The panel column is one surface painted from two stops, and its left
+    // rule has a token of its own. Asserted as a contract because a seam is
+    // invisible once it is wrong — only a hue step and a broken line remain.
     let css = SHELL_CSS;
 
     assert!(
@@ -627,65 +642,24 @@ fn the_toolbar_is_painted_as_the_head_of_the_panel_column() {
         "dark, explicit light and system light each declare the column surface"
     );
 
-    let bar = rule_of(css, ".topbar {");
+    let column = main_inspector_rule(css);
     assert_eq!(
-        declaration(bar, "border-left"),
+        declaration(column, "border-left"),
         Some("1px solid var(--shell-line)"),
-        "the column's left rule starts at the top of the bar, not under it"
-    );
-    assert_eq!(
-        declaration(bar, "border-bottom"),
-        None,
-        "a rule across the column would draw the seam the shared surface removes"
+        "the column's left rule runs its full height"
     );
     assert!(
-        declaration(bar, "background").is_some_and(|value| value.contains("--shell-top")),
-        "the bar carries the column's own surface: {bar}"
-    );
-    assert_eq!(
-        declaration(bar, "padding"),
-        Some("0 calc(16px + var(--panel-gutter, 8px)) 0 16px"),
-        "the bar's right edge meets the panels' stable-gutter edge, scrollbar or not"
+        declaration(column, "background")
+            .is_some_and(|value| value.contains("--shell-top") && value.contains("--shell-bottom")),
+        "the column is painted from both stops of the shared surface: {column}"
     );
 }
 
 #[test]
-fn the_narrow_toolbar_goes_back_to_being_a_strip() {
-    // Below the inspector's width the bar lies across content that scrolls
-    // under it, so the strip, its bottom rule and its blur come back and the
-    // column's left rule goes away with the column.
-    let css = SHELL_CSS;
-    let narrow = media_block(css, "max-width: 900px");
-    let bar = rule_of(narrow, ".topbar {");
-
-    assert_eq!(
-        declaration(bar, "border-left"),
-        Some("0"),
-        "nothing is that edge any more"
-    );
-    assert!(
-        declaration(bar, "border-bottom").is_some(),
-        "a strip over moving content needs a rule under it: {bar}"
-    );
-    assert_eq!(
-        declaration(bar, "background"),
-        Some("var(--bg-panel)"),
-        "the strip keeps its own translucent surface"
-    );
-    assert_eq!(
-        declaration(bar, "backdrop-filter"),
-        Some("blur(16px)"),
-        "and the blur that lets the page show through it"
-    );
-}
-
-#[test]
-fn the_bar_and_the_panels_share_one_right_axis() {
+fn the_panels_keep_a_stable_right_edge() {
     // The inspector's scrollbar would steal 8px of the panels' right edge only
-    // while the content overflows, drifting that edge away from the top bar's
-    // buttons as documents change height. A stable gutter pins the edge, and
-    // the bar pads by the same total, so the two right ends meet in every
-    // scroll state.
+    // while the content overflows, drifting that edge as documents change
+    // height. A stable gutter pins the edge in every scroll state.
     let css = SHELL_CSS;
 
     let inspector = main_inspector_rule(css);
@@ -694,36 +668,15 @@ fn the_bar_and_the_panels_share_one_right_axis() {
         Some("stable"),
         "the panels' right edge holds still whether or not the scrollbar shows"
     );
-    let bar = rule_of(css, ".topbar {");
-    assert_eq!(
-        declaration(bar, "padding"),
-        Some("0 calc(16px + var(--panel-gutter, 8px)) 0 16px"),
-        "the bar's right padding is the panels' padding plus one gutter"
-    );
 
-    // Both concessions are wide-screen furniture: the collapsed inspector no
-    // longer scrolls and the strip lies across the whole width again.
+    // The concession is wide-screen furniture: the collapsed inspector no
+    // longer scrolls, so it reserves no empty strip.
     let narrow = media_block(css, "max-width: 900px");
-    let bar = rule_of(narrow, ".topbar {");
-    assert_eq!(
-        declaration(bar, "padding-right"),
-        Some("16px"),
-        "the full-width strip returns to the plain 16px axis"
-    );
     let inspector = rule_of(narrow, ".inspector {");
     assert_eq!(
         declaration(inspector, "scrollbar-gutter"),
         Some("auto"),
         "the collapsed panel reserves no empty strip"
-    );
-
-    // The narrowest width narrows the panels' padding, and the bar follows it.
-    let smallest = media_block(css, "max-width: 640px");
-    let bar = rule_of(smallest, ".topbar {");
-    assert_eq!(
-        declaration(bar, "padding-right"),
-        Some("14px"),
-        "the bar keeps meeting the panels at 14px here"
     );
 }
 
@@ -1422,26 +1375,21 @@ fn a_hit_is_marked_in_the_document_without_shouting() {
 }
 
 /// The main `.inspector` rule, found by its position: the sheet declares
-/// `.inspector` several times — an early grid-placement rule, the main one
-/// that carries the scroll behaviour, and the breakpoint overrides below it
-/// (including the folded-column rules, which end in `.inspector {`). The main
-/// rule is the second occurrence, so the search starts after the first.
+/// `.inspector` several times — the main one that carries the scroll
+/// behaviour first, then the breakpoint overrides below it (including the
+/// folded-column rules, which end in `.inspector {`). The main rule is the
+/// first occurrence.
 fn main_inspector_rule(css: &str) -> &str {
     let first = css.find(".inspector {").expect("inspector rule");
-    let main_rule = css[first + 1..]
-        .find(".inspector {")
-        .expect("main inspector rule")
-        + first
-        + 1;
 
-    rule_of(&css[main_rule..], ".inspector {")
+    rule_of(&css[first..], ".inspector {")
 }
 
 #[test]
-fn the_toolbar_icons_stay_compact() {
-    // The bar's round buttons are quiet furniture at the far end of the column:
-    // a small box with a glyph one step inside it, so the controls read as part
-    // of the strip instead of competing with the panels below.
+fn the_rail_icons_stay_compact() {
+    // The rails' round buttons are quiet furniture on their narrow strips: a
+    // small box with a glyph one step inside it, so the controls read as part
+    // of the strip instead of competing with the panels beside them.
     let css = SHELL_CSS;
 
     let button = rule_of(css, ".icon-button {");
@@ -1471,9 +1419,8 @@ fn the_toolbar_icons_stay_compact() {
 
 #[test]
 fn the_column_opens_with_the_panels_own_gap() {
-    // The air under the bar's buttons is the same air the panels are held
-    // apart by: the 52px bar centres its 28px buttons and leaves 12px under
-    // them, so the column opens with the remaining 2px of the 14px gap.
+    // The column opens with the same 14px air the panels are held apart by,
+    // so the first panel sits where the rhythm expects it.
     let css = SHELL_CSS;
     let inspector = main_inspector_rule(css);
 
@@ -1484,8 +1431,8 @@ fn the_column_opens_with_the_panels_own_gap() {
     );
     assert_eq!(
         declaration(inspector, "padding"),
-        Some("2px 16px 18px"),
-        "the column carries only the gap's remainder below the bar's buttons"
+        Some("14px 16px 18px"),
+        "the column carries the panels' rhythm at its top"
     );
 }
 

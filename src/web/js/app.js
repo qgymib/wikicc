@@ -209,7 +209,6 @@ export function start() {
   var content = document.getElementById("doc-content");
   var article = document.getElementById("doc-article");
   var stats = document.getElementById("stats");
-  var inspector = document.getElementById("inspector");
   var sidebarToggle = document.getElementById("sidebar-toggle");
   var sidebarCollapse = document.getElementById("sidebar-collapse");
   var backdrop = document.getElementById("drawer-backdrop");
@@ -474,8 +473,7 @@ export function start() {
    * freely — both showing, one, neither; the stylesheet folds the whole column
    * when neither shows. The switch is rail furniture like the list's: its
    * accessible state and the label it offers follow the panel, not the
-   * gesture, and the toolbar's gutter follows the panel that is actually on
-   * the column's right-hand axis.
+   * gesture.
    */
   function setPanelHidden(panel, hidden) {
     var attribute = panel === "graph" ? "data-graph" : "data-outline";
@@ -493,7 +491,6 @@ export function start() {
       button.setAttribute("aria-label", label);
       button.setAttribute("title", label);
     }
-    syncPanelGutter();
   }
 
   /**
@@ -1080,53 +1077,11 @@ export function start() {
   /* ---------- layout controls ---------- */
 
   /**
-   * The bar's last button meets the panels' right edge.
-   *
-   * The stylesheet reserves the inspector a stable scrollbar gutter and pads
-   * the top bar by `--panel-gutter`; this measures the gutter the engine
-   * really reserved — one custom scrollbar under a classic scrollbar, none
-   * under an overlay one — so the two right-hand axes stay one line whatever
-   * the platform draws. The collapsed inspector hides the panel and pins the
-   * bar's padding by the same media rules, so there is nothing to measure —
-   * and the switch that puts a panel away answers through the same exit: the
-   * panel left on the axis is the one measured, and with both away there is
-   * no panel left to measure.
-   */
-  var graphPanel = document.getElementById("graph-panel");
-  var tocPanel = document.getElementById("toc-panel");
-
-  function syncPanelGutter() {
-    if (!inspector) {
-      return;
-    }
-
-    var box = graphPanel ? graphPanel.getBoundingClientRect() : null;
-    if (!box || box.width === 0) {
-      box = tocPanel ? tocPanel.getBoundingClientRect() : null;
-    }
-    if (!box || box.width === 0) {
-      return;
-    }
-
-    var inset = inspector.getBoundingClientRect().right - box.right - 16;
-    document.documentElement.style.setProperty("--panel-gutter", inset + "px");
-  }
-
-  if (inspector && typeof ResizeObserver === "function") {
-    // Content-box changes are what move the gutter: a breakpoint switch
-    // relayouts the whole column, and the panels' own scroll states are
-    // pinned by the stable gutter rather than by the scrollbar coming and
-    // going.
-    new ResizeObserver(syncPanelGutter).observe(inspector);
-  } else if (inspector) {
-    globalThis.addEventListener("resize", syncPanelGutter);
-  }
-  syncPanelGutter();
-
-  /**
-   * One gesture for both switches: the drawer's, on the narrow strip, and the
-   * list header's, on the wide layouts. Which one answers depends on the
-   * width the reader is reading at, not on which button was pressed.
+   * One gesture for both switches in the left rail: the drawer's toggle, on
+   * the phone where the list is a drawer over the page, and the collapse
+   * switch, on the wider layouts where the list is a column. Which one
+   * answers depends on the width the reader is reading at, not on which
+   * button was pressed.
    */
   function toggleSidebar() {
     if (drawerMode()) {
