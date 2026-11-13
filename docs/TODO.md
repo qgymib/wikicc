@@ -1,0 +1,280 @@
+# TODO — 文章级加密功能实施计划
+
+> 状态：计划已定稿，待实施　|　日期：2026-11-13　|　分支：`feature/encrypt`
+>
+> 本文件是加密功能的分阶段实施计划。每个阶段可独立验收（构建或阅读行为可见、测试与质量门可独立通过）。
+> 实施过程中如设计偏离本文件，须先更新本文件再动代码。
+
+## 1. 背景与已定决策
+
+### 1.1 需求清单与落点映射
+
+| # | 需求 | 实现落点 |
+| --- | --- | --- |
+| 1 | 加密针对文章本身，仅对声明加密的文章加密 | Front Matter 单字段 `encrypt`；构建期仅密封声明了加密的 `DocModel` |
+| 2 | 文章携带密码用文章密码，否则用全局密码 | 密码解析顺序：`encrypt: "密码"`（文章密码）→ 全局密码（三源） |
+| 3 | 全局密码可经环境变量 / 命令行 / 配置文件设置 | `--password` / `WIKICC_PASSWORD` / `.wikicc.json` `password`，优先级 CLI > env > file |
+| 4 | 要求加密但无任何密码时，报错并退出构建 | `Error::InvalidInput`，退出码 1，消息含文档 id |
+| 5 | 加密页面仅显示标题；点击标题弹对话框解密后查看 | `app.js` 锁定页 + 新模块 `lock.js` 模态对话框 |
+| 6 | 真实加密，无法绕过（含文本编辑器打开 HTML） | AES-256-GCM + PBKDF2；产物仅含密文与盐参数，无明文无密码 |
+| 7 | 加密内容不可搜；解密后才可搜（标题例外，见 1.2） | 构建期语料裁剪（仅标题）+ 解密成功后动态加入索引 |
+| 8 | 引用加密文章 block 时预览提示加密，预览内可就地解密 | `preview.js` / `preview-view.js` 加密分支 + 面板内解锁表单 |
+| 9 | 密码不得包含在产物内 | 产物仅含 `{v, kdf, iters, salt, nonce, ct}`；验收含"产物无密码明文"字符串断言 |
+
+### 1.2 已拍板设计（用户确认，不再重议）
+
+- **单一字段**：`encrypt: true | "密码"` —— `true` 用全局密码加密；`"密码"` 用文章特定密码加密；不写或 `false` 表示不加密。
+- **标题公开可搜**：标题是公开信息（锁定页本来就显示标题）。解密前按标题可命中，命中后跳转锁定页，用户就地解密后再看内容；解密前正文/标题外的内容一律不可搜。
+- **会话内记忆**：同一页面会话内解密过的文章不再重复询问；刷新或关闭页面后需重新输入；密码不写入 `localStorage` 等任何持久存储（纯内存）。
+
+## 2. 总体方案
+
+### 2.1 加密算法与参数
+
+- **算法**：AES-256-GCM（认证加密：解密失败即密码错误或密文被篡改，无需额外校验字段）。
+- **密钥派生**：PBKDF2-HMAC-SHA256，600,000 次迭代（OWASP 推荐），输出 256-bit 密钥。
+- **逐文档参数**：每次构建为每个加密文档生成新的 16 字节随机 salt 与 12 字节随机 nonce。
+- **AAD 绑定**：密文以文档 id（UTF-8 字节）作为 AES-GCM `additionalData`，密文不可跨文档搬运。
+- **明文形状**：文档内容的 canonical JSON `{html, toc, blocks, text}` —— 目录与分块一并加密，防章节结构泄漏；标题保持公开。
+- **实现选型**：
+  - Rust 构建端：新增纯 Rust 依赖 `aes-gcm` 0.10 + `pbkdf2` 0.12（hmac/sha2 随附；`sha2`、`base64` 已是现有依赖）；随机数经 `rand_core`/`getrandom`。
+  - 浏览器端：Web Crypto（`crypto.subtle` 的 PBKDF2 + AES-GCM 原生支持），**不新增 npm 依赖**；新 JS 模块被 `main.js` 引用后由 `build.rs` 的 esbuild 自动纳入 bundle。
+  - 两端密文布局一致：`ct = ciphertext || 16B tag`（RustCrypto `aes-gcm` 与 Web Crypto AES-GCM 均按此顺序输出）。
+- **产物内容**：每个加密文档仅含 `{v, kdf, iters, salt, nonce, ct}`（均 base64），不含密码与明文（需求 6、9）。
+
+### 2.2 Front Matter 单字段语义
+
+| 写法 | 含义 |
+| --- | --- |
+| 缺省 / `encrypt: false` | 不加密 |
+| `encrypt: true` | 用全局密码加密 |
+| `encrypt: "密码"` | 用文章特定密码加密（引号样式 `'密码'` / `"密码"` / 裸标量均支持） |
+| `encrypt: ""`、数字、列表等非法值 | 硬错误：构建退出码 1，消息指明文档与原因 |
+
+- `markdown` crate 的 `frontmatter` 构造已把 `---…---` 解析为 `Node::Yaml`（携带原始 YAML 文本，现被丢弃）——新增"从 AST 提取原文 + YAML 解析"一步。
+- YAML 解析依赖：首选 `serde_yaml` 0.9（成熟稳定，untagged enum 直接映射 `true|"密码"|false`；上游已归档但 API 稳定）；备选 `yaml-rust2`（维护中）。**实现期二选一锁定并在此记录。**
+- 未知 front matter 键静默容忍（文章常携带其他工具的字段）；`front_matter_stays_out_of_every_output` 契约（YAML 不进任何输出）不得破坏。
+
+### 2.3 密码三源与构建校验
+
+- `Settings` 增 `password: Option<String>` 字段：CLI `--password` / 环境变量 `WIKICC_PASSWORD` / 配置文件 `password` 键。
+- `Options::resolve(request, env, file)` 沿既有 `cli.or(env).or(file)` 逐字段合并；空值校验沿 `home` 先例（配置为空字符串 → 硬错误）。
+- 三处文档注释同步（`options.rs` / `env.rs` 模块文档 / `config.rs`）。
+- CLI 传密码会留在 shell 历史与进程列表 —— 文档注明推荐环境变量方式。
+- **构建校验**：文档声明加密但既无文章密码又无全局密码 → `Error::InvalidInput`，退出码 1，消息含文档 id（需求 4）。加密相关错误一律硬错误，与 `--strict` 无关。
+
+### 2.4 payload 数据形状（字节级兼容）
+
+```rust
+/// DocModel 新增字段：`#[serde(skip_serializing_if = "Option::is_none")]`
+/// 未加密站点产物字节不变（沿用 `home` 字段的先例）。
+pub struct EncryptedBlob {
+    pub v: u8,         // 格式版本，恒为 1
+    pub kdf: String,   // "pbkdf2-sha256"
+    pub iters: u32,    // 600_000
+    pub salt: String,  // base64(16B)
+    pub nonce: String, // base64(12B)
+    pub ct: String,    // base64(ciphertext||tag)，AAD = doc.id
+}
+```
+
+- 加密文档的 `DocModel` 字段保持存在但置空：`html=""`、`toc=[]`、`blocks=[]`、`text=""`；JS 侧以 `doc.enc` 判定锁定。
+- `render.rs`：`ManifestDoc` 增可选 `enc` 标记（pages 格式下预览免取 chunk 即知锁定）；`ChunkPayload` 增可选 `enc`；`search.json` 对加密文档仅保留 `{id, title}`（headings/text 为空）。
+- 链接图 `edges` 与 `stats` 不变：id 与标题本就是公开元数据。
+
+### 2.5 模块划分
+
+| 模块 | 新/改 | 职责 |
+| --- | --- | --- |
+| `src/crypto.rs` | 新 | seal/open 原语：PBKDF2 派生 + AES-GCM 加解密 + AAD，纯函数可单测 |
+| `src/encrypt.rs` | 新 | `EncryptDirective` 解析（encrypt 字段语义矩阵）、密码解析（文章密码 > 全局）、DocModel 密封 pass |
+| `src/markdown/mod.rs` | 改 | 暴露 front matter 原文提取（`Node::Yaml`） |
+| `src/options.rs` / `src/env.rs` / `src/config.rs` | 改 | `password` 三源接入与校验 |
+| `src/site.rs` | 改 | `DocModel.enc` + `EncryptedBlob` |
+| `src/pipeline.rs` | 改 | `build_site` 之后、render 之前执行密封 pass |
+| `src/render.rs` | 改 | `ManifestDoc`/`ChunkPayload`/`SearchRecord` 增加密分支 |
+| `src/web/js/lock.js` | 新 | `deriveKey(password, salt, iters)`、`unlock(doc, password)`、会话密码表、模态对话框 |
+| `src/web/js/doc-store.js` | 改 | `isEncrypted(id)`、`decrypt(id, password)`（成功后以完整模型替换缓存并通知） |
+| `src/web/js/app.js` | 改 | 锁定页渲染、点击标题弹框、解锁后重渲染、搜索索引动态加入 |
+| `src/web/js/preview.js` / `preview-view.js` | 改 | 加密分支：锁定提示 + 面板内就地解锁 |
+| `src/web/js/search-view.js` | 改 | 锁定结果标记、无正文摘要降级 |
+| `src/web/css/app.css` | 改 | 锁定页与对话框样式 |
+| `Cargo.toml` | 改 | `aes-gcm`、`pbkdf2`（及 YAML 解析依赖） |
+
+### 2.6 数据流
+
+```mermaid
+flowchart LR
+  subgraph build[构建端]
+    MD[Markdown 源文件] --> FM[提取 encrypt 字段]
+    FM --> PW{密码可用?}
+    PW -- 否 --> ERR[报错并退出构建]
+    PW -- 是 --> SEAL[加密正文为密文]
+    SEAL --> OUT[产物仅含密文与盐参数]
+  end
+  subgraph reader[阅读端]
+    OUT --> STORE[doc-store 加载文档]
+    STORE --> LOCK[锁定页仅显示标题]
+    LOCK -- 点击标题 --> DLG[密码对话框]
+    DLG -- 解密成功 --> OPEN[就地渲染正文与目录]
+    DLG -- 密码错误 --> LOCK
+  end
+```
+
+## 3. 阶段计划
+
+> 每阶段收尾：四道质量门全绿 + 一行英文提交 + **更新本文档记录结果**（见第 5 节）。
+
+### 阶段依赖关系
+
+```mermaid
+flowchart TD
+  P1["阶段一：构建端加密核心<br/>产物含 enc 密文 + 缺密码硬错误"]
+  P2["阶段二：阅读器解锁流程<br/>lock.js + 锁定页/对话框"]
+  P3["阶段三：搜索闭环<br/>锁定标记 + 解密后入索引"]
+  P4["阶段四：引用预览闭环<br/>锁定提示 + 面板就地解密"]
+  P5["阶段五：文档与收尾<br/>design / README / search.md"]
+
+  P1 -- "enc 产物形状 / 锁定占位守卫" --> P2
+  P2 -- "unlock + 会话密码表 + doc-store 加密接口" --> P3
+  P2 -- "lock.js + doc-store 加密接口" --> P4
+  P3 --> P5
+  P4 --> P5
+```
+
+- **依赖规则**：阶段二消费阶段一的产物形状（`enc` 密文字段、锁定占位守卫）；阶段三与阶段四都复用阶段二的 `lock.js`（派生/解密、会话密码表）与 doc-store 加密接口，两者彼此互不依赖；阶段五汇总全部阶段定稿文档。
+- **实施顺序**：推荐一→二→三→四→五；阶段三与阶段四在阶段二完成后**可并行**（改动文件基本不相交：search 域 vs preview 域，`app.js` 的少量接线先后合入即可）。
+
+### 阶段一：构建端加密核心
+
+### 阶段一：构建端加密核心
+
+**状态**：未开始
+
+**范围**
+1. front matter 提取与 `encrypt` 字段解析（语义矩阵，非法值硬错误）。
+2. 全局密码三源接入（CLI `--password` / `WIKICC_PASSWORD` / config `password`）与 resolve 校验。
+3. `src/crypto.rs`：seal/open 原语（AES-256-GCM + PBKDF2 + AAD）。
+4. pipeline 密封 pass：`DocModel` 置空内容 + 写入 `enc`；缺密码硬错误退出。
+5. `render.rs`：`ManifestDoc.enc` 标记、chunk 携带密文、`search.json` 加密条目仅标题。
+6. 阅读器最小守卫：`app.js` 对 `enc` 文档渲染锁定占位（防空白；不可解锁，阶段二替换）。
+
+**涉及文件**：`src/markdown/mod.rs`、`src/encrypt.rs`[新]、`src/crypto.rs`[新]、`src/options.rs`、`src/env.rs`、`src/config.rs`、`src/site.rs`、`src/pipeline.rs`、`src/render.rs`、`src/web/js/app.js`（守卫）、`Cargo.toml`；测试 `tests/encrypt.rs`[新]、`tests/{cli,config,site,writers}.rs` 扩展、`tests/js/` 新增 doc-store/app 守卫用例。
+
+**实现要点**
+- 密封在 `build_site` 产出后、render 前对 `bundle.docs` 执行：`edges`/`stats` 不受影响；置空与写入 `enc` 在同一 pass 单处完成，`DocModel` 组装逻辑不动。
+- 每个加密文档独立随机 salt/nonce；GCM AAD = `doc.id`。
+- front matter 提取挂接现有 AST 解析路径，不引入二次解析。
+
+**测试与验收标准**
+- crypto 往返单测：正确密码解出原明文；错误密码 / AAD 不匹配 / 篡改密文均失败。
+- `encrypt` 字段语义矩阵单测：`true` / `false` / 缺省 / `"密码"`（三种引号样式）/ `""` / 数字 / 列表。
+- 三源合并单测：CLI > env > file 优先级；空值硬错误。
+- 集成测试：`encrypt: true` 且无密码 → 退出码 1 且消息含文档 id；有密码 → 三种格式产物断言：含 salt/ct 字段、**不含密码与正文特征明文**（字符串断言）；`search.json` 加密条目仅 `{id, title}`；pages manifest 带可选 `enc` 标记。
+- 字节级回归：不含 `encrypt` 的输入，三种格式产物与改动前逐字节一致。
+- 既有契约：`front_matter_stays_out_of_every_output` 保持通过。
+- 阅读器：打开含加密文档的产物不崩溃，显示锁定占位（node --test + 手测）。
+
+### 阶段二：阅读器解锁流程
+
+**状态**：未开始
+
+**范围**
+1. `src/web/js/lock.js`：`deriveKey` / `unlock`（Web Crypto PBKDF2 + AES-GCM，参数与构建端一致）+ 会话密码表（纯内存 `Map`）+ 模态对话框。
+2. `doc-store.js`：`isEncrypted(id)`、`decrypt(id, password)`，成功后以完整模型替换缓存。
+3. `app.js`：锁定页（仅标题）+ 点击标题弹框 + 错误密码可重试 + 解锁后重渲染正文/目录/图表/公式/预览链接重挂。
+4. `app.css`：锁定页与对话框样式。
+
+**涉及文件**：`src/web/js/{lock.js[新],doc-store.js,app.js,main.js,router.js?}`、`src/web/css/app.css`；测试 `tests/js/lock.test.js`[新]、doc-store/app-session 用例扩展、`tests/e2e.rs` 解锁流程。
+
+**实现要点**
+- 派生密钥按 password 缓存复用：共享全局密码的多文档解锁不重复执行 600k 次 KDF。
+- 解锁尝试前先静默试已知密码（会话密码表），命中即免询问（满足"不再重复询问"）。
+- 密码表与派生密钥均只在内存；**绝不写 `localStorage`/`sessionStorage`/cookie**。
+- 对话框：居中模态、焦点管理、Esc 关闭、错误提示可重试。
+- 解密成功复用现有 render 路径：正文、目录、hover 预览、表格/图表/公式增强照常工作。
+
+**测试与验收标准**
+- 互操作测试：用构建端导出的固定测试向量（固定 salt/nonce/ct）验证 JS 端解密结果，锁死两端参数一致性。
+- node --test：`unlock` 成功/失败；doc-store 解密后 `get` 返回完整模型、失败不污染缓存。
+- app-session harness：点击标题弹框 → 正确密码解锁渲染 → 重建会话（模拟刷新）后需重输。
+- e2e（无头浏览器）：`file://` 打开单文件产物，完整解锁流程可用；验证 `crypto.subtle` 在 file:// 下可用。
+- 断言解锁后 `localStorage`/`sessionStorage` 无密码痕迹。
+
+### 阶段三：搜索闭环
+
+**状态**：未开始
+
+**范围**
+1. `search-view.js`：加密结果行锁定标记、无正文摘要（snippet 降级）；命中跳转锁定页。
+2. `app.js`：解密成功后把完整记录（title/headings/text）动态加入 MiniSearch 索引与 corpusDocs（去重守卫），正文即刻可搜。
+
+**涉及文件**：`src/web/js/{search-view.js,search.js,app.js}`；测试 `tests/js/{search,search-view}.test.js` 扩展、`tests/e2e.rs`。
+
+**实现要点**
+- 解密前：语料仅标题 → 正文词无结果、标题词命中；jump-to-passage 降级为纯导航。
+- 解密后：同一查询命中正文并恢复 snippet 与高亮；重复解密不重复入索引。
+- 两种格式（嵌入式 payload / pages 的 `search.json`）均不得泄漏正文。
+
+**测试与验收标准**
+- 单测：仅标题命中；解密后正文命中且 snippet 正常。
+- e2e：解密前搜正文词无果、搜标题词命中并进入锁定页；解锁后同一查询命中正文并跳转高亮。
+
+### 阶段四：引用预览闭环
+
+**状态**：未开始
+
+**范围**：`preview.js` / `preview-view.js` 加密分支 —— 目标未解密时预览面板显示"目标文章被加密，需要解密"，面板内嵌密码输入就地解密；解密后展示所引章节，行为与现状一致。
+
+**涉及文件**：`src/web/js/{preview.js,preview-view.js,lock.js}`；测试 `tests/preview.rs`、`tests/js/preview*.test.js` 扩展、`tests/e2e.rs`。
+
+**实现要点**
+- 加密且未解密：`createPreview` / `createDocumentPreview` 返回锁定分支（或 view 层经 `store.isEncrypted` 判定），悬停与点击两条路径都显示提示。
+- 面板内解锁复用会话密码表与静默尝试逻辑；解锁成功后按原 anchor 正常渲染章节预览。
+
+**测试与验收标准**
+- 单测：加密文档的 preview 分支结构；解锁后 `buildPreviewHtml` 输出与未加密路径一致。
+- e2e：引用加密 block 的预览提示 → 就地输密码 → 正常显示目标章节；解密后引用预览与现状无差异。
+
+### 阶段五：文档与收尾
+
+**状态**：未开始
+
+**范围**（无代码行为改动）
+1. `docs/design.md`：加密架构章节（算法与参数、payload 数据形状、威胁模型与安全边界）。
+2. `README.md`：front matter 用法、密码三源、安全边界说明（密码强度即安全性；CLI 传密码留在 shell 历史/进程列表，推荐 `WIKICC_PASSWORD`）。
+3. `docs/search.md`：加密文章的搜索边界（标题可搜、解密后正文可搜）。
+
+**验收标准**
+- 文档与实现逐条对齐，命令示例可照抄执行。
+- 全量回归：四道质量门 + 全部既有契约（`front_matter_stays_out_of_every_output`、字节级一致、payload 形状断言、biome 告警即失败）。
+- `CHANGELOG.md` 未改动（仅版本发布时修改）。
+
+## 4. 风险与验证清单
+
+- **file:// 与 Web Crypto**：`crypto.subtle` 要求 secure context；Chrome/Edge/Firefox 均将 `file://` 视为 trustworthy，但阶段二必须无头浏览器 + 真机 `file://` 双重验证并记录结论。若某目标环境不可用，先记录再决定是否引入纯 JS 回退（默认不引入）。
+- **CLI 密码暴露面**：shell 历史与进程列表可见 —— 文档明示推荐环境变量方式（三源功能不裁剪）。
+- **字节级回归契约**：所有新增序列化字段必须 `skip_serializing_if`（沿 `home` 先例）；未加密站点三种格式产物逐字节一致是每次改动后的固定断言。
+- **既有测试契约清单**（改动时逐一确认）：
+  - `src/markdown/mod.rs` 的 `front_matter_stays_out_of_every_output`（YAML 不进任何输出）。
+  - `tests/site.rs` payload 形状断言 —— `enc` 出现时 doc 键集合扩展，须更新断言而非删除。
+  - `npm run check` = `biome check --error-on-warnings`，任何告警即失败。
+  - app-session harness 约定（matchMedia query-aware `options.drawer`、`options.storage` 种子）；全局监听 shim 跨测试共享。
+- **性能**：构建端每加密文档一次 KDF（600k 次 SHA-256，毫秒~几十毫秒级，可忽略）；阅读端派生密钥按 password 缓存，避免重复派生。
+- **公开参数**：salt/iters/nonce 可公开，不削弱安全性；安全性取决于密码强度（文档注明）。
+
+## 5. 回归与提交纪律
+
+- 每阶段完成即全量跑四道质量门（`docs/CONTRIBUTING.md`）：
+  ```sh
+  cargo fmt --check
+  cargo clippy --all-targets -- -D warnings
+  npm run check
+  cargo test
+  ```
+- 每阶段一次提交，提交信息为一行英文总结（如 `add build-side article encryption core`）。
+- **每阶段完成后必须更新本文档，确保结果被记录**（与代码同一次提交内完成）：
+  1. 把该阶段小节的「状态」改为 `已完成（YYYY-MM-DD，<commit>）`；
+  2. 在该阶段小节末尾追加「**完成记录**」：实际改动的文件清单、与计划的偏离及原因、验收结果（各验收标准的通过证据，如关键测试名 / e2e 断言 / 手测结论）；
+  3. 计划未预见的决策（如 YAML 依赖二选一、KDF 参数调整、密文格式变更）回写第 2 节相应位置，保持文档与实现一致。
+- `CHANGELOG.md` 仅版本发布时修改；代码全英文（中文密码等测试字符串除外）。
