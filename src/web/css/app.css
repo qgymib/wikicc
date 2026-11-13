@@ -334,22 +334,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   }
 }
 
-/* The header switch's glyph follows the state it offers: a chevron pointing
-   out of the page while the list shows, back toward the page while it does
-   not. The button's own `aria-expanded` is the state, so the swap and the
-   accessible answer cannot drift apart. */
-#sidebar-collapse .icon-expand {
-  display: none;
-}
-
-#sidebar-collapse[aria-expanded="false"] .icon-collapse {
-  display: none;
-}
-
-#sidebar-collapse[aria-expanded="false"] .icon-expand {
-  display: block;
-}
-
 .doc-list {
   flex: 1;
   min-height: 0;

@@ -250,6 +250,10 @@ fn the_switches_live_in_the_leftmost_rail() {
         page.html.contains(r#"aria-controls="sidebar""#),
         "the switches name the region they show and hide"
     );
+    assert!(
+        !page.html.contains("icon-collapse") && !page.html.contains("icon-expand"),
+        "each switch carries one state-neutral glyph: the accessible answer carries the state"
+    );
 }
 
 #[test]
