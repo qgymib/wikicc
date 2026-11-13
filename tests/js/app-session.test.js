@@ -567,8 +567,14 @@ async function withSession(options, body) {
 
   const payloadElement = fakeElement("script");
   payloadElement.id = "wikicc-payload";
+  // `options.docs` swaps the embedded payload's documents (a test that needs
+  // a sealed document builds one here); `options.payload` replaces the whole
+  // payload, which is how a pages test seeds its own manifest.
+  const embedded = options.docs
+    ? Object.assign(payload(), { docs: options.docs })
+    : null;
   payloadElement.textContent = JSON.stringify(
-    options.lazy ? lazyManifest() : payload(),
+    embedded || (options.lazy ? lazyManifest() : payload()),
   );
 
   const shellRoot = fakeElement("body");
@@ -581,8 +587,10 @@ async function withSession(options, body) {
   // so a test can see what the reader asked for.
   const fetchCalls = [];
   if (options.lazy) {
-    const chunks = options.broken ? {} : lazyChunks();
-    if (!options.broken) {
+    // `options.chunks` seeds a manifest's chunks of its own; without one the
+    // stock chunks and the stock corpus serve, and `broken` serves nothing.
+    const chunks = options.chunks || (options.broken ? {} : lazyChunks());
+    if (!options.chunks && !options.broken) {
       chunks["search.json"] = lazyCorpus();
     }
     globalThis.fetch = function (url) {
@@ -1871,4 +1879,169 @@ test("a pages session lands the search's passage when the document arrives", asy
       "the reader is brought to the passage",
     );
   });
+});
+
+/* ---------- sealed documents ---------- */
+
+/** The embedded payload with its second document sealed. */
+function lockedDocs() {
+  return [
+    payload().docs[0],
+    {
+      id: "guide/intro.md",
+      title: "Intro",
+      html: "",
+      text: "",
+      toc: [],
+      blocks: [],
+      enc: {
+        v: 1,
+        kdf: "pbkdf2-sha256",
+        iters: 600000,
+        salt: "salt",
+        nonce: "nonce",
+        ct: "ciphertext",
+      },
+    },
+  ];
+}
+
+/** The pages manifest marking its second document sealed. */
+function lockedManifest() {
+  return {
+    title: "Fixture",
+    mode: "pages",
+    docs: [
+      { id: "index.md", title: "Index", hash: "h0" },
+      { id: "guide/intro.md", title: "Intro", hash: "h1", enc: true },
+    ],
+    edges: [],
+    stats: { documents: 2, assets: 0 },
+  };
+}
+
+/** The chunks the build wrote for the sealed pages fixture. */
+function lockedChunks() {
+  return {
+    "pages/index.md.json?v=h0": {
+      id: "index.md",
+      title: "Index",
+      html: "<p>root</p>",
+      toc: [],
+      blocks: [],
+      text: "root",
+    },
+    "pages/guide/intro.md.json?v=h1": {
+      id: "guide/intro.md",
+      title: "Intro",
+      html: "",
+      toc: [],
+      blocks: [],
+      text: "",
+      enc: {
+        v: 1,
+        kdf: "pbkdf2-sha256",
+        iters: 600000,
+        salt: "salt",
+        nonce: "nonce",
+        ct: "ciphertext",
+      },
+    },
+  };
+}
+
+test("a sealed document opens as a locked placeholder, not a blank page", () => {
+  withSession(
+    { hash: "#/doc/guide/intro.md", docs: lockedDocs() },
+    (session) => {
+      startSession();
+
+      const article = session.shell.get("doc-article");
+      assert.equal(
+        article.children[0].textContent,
+        "guide/intro.md",
+        "the path stays public",
+      );
+      assert.match(
+        article.children[1].className,
+        /doc-locked/,
+        "the placeholder names the lock",
+      );
+      assert.match(article.children[1].textContent, /encrypted/);
+      assert.equal(
+        article.children[1].children.length,
+        0,
+        "the placeholder holds text only",
+      );
+      assert.equal(
+        document.title,
+        "Intro · Fixture",
+        "the title the lists show is still the document's",
+      );
+    },
+  );
+});
+
+test("a navigation into and out of a sealed document switches the views", () => {
+  withSession({ hash: "#/doc/index.md", docs: lockedDocs() }, (session) => {
+    startSession();
+    const article = session.shell.get("doc-article");
+    assert.match(
+      article.children[1].className,
+      /doc-body/,
+      "the public document renders its markup",
+    );
+
+    session.follow("#/doc/guide/intro.md");
+    assert.match(article.children[1].className, /doc-locked/);
+
+    session.follow("#/doc/index.md");
+    assert.match(
+      article.children[1].className,
+      /doc-body/,
+      "the reader comes back to markup",
+    );
+  });
+});
+
+test("a sealed document stays quiet about a chapter it cannot reach", () => {
+  withSession({ hash: "#/doc/index.md", docs: lockedDocs() }, (session) => {
+    startSession();
+
+    session.follow("#/doc/guide/intro.md#getting-started");
+
+    assert.equal(
+      session.shell.get("doc-alert").hidden,
+      true,
+      "the lock is the reason, not a missing chapter",
+    );
+    assert.match(
+      session.shell.get("doc-article").children[1].className,
+      /doc-locked/,
+    );
+  });
+});
+
+test("a pages session shows the locked placeholder from the fetched chunk", async () => {
+  await withSession(
+    {
+      hash: "#/doc/guide/intro.md",
+      lazy: true,
+      payload: lockedManifest(),
+      chunks: lockedChunks(),
+    },
+    async (session) => {
+      startSession();
+      await session.settle();
+
+      const article = session.shell.get("doc-article");
+      assert.equal(article.children[0].textContent, "guide/intro.md");
+      assert.match(article.children[1].className, /doc-locked/);
+      assert.deepEqual(
+        session.fetchCalls,
+        ["pages/guide/intro.md.json?v=h1"],
+        "the sealed chunk is fetched like any other",
+      );
+    },
+  );
 });

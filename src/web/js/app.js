@@ -62,6 +62,9 @@ export var ALERT_CLASS = Banner.BANNER_CLASS;
 /** Class of the paragraph shown while a document is being fetched. */
 export var LOADING_CLASS = "doc-loading";
 
+/** Class of the paragraph shown for a document whose body is sealed. */
+export var LOCKED_CLASS = "doc-locked";
+
 /** Read and parse the embedded payload. */
 function readPayload() {
   var element = document.getElementById("wikicc-payload");
@@ -797,6 +800,37 @@ export function start() {
     );
   }
 
+  /** Whether the document's body is sealed and only its title is public. */
+  function isLocked(doc) {
+    return !!doc && !!doc.enc;
+  }
+
+  /**
+   * Show the title of a sealed document and say what the lock means.
+   *
+   * A sealed document carries no markup: its html, outline, blocks and text
+   * are emptied by the build, and the ciphertext they became is for the
+   * unlock to open, not for this page to render. Until that unlock exists
+   * the reader sees the document's id, the title the lists already showed,
+   * and one line that says the contents are hidden. No diagrams, no
+   * formulas, no preview tagging: there is no markup to enhance, and a
+   * placeholder that pretended otherwise would be a blank page in disguise.
+   */
+  function renderLocked(doc) {
+    var path = document.createElement("p");
+    path.className = "doc-path";
+    path.textContent = doc.id;
+
+    var note = document.createElement("p");
+    note.className = LOCKED_CLASS;
+    note.textContent =
+      "This document is encrypted. Its contents stay hidden until it is unlocked.";
+
+    mountArticle();
+    article.appendChild(path);
+    article.appendChild(note);
+  }
+
   function renderDocument(doc) {
     var path = document.createElement("p");
     path.className = "doc-path";
@@ -863,8 +897,13 @@ export function start() {
    * sorts and its fold states.
    */
   function place(route, doc, wanted, changed, jump) {
+    var locked = isLocked(doc);
     if (changed) {
-      renderDocument(doc);
+      if (locked) {
+        renderLocked(doc);
+      } else {
+        renderDocument(doc);
+      }
       toc.render(doc.toc, doc.id);
       document.title = doc.title
         ? doc.title + " · " + bundle.title
@@ -875,13 +914,16 @@ export function start() {
     // the document, at the top, and says what was asked for. A click on such a
     // reference leaves no anchor in the route — the build cannot address a
     // chapter that has no element — so the queued message stands in for it.
-    var found = findAnchor(doc, route.anchor);
+    // A sealed document resolves no anchor either, but the lock is the
+    // reason its outline is empty, so the missing-chapter message would be a
+    // lie about why nothing was reached.
+    var found = locked ? null : findAnchor(doc, route.anchor);
     if (found) {
       scrollToAnchor(found);
       // Fresh markup changes height while it settles — that is what diagrams
       // and images do — so the chapter is walked to again once it has.
       settleAtAnchor(doc, route.anchor);
-    } else if (wanted && wanted.anchor) {
+    } else if (!locked && wanted && wanted.anchor) {
       showMissingChapter(wanted);
       // The document is opened from its top: there is no chapter to scroll to.
       if (typeof globalThis.scrollTo === "function") {

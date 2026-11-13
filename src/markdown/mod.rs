@@ -50,6 +50,7 @@ pub(crate) mod transform;
 use std::collections::BTreeMap;
 
 use ast::{OwnKind, OwnNode};
+use markdown::mdast::Node;
 use sections::Block;
 use toc::Heading;
 
@@ -117,6 +118,14 @@ pub struct RenderedDoc {
     /// Plain text of the document: every text and code run, with block
     /// boundaries turned into single spaces and whitespace collapsed.
     pub text: String,
+    /// Raw YAML text of the front matter, without the `---` fences, when the
+    /// document opens with one.
+    ///
+    /// Build-side metadata only: the `encrypt` directive is read from here,
+    /// and the text never reaches any output — the serialiser drops the node,
+    /// a contract the front-matter test pins. It rides beside the rendered
+    /// parts so one parse serves both.
+    pub front_matter: Option<String>,
 }
 
 /// Final addressing form of one destination, as the build decides it.
@@ -214,7 +223,11 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
     source: &str,
     rewriter: &mut R,
 ) -> RenderedDoc {
-    let tree = prepare(source);
+    // One parse serves the render and the front matter: the raw YAML text is
+    // taken off the tree before the own-layer conversion drops it.
+    let parsed = parse::parse_document(source);
+    let front_matter = front_matter_text(&parsed);
+    let tree = prepare_tree(&parsed);
     let mut slugger = Slugger::new();
     let mut headings: Vec<Heading> = Vec::new();
     collect_headings(&tree, &mut slugger, &mut headings);
@@ -229,6 +242,7 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
         toc: build_toc(&headings),
         blocks,
         text: collapse_whitespace(&text),
+        front_matter,
     }
 }
 
@@ -334,7 +348,13 @@ fn collect_title_text(children: &[OwnNode], into: &mut HeadingText) {
 
 /// Parse the document and run every own-layer transform over it.
 fn prepare(source: &str) -> OwnNode {
-    let mut tree = ast::to_own(&parse::parse_document(source));
+    let tree = parse::parse_document(source);
+    prepare_tree(&tree)
+}
+
+/// Run every own-layer transform over an already-parsed tree.
+fn prepare_tree(tree: &Node) -> OwnNode {
+    let mut tree = ast::to_own(tree);
     let table = refdefs::collect(&tree);
 
     transform::fold::run(&mut tree, &table);
@@ -344,6 +364,21 @@ fn prepare(source: &str) -> OwnNode {
     transform::callout::run(&mut tree);
 
     tree
+}
+
+/// Raw YAML text of the front matter node of `tree`, without the fences.
+///
+/// The value is metadata the build reads; the serialiser drops the node, so
+/// whatever is here never reaches an output. A document without front matter
+/// — or one whose front matter sits anywhere but the top — carries none.
+fn front_matter_text(tree: &Node) -> Option<String> {
+    let Node::Root(root) = tree else {
+        return None;
+    };
+    match root.children.first() {
+        Some(Node::Yaml(yaml)) => Some(yaml.value.clone()),
+        _ => None,
+    }
 }
 
 /// Collect every heading, assigning its anchor.
@@ -1506,6 +1541,36 @@ fn main() {}
             "html: {}",
             doc.html
         );
+    }
+
+    #[test]
+    fn front_matter_text_is_extracted_with_its_fences_dropped() {
+        let doc = render_document("---\nencrypt: true\ntitle: t\n---\n\n# Body\n");
+        let raw = doc.front_matter.expect("front matter is carried");
+
+        assert!(raw.contains("encrypt: true"), "raw: {raw}");
+        assert!(raw.contains("title: t"), "raw: {raw}");
+        assert!(!raw.contains("---"), "the fences are not the value: {raw}");
+        assert!(
+            doc.html.contains("<h1 id=\"body\">Body</h1>"),
+            "the render is untouched: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_document_without_front_matter_carries_none() {
+        assert_eq!(render_document("# Body\n").front_matter, None);
+        assert_eq!(render_document("").front_matter, None);
+    }
+
+    #[test]
+    fn only_front_matter_at_the_top_counts() {
+        // A horizontal rule in the body is not a front matter fence.
+        let doc = render_document("# Body\n\n---\n\nafter the rule\n");
+
+        assert_eq!(doc.front_matter, None);
+        assert!(doc.html.contains("<hr />"), "html: {}", doc.html);
     }
 
     #[test]

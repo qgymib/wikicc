@@ -422,3 +422,142 @@ fn a_favicon_that_cannot_be_read_aborts_the_build() {
     );
     assert!(!out.exists(), "a refused build writes nothing");
 }
+
+/// A fixture whose `b.md` declares encryption in its front matter.
+fn fixture_with_encrypted_document() -> tempfile::TempDir {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join("b.md"),
+        "---\nencrypt: true\n---\n\n# B\n\nsealed body\n",
+    )
+    .expect("write fixture");
+    dir
+}
+
+#[test]
+fn the_configured_password_reaches_every_format() {
+    for format in OutputFormat::ALL {
+        let dir = fixture_with_encrypted_document();
+        std::fs::write(
+            dir.path().join(CONFIG_FILE_NAME),
+            r#"{"password": "configured"}"#,
+        )
+        .expect("write config");
+        let out = dir.path().join(format.as_str());
+        let request = request(dir.path(), &out, format);
+
+        let (outcome, _, stderr) = execute(&request);
+        outcome.expect("the configured password seals the document");
+        assert!(
+            !stderr.contains("warning"),
+            "{format}: a readable password is silent: {stderr}"
+        );
+
+        let shell = shell_of(&out);
+        let payload = shell_payload_json(&shell);
+        assert!(
+            payload.contains("\"enc\""),
+            "{format}: the document is sealed in the payload"
+        );
+        assert!(
+            !payload.contains("configured"),
+            "{format}: the password never reaches the payload"
+        );
+        assert!(
+            !payload.contains("sealed body"),
+            "{format}: the plaintext never reaches the payload"
+        );
+    }
+}
+
+/// The payload a shell page embeds, as one JSON string.
+fn shell_payload_json(shell: &str) -> String {
+    let marker = r#"<script id="wikicc-payload" type="application/json">"#;
+    let start = shell.find(marker).expect("payload element") + marker.len();
+    let end = shell[start..].find("</script>").expect("payload end") + start;
+    shell[start..end].to_string()
+}
+
+#[test]
+fn the_command_line_password_overrides_the_configured_one() {
+    let dir = fixture_with_encrypted_document();
+    std::fs::write(
+        dir.path().join(CONFIG_FILE_NAME),
+        r#"{"password": "configured"}"#,
+    )
+    .expect("write config");
+    let out = dir.path().join("dist");
+    let mut override_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+    override_request.settings.password = Some("from-cli".to_string());
+
+    let (outcome, _, _) = execute(&override_request);
+    outcome.expect("the command line password seals the document");
+
+    let blob = enc_of(&shell_of(&out), "b.md");
+    assert!(
+        opens(&blob, "from-cli", "b.md").is_ok(),
+        "the command line password sealed the document"
+    );
+    assert_eq!(
+        opens(&blob, "configured", "b.md"),
+        Err(wikicc::crypto::OpenError::Authenticated),
+        "the configured password did not"
+    );
+}
+
+/// The `enc` block of `id`, taken out of the shell payload.
+fn enc_of(shell: &str, id: &str) -> serde_json::Value {
+    let marker = r#"<script id="wikicc-payload" type="application/json">"#;
+    let start = shell.find(marker).expect("payload element") + marker.len();
+    let end = shell[start..].find("</script>").expect("payload end") + start;
+    let payload: serde_json::Value =
+        serde_json::from_str(&shell[start..end]).expect("payload JSON");
+    payload["docs"]
+        .as_array()
+        .expect("payload docs")
+        .iter()
+        .find(|doc| doc["id"] == id)
+        .expect("the document is in the payload")["enc"]
+        .clone()
+}
+
+/// Try to open an `enc` block with `password`, binding `aad`.
+fn opens(
+    blob: &serde_json::Value,
+    password: &str,
+    aad: &str,
+) -> std::result::Result<Vec<u8>, wikicc::crypto::OpenError> {
+    use base64::Engine as _;
+
+    wikicc::crypto::open(
+        wikicc::crypto::SealedRef {
+            salt: &base64::engine::general_purpose::STANDARD
+                .decode(blob["salt"].as_str().expect("salt"))
+                .expect("the salt decodes"),
+            nonce: &base64::engine::general_purpose::STANDARD
+                .decode(blob["nonce"].as_str().expect("nonce"))
+                .expect("the nonce decodes"),
+            ct: &base64::engine::general_purpose::STANDARD
+                .decode(blob["ct"].as_str().expect("ct"))
+                .expect("the ciphertext decodes"),
+        },
+        password,
+        aad.as_bytes(),
+    )
+}
+
+#[test]
+fn an_empty_configured_password_is_a_hard_error() {
+    let dir = fixture();
+    std::fs::write(dir.path().join(CONFIG_FILE_NAME), r#"{"password": ""}"#).expect("write config");
+    let out = dir.path().join("dist");
+    let request = request(dir.path(), &out, OutputFormat::SingleHtml);
+
+    let (outcome, stdout, stderr) = execute(&request);
+
+    let error = outcome.expect_err("an empty password is rejected");
+    assert_eq!(error.to_string(), "'password' must be a non-empty string");
+    assert_eq!(stdout, "");
+    assert_eq!(stderr, "");
+    assert!(!out.exists(), "a refused build writes nothing");
+}

@@ -154,6 +154,7 @@ mod tests {
                 edges: Vec::new(),
                 stats: Stats::default(),
             },
+            front_matters: Vec::new(),
             assets,
             diagnostics: Vec::new(),
         };

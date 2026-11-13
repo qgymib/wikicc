@@ -14,14 +14,18 @@ name = "wikicc"
 path = "src/main.rs"
 
 [dependencies]
+aes-gcm = { version = "0.10", features = ["getrandom"] }
 base64 = "0.23"
 clap = { version = "4", features = ["derive"] }
 icu = "2.4.0"
 mime_guess = "2"
 minijinja = "2"
 markdown = "1"
+pbkdf2 = "0.12"
+rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 sha2 = "0.10"
 syntect = { version = "5.3.0", default-features = false, features = [
     "default-fancy",
@@ -67,4 +71,19 @@ opt-level = 3
 opt-level = 3
 
 [profile.test.package.syntect]
+opt-level = 3
+
+# Key derivation is SHA-256-bound: compiling the hash and its PBKDF2 driver
+# with optimisations keeps per-document sealing (600k rounds) and its
+# round-trip tests fast in the default (unoptimised) dev and test profiles.
+[profile.dev.package.pbkdf2]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.test.package.pbkdf2]
+opt-level = 3
+
+[profile.test.package.sha2]
 opt-level = 3

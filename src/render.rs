@@ -51,7 +51,7 @@ use crate::error::{Error, Result};
 use crate::markdown::highlight::{light_theme_css, theme_css};
 use crate::markdown::sections::Block;
 use crate::markdown::toc::TocEntry;
-use crate::site::{Edge, SiteBundle, Stats, flatten_headings};
+use crate::site::{Edge, EncryptedBlob, SiteBundle, Stats, flatten_headings};
 
 /// Page skeleton, with the four template variables below.
 ///
@@ -237,6 +237,11 @@ struct ManifestDoc<'a> {
     id: &'a str,
     title: &'a str,
     hash: &'a str,
+    /// Whether the document is sealed: the reader knows the lock from the
+    /// manifest alone, without fetching the chunk. The key is absent for a
+    /// public document, so an unencrypted site's manifest is unchanged.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    enc: bool,
 }
 
 /// The manifest: the payload the pages shell embeds.
@@ -253,6 +258,10 @@ struct Manifest<'a> {
 }
 
 /// One document as the chunk file carries it.
+///
+/// A sealed document's body fields arrive emptied and `enc` carries the
+/// ciphertext beside them; a public document has no `enc` key at all, so its
+/// chunk is byte-identical to what earlier builds wrote.
 #[derive(serde::Serialize)]
 struct ChunkPayload<'a> {
     id: &'a str,
@@ -261,15 +270,27 @@ struct ChunkPayload<'a> {
     toc: &'a [TocEntry],
     blocks: &'a [Block],
     text: &'a str,
+    /// Sealed body of a locked document, absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enc: Option<&'a EncryptedBlob>,
 }
 
 /// One document's record in the search corpus file.
+///
+/// A sealed document contributes its title only — its outline and plain text
+/// are the body the artifact must not carry — so the two keys are omitted
+/// entirely for it. A public document always carries both, even when empty,
+/// exactly as earlier builds wrote them.
 #[derive(serde::Serialize)]
 struct SearchRecord<'a> {
     id: &'a str,
     title: &'a str,
-    headings: String,
-    text: &'a str,
+    /// Pre-flattened outline text; absent for a sealed document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    headings: Option<String>,
+    /// Plain text; absent for a sealed document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<&'a str>,
 }
 
 /// The search corpus file: the text every document contributes to search.
@@ -361,6 +382,7 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
             toc: &doc.toc,
             blocks: &doc.blocks,
             text: &doc.text,
+            enc: doc.enc.as_ref(),
         };
         let json =
             serde_json::to_string(&payload).expect("a document chunk always serialises to JSON");
@@ -386,6 +408,7 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
                 id: &doc.id,
                 title: &doc.title,
                 hash: &chunk.hash,
+                enc: doc.enc.is_some(),
             })
             .collect(),
         edges: &bundle.edges,
@@ -400,11 +423,14 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
         docs: bundle
             .docs
             .iter()
-            .map(|doc| SearchRecord {
-                id: &doc.id,
-                title: &doc.title,
-                headings: flatten_headings(&doc.toc),
-                text: &doc.text,
+            .map(|doc| {
+                let sealed = doc.enc.is_some();
+                SearchRecord {
+                    id: &doc.id,
+                    title: &doc.title,
+                    headings: (!sealed).then(|| flatten_headings(&doc.toc)),
+                    text: (!sealed).then_some(doc.text.as_str()),
+                }
             })
             .collect(),
     };
@@ -835,6 +861,79 @@ mod tests {
 
         // The manifest hash addresses the chunk, so the reader can bust caches.
         assert_eq!(manifest["docs"][0]["hash"], chunk.hash.as_str());
+    }
+
+    #[test]
+    fn the_pages_render_projects_a_sealed_document_into_every_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source(
+            "a.md",
+            "A",
+            "---\nencrypt: true\n---\n\n# A\n\nsecret body\n",
+        )];
+        let mut build = build_site("Site", dir.path(), &docs);
+        crate::encrypt::seal_bundle(&mut build, Some("global secret")).expect("seals");
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
+
+        // The manifest marks the lock beside the reference.
+        let manifest: serde_json::Value =
+            serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
+        assert_eq!(manifest["docs"][0]["enc"], true);
+        assert_eq!(
+            manifest["docs"][0].as_object().map(|object| object.len()),
+            Some(4),
+            "the manifest entry carries id, title, hash and the enc mark"
+        );
+
+        // The chunk carries the ciphertext beside the emptied body.
+        let chunk = &rendered.chunks[0];
+        let value: serde_json::Value = serde_json::from_str(&chunk.json).expect("chunk JSON");
+        assert_eq!(
+            value
+                .as_object()
+                .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+            Some(vec!["blocks", "enc", "html", "id", "text", "title", "toc"])
+        );
+        assert_eq!(value["html"], "");
+        assert_eq!(value["text"], "");
+        assert!(
+            !value["enc"]["ct"].as_str().expect("ct").is_empty(),
+            "the ciphertext travels in the chunk"
+        );
+        assert!(
+            !chunk.json.contains("secret body") && !chunk.json.contains("global secret"),
+            "the chunk never carries the plaintext or the password: {}",
+            chunk.json
+        );
+
+        // The corpus lists the title only.
+        let corpus: serde_json::Value =
+            serde_json::from_str(&rendered.search_json).expect("corpus JSON");
+        assert_eq!(
+            corpus["docs"][0]
+                .as_object()
+                .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+            Some(vec!["id", "title"]),
+            "a sealed record contributes its title alone"
+        );
+    }
+
+    #[test]
+    fn a_public_document_without_headings_keeps_its_corpus_keys() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Site", dir.path(), &[source("a.md", "A", "just text\n")]);
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
+
+        let corpus: serde_json::Value =
+            serde_json::from_str(&rendered.search_json).expect("corpus JSON");
+        assert_eq!(
+            corpus["docs"][0]
+                .as_object()
+                .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+            Some(vec!["headings", "id", "text", "title"]),
+            "an empty outline still carries the headings key"
+        );
+        assert_eq!(corpus["docs"][0]["headings"], "");
     }
 
     #[test]

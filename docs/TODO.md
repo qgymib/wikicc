@@ -52,7 +52,7 @@
 | `encrypt: ""`、数字、列表等非法值 | 硬错误：构建退出码 1，消息指明文档与原因 |
 
 - `markdown` crate 的 `frontmatter` 构造已把 `---…---` 解析为 `Node::Yaml`（携带原始 YAML 文本，现被丢弃）——新增"从 AST 提取原文 + YAML 解析"一步。
-- YAML 解析依赖：首选 `serde_yaml` 0.9（成熟稳定，untagged enum 直接映射 `true|"密码"|false`；上游已归档但 API 稳定）；备选 `yaml-rust2`（维护中）。**实现期二选一锁定并在此记录。**
+- YAML 解析依赖：**已锁定 `serde_yaml` 0.9**（阶段一实施按首选落定；语义矩阵以 `Value` 手工匹配实现而非 untagged enum，非法值的错误消息可指明具体形状；上游已归档但 API 稳定。注意 `encrypt: yes` 按 YAML 1.2 是字符串即文章密码，`encrypt:` 空值按缺省处理，均已由测试钉住）。
 - 未知 front matter 键静默容忍（文章常携带其他工具的字段）；`front_matter_stays_out_of_every_output` 契约（YAML 不进任何输出）不得破坏。
 
 ### 2.3 密码三源与构建校验
@@ -149,7 +149,7 @@ flowchart TD
 
 ### 阶段一：构建端加密核心
 
-**状态**：未开始
+**状态**：已完成（2026-11-13，`add build-side article encryption core`）
 
 **范围**
 1. front matter 提取与 `encrypt` 字段解析（语义矩阵，非法值硬错误）。
@@ -174,6 +174,35 @@ flowchart TD
 - 字节级回归：不含 `encrypt` 的输入，三种格式产物与改动前逐字节一致。
 - 既有契约：`front_matter_stays_out_of_every_output` 保持通过。
 - 阅读器：打开含加密文档的产物不崩溃，显示锁定占位（node --test + 手测）。
+
+**完成记录**（2026-11-13）
+
+实际改动：
+- `Cargo.toml`：新增 `aes-gcm 0.10`（getrandom）、`pbkdf2 0.12`、`rand_core 0.6`（getrandom）、`serde_yaml 0.9`；`sha2`/`pbkdf2` 开 dev/test profile opt-level 3（600k 轮 KDF 在未优化 profile 下过慢，沿 syntect 先例）。
+- `src/crypto.rs`[新]：`seal`/`open` 原语（PBKDF2-HMAC-SHA256 600k → AES-256-GCM，`ct=ciphertext||tag`，AAD 参数化），`SealedBytes`/`SealedRef`/`OpenError{Malformed,Authenticated}`；10 个单测（往返、错误密码、AAD 不匹配、篡改三态、畸形参数、随机性、空与 Unicode 明文、常量）。
+- `src/encrypt.rs`[新]：`parse_directive` 语义矩阵（`true`→全局、`false`/`null`/缺省→不加密、三种引号+裸标量→文章密码；`""`/数字/序列/映射/坏 YAML 硬错误含 doc id；未知键与非映射原文容忍）与 `seal_bundle`（文章密码 > 全局密码；缺密码 `Error::InvalidInput` 含 doc id 与三源提示；置空四字段与写 `enc` 同一 pass 完成，edges/stats 不动）；15 个单测。
+- `src/markdown/mod.rs`：`RenderedDoc.front_matter` 携带 `Node::Yaml` 原文（`prepare` 拆出 `prepare_tree`，`render_document_with` 单次解析内先提取再转换；`sections_of`/`first_h1` 不动）；4 个新测试，`front_matter_stays_out_of_every_output` 保持通过。
+- `src/site.rs`：`EncryptedBlob{v,kdf,iters,salt,nonce,ct}`；`DocModel.enc`（`skip_serializing_if`）；`SiteBuild.front_matters`（与 docs 同序的非序列化旁路）；3 个新测试。
+- `src/pipeline.rs`：`seal_bundle` 接线于 `register_favicon` 之后、诊断输出之前（缺密码硬错误 stdout/stderr 全空、不写产物，与 favicon 失败先例一致）。
+- `src/options.rs` / `src/env.rs` / `src/config.rs` / `src/cli.rs`：`Settings.password` + `Options.password` 三源合并（`cli.or(env).or(file)`，空白硬错误沿 `home` 先例）；`WIKICC_PASSWORD`（第八变量，值 trim——含首尾空白的密码不可经变量表达，文档已注明，config 逐字读取可表达）；config `password` 键（`null`=未提及、空白/非字符串硬错误）+ `template()` 增 `"password": null`；`--password` 帮助注明推荐环境变量；三处模块文档同步；单测与集成测试扩展。
+- `src/render.rs`：`ManifestDoc.enc`（bool，`skip_serializing_if = Not::not`）、`ChunkPayload.enc`（`Option<&EncryptedBlob>`）、`SearchRecord.headings/text` 改 `Option`+skip（未加密输出逐字节不变——空 outline 仍输出 `"headings":""`；加密条目两键省略，仅 `{id,title}`）；2 个新测试。
+- `src/web/js/app.js`：`isLocked`/`renderLocked` 锁定占位（`doc-locked` 段落 + `doc-path`；跳过图表/公式/预览增强、缺章 banner 与锚点滚动）；`tests/js/app-session.test.js` 增 4 用例（harness 增 `options.docs`/`options.payload`/`options.chunks` 注入口）。
+- `src/lib.rs`：注册 `crypto`/`encrypt` 模块与 re-export，crate 文档补加密阶段。
+- 测试：`tests/encrypt.rs`[新] 15 用例；`tests/cli.rs` 帮助断言加 `--password`；`tests/config.rs` 增配置密码三格式与 CLI 覆盖（解密验证）、空密码硬错误；`tests/site.rs` 增密封文档 payload 形状。
+
+与计划的偏离：
+- `tests/writers.rs` 未加用例：三格式写作器路径已由 `tests/encrypt.rs` 逐格式真实构建覆盖，无 writer 特有分支需单独冒烟。
+- 完成记录状态行以提交信息标识本阶段提交（提交 hash 无法在自身提交内写明），hash 经 `git log` 可查。
+- 已知限制（留待后续阶段处置）：加密文档内的 `wikicc-asset:` 占位符随密文密封，写作器无法展开——加密文档引用的本地资源在解密前不可见，阶段二解锁后即可恢复，阶段五文档记录该边界。
+
+验收结果：
+- crypto 往返/失败矩阵：`crypto::tests` 10/10（错误密码/AAD 不匹配/翻转 payload/翻转 tag/截断 tag → `Authenticated`；短 salt/短 nonce/短 ct → `Malformed`；每次密封 salt/nonce 全新）。
+- 语义矩阵：`encrypt::tests` 全过（`true`/`false`/`null`/缺省/三种引号/裸标量/`""`/`123`/序列/映射/坏 YAML/非映射容忍/未知键容忍）。
+- 三源合并：`options.rs`/`env.rs`/`config.rs` 单测 + CLI 级验证——CLI > env > file 优先级经解密逐密码证实；CLI 与 config 空白硬错误；`WIKICC_PASSWORD` 空白=未提及（落到缺密码错误）。
+- 集成验收：`encrypt: true` 无密码 → 退出 1、stderr 含 `document 'intro.md'`，stdout 空、产物目录不存在（与 `--strict` 无关）；有密码 → 三格式产物含 salt/nonce/ct 且不含密码/正文明文/front matter，`enc.v=1`/`kdf`/`iters=600000` 断言；pages chunk 含 `enc`、manifest 条目恰 4 键带 `"enc":true`、`search.json` 加密条目仅 `{id,title}`；AAD 绑定（错文档 id 拒解）、文章密码无全局可用、引号样式三态。
+- 字节级回归：无 `encrypt` 输入的三格式产物无 `"enc"` 键；corpus 条目仍带 `headings`/`text`；`json_carries_the_documented_keys` 等既有形状契约全部保持；`front_matter_stays_out_of_every_output` 通过。
+- 阅读器：`app-session` 41/41（锁定占位、公开↔锁定切换、缺章静默、pages chunk 路径）；手测含加密文档产物显示标题与占位、不崩溃。
+- 四道质量门：`cargo fmt --check` ✓；`cargo clippy --all-targets -- -D warnings` ✓；`npm run check`（biome --error-on-warnings，46 文件无告警）✓；`cargo test` 全绿（583 lib + 15 encrypt + 20 config + 11 site + 6 cli + links/preview/markdown/writers/scan 等 + JS 套件 20）。
 
 ### 阶段二：阅读器解锁流程
 

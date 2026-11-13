@@ -2,7 +2,7 @@
 //!
 //! Environment variables are the second of the three setting sources: an
 //! explicit command line flag overrides them, and they override
-//! `.wikicc.json`. Seven variables name the settings both other surfaces
+//! `.wikicc.json`. Eight variables name the settings both other surfaces
 //! carry ([`crate::options::Settings`]), spelled with a `WIKICC_` prefix and
 //! in upper case only:
 //!
@@ -21,6 +21,13 @@
 //!   commas, spelled like a comma-joined `--exclude` list. The variable
 //!   replaces the configured list entirely, exactly as the flag does.
 //! - `WIKICC_FAVICON`: the favicon file, spelled like the `--favicon` flag.
+//! - `WIKICC_PASSWORD`: the global password sealing documents whose front
+//!   matter declares encryption, spelled like the `--password` flag. This
+//!   is the recommended way to hand the build a password: unlike the flag
+//!   it leaves no trace in the shell history or the process list. Like
+//!   every variable the value is trimmed, so a password that must begin or
+//!   end with whitespace cannot be expressed here — spell it in the
+//!   configuration file instead, where values are read verbatim.
 //!
 //! The reading rules follow the variable's role as an export in someone
 //! else's environment:
@@ -76,6 +83,9 @@ pub const EXCLUDE_VAR: &str = "WIKICC_EXCLUDE";
 /// Environment variable naming the favicon file.
 pub const FAVICON_VAR: &str = "WIKICC_FAVICON";
 
+/// Environment variable naming the global sealing password.
+pub const PASSWORD_VAR: &str = "WIKICC_PASSWORD";
+
 /// Read the `WIKICC_*` settings from the process environment.
 ///
 /// Names or values that are not valid unicode are read lossily, so an
@@ -120,6 +130,7 @@ where
             "HOME" => settings.home = Some(value.to_string()),
             "EXCLUDE" => settings.exclude = Some(parse_excludes(name, value)?),
             "FAVICON" => settings.favicon = Some(value.to_string()),
+            "PASSWORD" => settings.password = Some(value.to_string()),
             // The environment is a shared namespace: an upper-case name this
             // version does not know may belong to another program, so it is
             // ignored instead of being called a typo.
@@ -192,6 +203,7 @@ mod tests {
             (HOME_VAR, "intro"),
             (EXCLUDE_VAR, "drafts,archive/old"),
             (FAVICON_VAR, "assets/icon.png"),
+            (PASSWORD_VAR, "global secret"),
         ])
         .expect("the variables parse");
 
@@ -205,6 +217,7 @@ mod tests {
             Some(vec!["drafts".to_string(), "archive/old".to_string()])
         );
         assert_eq!(settings.favicon.as_deref(), Some("assets/icon.png"));
+        assert_eq!(settings.password.as_deref(), Some("global secret"));
     }
 
     #[test]
@@ -227,11 +240,20 @@ mod tests {
 
     #[test]
     fn values_are_trimmed() {
-        let settings =
-            pairs(&[(OUT_VAR, " build "), (TITLE_VAR, " Handbook ")]).expect("the variables parse");
+        let settings = pairs(&[
+            (OUT_VAR, " build "),
+            (TITLE_VAR, " Handbook "),
+            (PASSWORD_VAR, " global secret "),
+        ])
+        .expect("the variables parse");
 
         assert_eq!(settings.out, Some(PathBuf::from("build")));
         assert_eq!(settings.title.as_deref(), Some("Handbook"));
+        assert_eq!(
+            settings.password.as_deref(),
+            Some("global secret"),
+            "a password cannot begin or end with whitespace through a variable"
+        );
     }
 
     #[test]
