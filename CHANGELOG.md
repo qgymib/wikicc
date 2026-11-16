@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Entries describe what a user of the binary can observe, not how the change was
 implemented; the rules behind them live in `docs/design.md`.
 
+## [2.1.0] - 2026-11-16
+
+A document can be sealed with a password, settings can come from
+environment variables, and the reader frame is rebuilt around two slim rails
+with a floating link-graph window.
+
+### Added
+
+- Document encryption. An `encrypt` field in a document's front matter
+  (`true` for the global password, or a password of its own) seals the body
+  with AES-256-GCM at build time. The password comes from `--password`, the
+  `WIKICC_PASSWORD` variable, or the configuration file; building an
+  encrypted document without a password available is an error naming the
+  document. A locked document keeps its title visible in the sidebar and in
+  search; the reader shows a locked page with an unlock form in place of the
+  article, and the unlocked body is kept in memory for the session only —
+  it is never written to storage.
+- Environment variables as a settings source. Every option the command line
+  and `.wikicc.json` accept is also spelled as a `WIKICC_`-prefixed variable
+  (`WIKICC_OUT`, `WIKICC_FORMAT`, `WIKICC_TITLE`, `WIKICC_STRICT`,
+  `WIKICC_HOME`, `WIKICC_EXCLUDE`, `WIKICC_FAVICON`, `WIKICC_PASSWORD`),
+  read below the command line and above the file. A blank variable did not
+  speak, an unknown `WIKICC_*` name is ignored, and a value that cannot be
+  understood fails the build naming the variable.
+- A favicon for the reader page: the project logo is embedded as the
+  default, and `--favicon`, the `favicon` configuration key, or
+  `WIKICC_FAVICON` points at a different file.
+- Every code block in the article carries a copy button, and a successful
+  copy is announced with a check.
+- The link preview popover grows edge handles and can be resized from its
+  borders.
+- A link to another web page opens in a new tab.
+- The document sidebar can be hidden and shown again at desktop widths; on
+  phone widths it stays a drawer.
+- The link graph is split into a local and a global panel — the current
+  document's neighbourhood and the whole folder — each opened from its own
+  switch on the right rail. On desktop widths the panel floats above the
+  article as a window, so opening or closing it no longer shifts the layout.
+
+### Changed
+
+- The reader frame is rebuilt around two slim rails: the left one switches
+  the sidebar between the document list and the chapter outline, the right
+  one carries search, the theme switch and the link-graph switches. The top
+  toolbar is gone.
+- The link preview panel opens on the roomier side of the article, so it
+  never covers the link it previews.
+
+### Fixed
+
+- Syntax highlighting in the light theme keeps its colours instead of
+  washing out.
+- A table keeps the column widths it was laid out with, so sorting and
+  filtering no longer shift them.
+
 ## [2.0.1] - 2026-11-09
 
 ### Fixed
