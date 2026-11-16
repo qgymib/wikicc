@@ -281,15 +281,23 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
 
     let wide = media_block(css, "min-width: 641px");
 
-    // The columns are named by position only in the two rules that place the
-    // regions the grid cannot infer: the bar and the panels share the last
-    // one, past the rail and the list, and a rule left one column behind
-    // slides the panels into the middle of the page.
+    // The graph's panels are a floating window, no part of the grid: anchored
+    // to the viewport's top right just inside the right rail, out of the
+    // page's flow, so showing or hiding them never moves a column.
     let inspector = main_inspector_rule(css);
     assert_eq!(
-        declaration(inspector, "grid-column"),
-        Some("4"),
-        "the panels hold the column past the rail and the list: {inspector}"
+        declaration(inspector, "position"),
+        Some("fixed"),
+        "the panels hang above the page, out of the grid's flow: {inspector}"
+    );
+    assert_eq!(
+        declaration(inspector, "max-height"),
+        Some("80vh"),
+        "the window never spans the page's full height: {inspector}"
+    );
+    assert!(
+        declaration(inspector, "width").is_some_and(|w| w.contains("min(760px")),
+        "the window keeps a reading-friendly width of its own: {inspector}"
     );
     let collapsed = rule_of(wide, "body[data-sidebar=\"hidden\"] {");
     assert_eq!(
@@ -366,7 +374,7 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
     // attribute, so only one view shows at a time and a second press on the
     // showing switch folds the column the way the list folds today. The
     // graph keeps its own switch in the right rail: one attribute hides it
-    // alone, and putting it away folds the panel column.
+    // alone, and putting it away folds the floating window.
     let page = render(&build(&fixture_root(), "Fixture"));
     let css = SHELL_CSS;
 
@@ -415,24 +423,24 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
     let global_panel = page.html.find(r#"id="graph-global-panel""#);
     assert!(
         local_panel.is_some() && global_panel.is_some(),
-        "the column holds one panel per view"
+        "the floating window holds one panel per view"
     );
     assert!(
         !page.html.contains("graph-mode"),
         "the mode switch is gone; the rail's switches answer for the views"
     );
 
+    // Both graph switches start offering their views: the floating window
+    // waits for a switch, so neither switch is lit before a press.
     let head = &page.html[local..];
     let head = &head[..head.find('>').expect("the switch's open tag ends")];
     assert!(
         head.contains(r#"aria-controls="graph-local-panel""#)
-            && head.contains(r#"aria-expanded="true""#),
-        "the local switch names its panel and starts lit: {head}"
+            && head.contains(r#"aria-expanded="false""#)
+            && head.contains("Show local graph"),
+        "the local switch names its panel and starts offering it: {head}"
     );
 
-    // The global view's switch starts offering the view: the local one is
-    // what a page shows before a press, so the switch is unlit and says what
-    // it brings.
     let head = &page.html[global..];
     let head = &head[..head.find('>').expect("the switch's open tag ends")];
     assert!(
@@ -462,12 +470,17 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         "the views' switching lives in the rail, not in a tablist"
     );
 
-    // The grid books the page with rails at both edges: the wide layout's five
-    // columns end where they began, in a rail's width.
+    // The grid books the page with rails at both edges: its four columns end
+    // where they began, in a rail's width, and the graph's floating window
+    // takes no column of its own.
     let app = rule_of(css, ".app {");
     assert!(
-        app.contains("var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--inspector-width) var(--rail-width)"),
+        app.contains("var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width)"),
         "the grid is bookended by the two rails: {app}"
+    );
+    assert!(
+        !app.contains("--inspector-width"),
+        "the panels are no column of the grid: {app}"
     );
 
     // The right rail is the left one mirrored: its column is named, its rule
@@ -477,7 +490,7 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
     let rail = rule_of(css, ".rail-end {");
     assert_eq!(
         declaration(rail, "grid-column"),
-        Some("5"),
+        Some("4"),
         "the rail closes the grid at the far edge: {rail}"
     );
     assert_eq!(
@@ -517,7 +530,7 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
     );
 
     // Two panels, one at a time: one body attribute picks the view the
-    // column shows, and the other panel steps out of the flow. The page's
+    // window shows, and the other panel steps out of the flow. The page's
     // markup carries no attribute at all — the local view is the state a
     // reader starts in — so the rule that hides the global panel reads the
     // negation.
@@ -540,44 +553,30 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         "the local view is what a reader starts in: {global_off}"
     );
 
-    // The graph's fold attribute takes the whole column out, wherever the
-    // layout has rails; the outline answers to the side view now, so no
-    // panel attribute names it any more.
+    // The graph's fold attribute takes the whole floating window out, wherever
+    // the layout has rails; the outline answers to the side view now, so no
+    // panel attribute names it any more. The window is no part of the grid,
+    // so the fold is one `display: none` and no column narrows anywhere.
     let wide = media_block(css, "min-width: 641px");
-    let graph_hidden = rule_of(wide, r#"body[data-graph="hidden"] .graph-panel {"#);
+    let graph_hidden = rule_of(wide, r#"body[data-graph="hidden"] .inspector {"#);
     assert_eq!(
         declaration(graph_hidden, "display"),
         Some("none"),
         "a switch puts its own panel away: {graph_hidden}"
     );
+    let gate = rule_of(wide, r#"body:not([data-graph-view]) .inspector {"#);
+    assert_eq!(
+        declaration(gate, "display"),
+        Some("none"),
+        "before the script runs the window waits for the view attribute: {gate}"
+    );
+    assert!(
+        !css.contains("--inspector-width"),
+        "the floating window answers to no column token anywhere"
+    );
     assert!(
         !css.contains("data-outline"),
         "the outline answers to the side view, not to a panel attribute"
-    );
-
-    // With the graph put away the panel column has nothing left to show, so
-    // the attribute narrows the shared token to nothing and the column folds
-    // like the sidebar folds: the column keeps its cell with `visibility`, so
-    // neither rail nor article has to move.
-    let fold = media_block(css, "min-width: 901px");
-    let folded = rule_of(fold, r#"body[data-graph="hidden"] {"#);
-    assert_eq!(
-        declaration(folded, "--inspector-width"),
-        Some("0px"),
-        "the graph's switch narrows the column to nothing: {folded}"
-    );
-    let column = rule_of(fold, r#"body[data-graph="hidden"] .inspector {"#);
-    assert_eq!(declaration(column, "visibility"), Some("hidden"));
-    assert_eq!(declaration(column, "padding"), Some("0"));
-    assert_eq!(declaration(column, "border-left"), Some("0"));
-
-    // The middle grid keeps the rail too, so there the whole panel row goes.
-    let middle = media_block(css, "and (max-width: 900px)");
-    let row = rule_of(middle, r#"body[data-graph="hidden"] .inspector {"#);
-    assert_eq!(
-        declaration(row, "display"),
-        Some("none"),
-        "the middle grid hides the panel row outright: {row}"
     );
 
     // The phone shows whichever graph view the attribute picked and answers
@@ -745,19 +744,19 @@ fn declaration<'a>(block: &'a str, property: &str) -> Option<&'a str> {
 }
 
 #[test]
-fn the_panel_column_is_painted_from_the_shared_surface() {
-    // The panel column is one surface painted from two stops, and its left
-    // rule has a token of its own. Asserted as a contract because a seam is
+fn the_panel_window_is_painted_from_the_shared_surface() {
+    // The floating window is one surface painted from two stops, and its rule
+    // has a token of its own. Asserted as a contract because a seam is
     // invisible once it is wrong — only a hue step and a broken line remain.
     let css = SHELL_CSS;
 
     assert!(
         css.contains("--shell-top:") && css.contains("--shell-bottom:"),
-        "the column surface is defined by shared tokens"
+        "the window's surface is defined by shared tokens"
     );
     assert!(
         css.contains("--shell-line:"),
-        "the column's left rule has a token of its own"
+        "the window's rule has a token of its own"
     );
     assert_eq!(
         css.matches("--shell-top:").count(),
@@ -765,16 +764,16 @@ fn the_panel_column_is_painted_from_the_shared_surface() {
         "dark, explicit light and system light each declare the column surface"
     );
 
-    let column = main_inspector_rule(css);
+    let window = main_inspector_rule(css);
     assert_eq!(
-        declaration(column, "border-left"),
+        declaration(window, "border"),
         Some("1px solid var(--shell-line)"),
-        "the column's left rule runs its full height"
+        "the window's frame runs all the way around it"
     );
     assert!(
-        declaration(column, "background")
+        declaration(window, "background")
             .is_some_and(|value| value.contains("--shell-top") && value.contains("--shell-bottom")),
-        "the column is painted from both stops of the shared surface: {column}"
+        "the window is painted from both stops of the shared surface: {window}"
     );
 }
 
@@ -792,14 +791,14 @@ fn the_panels_keep_a_stable_right_edge() {
         "the panels' right edge holds still whether or not the scrollbar shows"
     );
 
-    // The concession is wide-screen furniture: the collapsed inspector no
-    // longer scrolls, so it reserves no empty strip.
-    let narrow = media_block(css, "max-width: 900px");
+    // The concession is the phone's: the static section there no longer
+    // scrolls, so it reserves no empty strip.
+    let narrow = media_block(css, "max-width: 640px");
     let inspector = rule_of(narrow, ".inspector {");
     assert_eq!(
         declaration(inspector, "scrollbar-gutter"),
         Some("auto"),
-        "the collapsed panel reserves no empty strip"
+        "the static section reserves no empty strip"
     );
 }
 
@@ -1498,10 +1497,9 @@ fn a_hit_is_marked_in_the_document_without_shouting() {
 }
 
 /// The main `.inspector` rule, found by its position: the sheet declares
-/// `.inspector` several times — the main one that carries the scroll
-/// behaviour first, then the breakpoint overrides below it (including the
-/// folded-column rules, which end in `.inspector {`). The main rule is the
-/// first occurrence.
+/// `.inspector` several times — the main one that carries the floating-window
+/// behaviour first, then the breakpoint overrides below it. The main rule is
+/// the first occurrence.
 fn main_inspector_rule(css: &str) -> &str {
     let first = css.find(".inspector {").expect("inspector rule");
 
@@ -1541,21 +1539,21 @@ fn the_rail_icons_stay_compact() {
 }
 
 #[test]
-fn the_column_opens_with_the_panels_own_gap() {
-    // The column opens with the same 14px air the panels are held apart by,
-    // so the first panel sits where the rhythm expects it.
+fn the_window_opens_with_the_panels_own_gap() {
+    // The floating window opens with the same 14px air the panels are held
+    // apart by, so the first panel sits where the rhythm expects it.
     let css = SHELL_CSS;
     let inspector = main_inspector_rule(css);
 
     assert_eq!(
         declaration(inspector, "gap"),
         Some("14px"),
-        "the panels are held apart by the column's rhythm"
+        "the panels are held apart by the window's rhythm"
     );
     assert_eq!(
         declaration(inspector, "padding"),
         Some("14px 16px 18px"),
-        "the column carries the panels' rhythm at its top"
+        "the window carries the panels' rhythm at its top"
     );
 }
 

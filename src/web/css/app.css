@@ -24,7 +24,6 @@
   --radius-sm: 9px;
   --rail-width: 44px;
   --sidebar-width: 260px;
-  --inspector-width: 320px;
   /* The reading column's own breathing room. The lock page hands it back to
      center on the viewport, so the paddings live in tokens both sides read. */
   --content-pad-top: 44px;
@@ -125,9 +124,12 @@ a {
   display: grid;
   /* The two rails bookend the page: the left one carries the sidebar's
      switches, the right one the reader's app-level controls and the graph's.
-     The middle grid keeps the list's three columns — and the rightmost names
-     the rail again, so a fifth item cannot spill past it. */
-  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--inspector-width) var(--rail-width);
+     The middle grid keeps the list's two columns — and the rightmost names
+     the rail again, so a fourth item cannot spill past it. The graph's
+     panels take no column of their own: they hang above this grid as a
+     floating window (see `.inspector`), so showing or hiding them moves
+     nothing here. */
+  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
   align-items: start;
   min-height: 100vh;
 }
@@ -198,7 +200,7 @@ a {
    and its column is named, so the placement does not lean on the markup
    order the auto-placement would otherwise read. */
 .rail-end {
-  grid-column: 5;
+  grid-column: 4;
   border-right: 0;
   border-left: 1px solid var(--border);
 }
@@ -2235,21 +2237,30 @@ body[data-side-view="outline"] .sidebar .toc-panel {
 
 /* ---------- inspector ---------- */
 
-/* The panel column owns the page's full height: it sticks to the top edge
-   and scrolls its panels under its own surface. */
+/* The graph's panels live in a floating window, not in a column of the
+   grid: the window hangs above the page at the top right, anchored just
+   inside the right rail, and is out of the grid's flow entirely — showing
+   it or putting it away never moves the article, the list or a rail. Its
+   height follows what the view it holds needs, capped below the viewport,
+   and the window scrolls under its own surface when a picture outgrows
+   the cap. */
 .inspector {
-  position: sticky;
-  top: 0;
+  position: fixed;
+  top: 12px;
+  right: calc(var(--rail-width) + 12px);
+  z-index: 20;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  height: 100vh;
-  grid-column: 4;
-  /* The column opens with the same 14px rhythm the panels are held apart
+  width: min(760px, calc(100vw - 2 * var(--rail-width) - 24px));
+  max-height: 80vh;
+  /* The window opens with the same 14px rhythm the panels are held apart
      by, and keeps the article's 16px axis on its right edge. */
   padding: 14px 16px 18px;
-  border-left: 1px solid var(--shell-line);
+  border: 1px solid var(--shell-line);
+  border-radius: var(--radius);
   background: linear-gradient(180deg, var(--shell-top), var(--shell-bottom));
+  box-shadow: var(--shadow);
   overflow-y: auto;
   /* A classic scrollbar steals 8px of the panels' right edge only when the
      content overflows, so the edge would drift as documents change height.
@@ -2809,7 +2820,7 @@ body:not([data-graph-view="global"]) #graph-global-panel {
 
 .graph {
   position: relative;
-  min-height: 190px;
+  min-height: 380px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: rgba(11, 15, 20, 0.35);
@@ -2829,7 +2840,7 @@ body:not([data-graph-view="global"]) #graph-global-panel {
 .graph-svg {
   display: block;
   width: 100%;
-  height: 200px;
+  height: 400px;
   /* d3-zoom owns the gestures, so the browser must not scroll or zoom too. */
   touch-action: none;
   cursor: grab;
@@ -2985,16 +2996,16 @@ body:not([data-graph-view="global"]) #graph-global-panel {
    of the grid; the phone's drawer below has its own switches. The switch
    lives in the rail, the leftmost strip, which stays put whether the sidebar
    is out or not: the attribute narrows the shared `--sidebar-width` to
-   nothing, so the wide grid's five columns and the middle grid's four give
-   the sidebar's room back by one move. The sidebar folds with `visibility`,
+   nothing, so the grid gives the sidebar's room back by one move. The
+   sidebar folds with `visibility`,
    not `display`, so it keeps the grid cell it was already placed in — the
    article slides into the room without the placement of everything else
    around it having to be spelled out.
 
-   The graph's switch answers the same way for the panel column: the
-   attribute takes the graph out of the column's flow alone, and the fold
-   below narrows the column itself once the graph is all the column would
-   hold. The switches live wherever the layout has rails. */
+   The graph's switch answers for the floating window instead: the attribute
+   folds the window itself, which is no part of the grid, so nothing of the
+   page's layout answers to it. The switches live wherever the layout has
+   rails. */
 @media (min-width: 641px) {
   #sidebar-collapse,
   #graph-local-toggle,
@@ -3013,68 +3024,26 @@ body:not([data-graph-view="global"]) #graph-global-panel {
     border-right: 0;
   }
 
-  body[data-graph="hidden"] .graph-panel {
+  /* Both graph panels live in the one floating window, so the switch folds
+     the window itself. Out of the grid's flow, the fold moves nothing. */
+  body[data-graph="hidden"] .inspector {
+    display: none;
+  }
+
+  /* Before the script runs the body carries no graph view, and the window
+     would hang an empty picture over the article: the window waits for the
+     view attribute the reader's first render writes. */
+  body:not([data-graph-view]) .inspector {
     display: none;
   }
 }
 
-/* With the graph put away the panel column has nothing left to show, so the
-   attribute narrows the shared `--inspector-width` to nothing and the column
-   folds like the sidebar does — `visibility`, not `display`, so it keeps the
-   cell it was placed in and neither rail nor article has to move. */
-@media (min-width: 901px) {
-  body[data-graph="hidden"] {
-    --inspector-width: 0px;
-  }
-
-  body[data-graph="hidden"] .inspector {
-    visibility: hidden;
-    padding: 0;
-    border-left: 0;
-  }
-}
-
-@media (max-width: 1200px) {
-  :root {
-    --inspector-width: 280px;
-  }
-}
-
-/* Below the inspector's own width the panel column is gone, so the page's
-   grid loses its middle column: the two rails survive — the switches answer
-   at every width that has them — and the panels lie between. */
-@media (max-width: 900px) {
-  .app {
-    grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
-  }
-
-  /* The right rail is the last item in the markup, behind the panels: placed
-     freely it would fall into a row of its own under them, so it is pinned
-     beside the list instead, in the row the other regions share. */
-  .rail-end {
-    grid-row: 2;
-    grid-column: 4;
-  }
-
-  .inspector {
-    position: static;
-    grid-row: auto;
-    /* The row stops short of the right rail's column, so the panels do not
-       run underneath the strip that stands there. */
-    grid-column: 1 / -2;
-    height: auto;
-    border-top: 1px solid var(--border);
-    border-left: 0;
-    /* The collapsed panel no longer scrolls — the page does — so a reserved
-       gutter would just be an empty strip on its right edge. */
-    scrollbar-gutter: auto;
-  }
-
-  /* The dialog follows the screen down: a fixed margin rather than a share of
+/* The dialog follows the screen down: a fixed margin rather than a share of
    the viewport, so the smaller the window the closer the dialog is to
    filling it. The reading line is already one column with the list a third
    of it and the document two, so nothing here has to restack — only the
    width the columns of a result row are given tightens below. */
+@media (max-width: 900px) {
   .search-panel {
     width: calc(100vw - 16px);
     height: calc(100vh - 16px);
@@ -3085,15 +3054,6 @@ body:not([data-graph-view="global"]) #graph-global-panel {
      the ellipsis does the rest. */
   .search-result {
     grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
-  }
-}
-
-/* The middle grid keeps the rail on the right too, so a page with the graph
-   put away has no panel row at all: the row the panel shares is taken out,
-   and the article's own sections are the only thing left under it. */
-@media (min-width: 641px) and (max-width: 900px) {
-  body[data-graph="hidden"] .inspector {
-    display: none;
   }
 }
 
@@ -3157,8 +3117,28 @@ body:not([data-graph-view="global"]) #graph-global-panel {
     padding: var(--content-pad-top) 18px var(--content-pad-bottom);
   }
 
+  /* The floating window comes back down to earth on the phone: the graph is
+     a section under the article again, inside the grid's flow, where it
+     covers nothing and answers to no switch. The window's frame — the full
+     border, the corners, the shadow — belongs to the floating form alone. */
   .inspector {
+    position: static;
+    grid-row: auto;
+    /* The row stops short of the right rail's column, so the panels do not
+       run underneath the strip that stands there. */
+    grid-column: 1 / -2;
+    width: auto;
+    height: auto;
+    max-height: none;
     padding: 14px 14px 24px;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    box-shadow: none;
+    z-index: auto;
+    /* The section no longer scrolls — the page does — so a reserved gutter
+       would just be an empty strip on its right edge. */
+    scrollbar-gutter: auto;
   }
 
   /* The dialog keeps one margin step on each side and sheds the corners the

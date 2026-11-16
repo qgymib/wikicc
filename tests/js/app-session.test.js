@@ -1270,7 +1270,7 @@ test("the reader remembers which side view was showing", async () => {
   );
 });
 
-test("the local view starts showing and both switches say so", async () => {
+test("the graph starts folded away and its switches say so", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
 
@@ -1279,10 +1279,12 @@ test("the local view starts showing and both switches say so", async () => {
     const global = session.shell.get("graph-global-toggle");
     const outline = session.shell.get("outline-toggle");
 
+    // The floating window waits for a switch: the local view is the one
+    // selected, but nothing shows until the reader asks for it.
     assert.equal(body.getAttribute("data-graph-view"), "local");
-    assert.equal(body.getAttribute("data-graph"), null);
-    assert.equal(local.getAttribute("aria-expanded"), "true");
-    assert.equal(local.getAttribute("aria-label"), "Hide local graph");
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(local.getAttribute("aria-expanded"), "false");
+    assert.equal(local.getAttribute("aria-label"), "Show local graph");
     assert.equal(global.getAttribute("aria-expanded"), "false");
     assert.equal(global.getAttribute("aria-label"), "Show global graph");
     assert.equal(

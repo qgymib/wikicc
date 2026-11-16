@@ -643,9 +643,9 @@ export function start() {
    * Select the view the graph panel shows.
    *
    * The attribute is the state the stylesheet answers to; showing a view
-   * always unfolds the column, and the first look at the global view spends
-   * its layout — a panel never shown has never been laid out (see
-   * `createGlobalGraph`).
+   * always unfolds the floating window, and the first look at the global
+   * view spends its layout — a panel never shown has never been laid out
+   * (see `createGlobalGraph`).
    */
   function setGraphView(view) {
     if (view === "global") {
@@ -661,9 +661,9 @@ export function start() {
   /**
    * Put the graph panel away.
    *
-   * The stylesheet folds the panel column when the attribute is set and the
-   * width has a panel column at all. The selected view stays selected, so
-   * bringing the column back restores exactly the picture that was showing.
+   * The stylesheet folds the floating window when the attribute is set. The
+   * selected view stays selected, so bringing the window back restores
+   * exactly the picture that was showing.
    */
   function hideGraph() {
     document.body.setAttribute("data-graph", "hidden");
@@ -1482,8 +1482,8 @@ export function start() {
 
   /**
    * One gesture for a graph's switch: bring its view up, or — the view
-   * already showing — put the panel column away. The choice is the page's own
-   * for this visit only; no record is kept across a reload.
+   * already showing — put the floating window away. The choice is the
+   * page's own for this visit only; no record is kept across a reload.
    */
   function selectGraph(view) {
     if (currentGraphView() === view && graphVisible()) {
@@ -1553,14 +1553,16 @@ export function start() {
   // consulted: their `href`s start with the route prefix, not with `data:`.
   AssetLinks.listenForInlineDataLinks(document);
 
-  // The drawer starts closed; the sidebar's view starts where the reader last
-  // left it, and the graph starts in the local view — the states the
-  // switches' accessible records then follow. The graph keeps no record
-  // across a reload: every visit starts from the picture of the document at
-  // hand.
+  // The drawer starts closed; the sidebar's view starts where the reader
+  // last left it, and the graph starts in the local view with its floating
+  // window folded away — the reader asks for the picture with a switch, and
+  // the switches' accessible records follow. The graph keeps no record
+  // across a reload: every visit starts with nothing showing and the local
+  // view selected.
   setDrawer(false);
   setSideView(storedSideView());
   setSidebarHidden(storedSidebar());
   setGraphView("local");
+  hideGraph();
   render();
 }

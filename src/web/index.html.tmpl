@@ -62,7 +62,9 @@
     <!-- One panel per view, and one at a time on screen: the body attribute
          `data-graph-view` picks which. Each draws from its own container, so
          a picture a reader has arranged survives the other view being shown
-         and hiding it again. -->
+         and hiding it again. The panel is a floating window above the page
+         rather than a column of the grid: it hangs at the top right, out of
+         the page's flow, so opening it never moves the article. -->
     <section class="panel graph-panel" id="graph-local-panel" aria-labelledby="graph-local-heading">
       <div class="panel-header">
         <h2 class="panel-heading" id="graph-local-heading">Local graph</h2>
@@ -82,13 +84,13 @@
        chrome closing the grid at the far edge, and the home of the reader's
        app-level controls and the graph's switches. Search and the theme belong
        to the whole reader; each graph switch answers for one view of the one
-       panel column, the way the sidebar's switches answer for its two views:
-       an unlit one brings its view up, a lit one puts the column away. -->
+       floating panel window, the way the sidebar's switches answer for its two
+       views: an unlit one brings its view up, a lit one puts the window away. -->
   <div class="rail rail-end" id="rail-end">
     <button class="icon-button" id="search-toggle" type="button" aria-label="Search documents" aria-expanded="false" aria-controls="search-panel" title="Search documents (Ctrl+F)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
     </button>
-    <button class="icon-button" id="graph-local-toggle" type="button" aria-label="Hide local graph" aria-expanded="true" aria-controls="graph-local-panel" title="Hide local graph">
+    <button class="icon-button" id="graph-local-toggle" type="button" aria-label="Show local graph" aria-expanded="false" aria-controls="graph-local-panel" title="Show local graph">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="6.5" r="2.5"/><circle cx="18.5" cy="6.5" r="2.5"/><circle cx="12" cy="17.5" r="2.5"/><path d="M7.6 8.4 10.6 15.7M16.4 8.4 13.4 15.7M8 6.5h8"/></svg>
     </button>
     <button class="icon-button" id="graph-global-toggle" type="button" aria-label="Show global graph" aria-expanded="false" aria-controls="graph-global-panel" title="Show global graph">
