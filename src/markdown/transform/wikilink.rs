@@ -166,6 +166,7 @@ mod tests {
     use super::*;
     use crate::markdown::ast::to_own;
     use crate::markdown::parse::parse_document;
+    use crate::markdown::{LinkRewriter, LinkTarget, render_document, render_document_with};
 
     /// The first paragraph's children after the fold and the wikilink pass.
     fn shapes(source: &str) -> Vec<String> {
@@ -295,5 +296,79 @@ mod tests {
             shapes.iter().any(|shape| shape.contains("Wikilink")),
             "{shapes:?}"
         );
+    }
+
+    // Wikilinks and embeds rendered end to end.
+
+    /// Rewriter that records every destination and tags it, so a test can see
+    /// exactly what the serialiser handed over.
+    struct Recorder {
+        seen: Vec<(String, usize)>,
+    }
+
+    impl Recorder {
+        fn new() -> Self {
+            Self { seen: Vec::new() }
+        }
+    }
+
+    impl LinkRewriter for Recorder {
+        fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget {
+            self.seen.push((destination.to_string(), line));
+            LinkTarget::new(format!("rewritten:{destination}"))
+        }
+    }
+
+    #[test]
+    fn a_wikilink_without_a_definition_becomes_a_link() {
+        let doc = render_document("see [[My Page]] now\n");
+
+        assert!(
+            doc.html.contains("<a href=\"My Page.md\">My Page</a>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_wikilink_alias_becomes_the_link_text() {
+        let doc = render_document("[[a.md|the alias]]\n");
+
+        assert!(
+            doc.html.contains("<a href=\"a.md\">the alias</a>"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "the alias");
+    }
+
+    #[test]
+    fn a_wikilink_target_that_resolves_is_a_route() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with("[[b.md]]\n", &mut recorder);
+
+        assert_eq!(
+            recorder.seen,
+            [("b.md".to_string(), 1)],
+            "the wikilink target goes through the same resolver"
+        );
+        assert!(
+            doc.html.contains("<a href=\"rewritten:b.md\">b.md</a>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn an_embed_of_a_local_file_renders_an_image() {
+        let doc = render_document("![[img.png]]\n");
+
+        assert!(
+            doc.html.contains("<img src=\"img.png\" alt=\"img.png\" />"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "img.png");
     }
 }

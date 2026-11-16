@@ -263,6 +263,7 @@ mod tests {
     use super::*;
     use crate::markdown::ast::to_own;
     use crate::markdown::parse::parse_document;
+    use crate::markdown::{LinkRewriter, LinkTarget, render_document, render_document_with};
 
     fn tree(source: &str) -> OwnNode {
         let mut own = to_own(&parse_document(source));
@@ -471,6 +472,241 @@ mod tests {
         assert!(
             shapes.iter().any(|shape| shape.contains("Emphasis")),
             "the trailing emphasis is untouched: {shapes:?}"
+        );
+    }
+
+    // The citation idiom rendered end to end, fold plus the reference list.
+
+    /// A document whose `[1]` and `[2]` are reference link definitions.
+    fn citation_source(body: &str) -> String {
+        format!("{body}\n\n[1]: https://example.com/1\n[2]: https://example.com/2\n")
+    }
+
+    /// The two definition paragraphs `citation_source` renders, in order.
+    const CITATION_DEFINITIONS: &str = "\
+<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+<a href=\"https://example.com/1\">https://example.com/1</a></p>\n\
+<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[2]:</span> \
+<a href=\"https://example.com/2\">https://example.com/2</a></p>\n";
+
+    /// The definition text `citation_source` adds to the search index.
+    const CITATION_DEFINITIONS_TEXT: &str = "[1]: https://example.com/1 [2]: https://example.com/2";
+
+    /// Rewriter that records every destination and tags it, so a test can see
+    /// exactly what the serialiser handed over.
+    struct Recorder {
+        seen: Vec<(String, usize)>,
+    }
+
+    impl Recorder {
+        fn new() -> Self {
+            Self { seen: Vec::new() }
+        }
+    }
+
+    impl LinkRewriter for Recorder {
+        fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget {
+            self.seen.push((destination.to_string(), line));
+            LinkTarget::new(format!("rewritten:{destination}"))
+        }
+    }
+
+    #[test]
+    fn bracketed_citation_collapses_to_one_link() {
+        let doc = render_document(&citation_source("text[[1]][1] more"));
+
+        assert_eq!(
+            doc.html,
+            format!(
+                "<p>text<a href=\"https://example.com/1\">[1]</a> more</p>\n{CITATION_DEFINITIONS}"
+            ),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(
+            doc.html.matches("<a ").count(),
+            3,
+            "one link in the body plus one per definition: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn bracketed_citation_reads_as_a_citation_in_the_text() {
+        let doc = render_document(&citation_source("text[[1]][1] more"));
+
+        assert_eq!(
+            doc.text,
+            format!("text[1] more {CITATION_DEFINITIONS_TEXT}")
+        );
+    }
+
+    #[test]
+    fn bracketed_citation_inside_a_table_cell_collapses() {
+        let source = citation_source("| a | b |\n| - | - |\n| x[[1]][1] | y |");
+        let doc = render_document(&source);
+
+        assert!(
+            doc.html
+                .contains("<td>x<a href=\"https://example.com/1\">[1]</a></td>"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.html.matches("<a ").count(), 3, "html: {}", doc.html);
+        assert_eq!(doc.text, format!("a b x[1] y {CITATION_DEFINITIONS_TEXT}"));
+    }
+
+    #[test]
+    fn bracketed_citation_inside_a_heading_updates_text_and_anchor() {
+        let doc = render_document(&citation_source("## Ref [[1]][1]"));
+
+        assert!(
+            doc.html
+                .contains("<h2 id=\"ref-1\">Ref <a href=\"https://example.com/1\">[1]</a>"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.toc[0].text, "Ref [1]");
+    }
+
+    #[test]
+    fn several_citations_in_one_paragraph_each_collapse() {
+        let doc = render_document(&citation_source("a[[1]][1]b[[2]][2]c"));
+
+        assert_eq!(
+            doc.html,
+            format!(
+                "<p>a<a href=\"https://example.com/1\">[1]</a>b<a href=\"https://example.com/2\">[2]</a>c</p>\n{CITATION_DEFINITIONS}"
+            ),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, format!("a[1]b[2]c {CITATION_DEFINITIONS_TEXT}"));
+    }
+
+    #[test]
+    fn a_wrapped_link_without_its_duplicate_is_left_alone() {
+        let doc = render_document(&citation_source("text[[1]] more"));
+
+        assert!(
+            doc.html
+                .contains("text[<a href=\"https://example.com/1\">1</a>] more"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(
+            doc.text,
+            format!("text[1] more {CITATION_DEFINITIONS_TEXT}")
+        );
+    }
+
+    #[test]
+    fn adjacent_inline_links_are_not_folded_when_rendered() {
+        let source = "[1](https://example.com)[1](https://example.com)\n";
+        let doc = render_document(source);
+
+        assert_eq!(
+            doc.html,
+            "<p><a href=\"https://example.com\">1</a><a href=\"https://example.com\">1</a></p>\n",
+            "inline brackets are author syntax, not a wrap: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn adjacent_reference_links_without_a_wrap_are_not_folded() {
+        let doc = render_document(&citation_source("[1] [1]"));
+
+        assert_eq!(
+            doc.html.matches("<a ").count(),
+            4,
+            "two body links plus one per definition: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn an_undefined_reference_is_left_verbatim() {
+        let doc = render_document("text[[1]][1] more\n");
+
+        assert!(doc.html.contains("text[[1]][1] more"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn citations_inside_code_are_never_folded() {
+        let source = "`[[1]][1]`\n\n```\n[[1]][1]\n```\n\n[1]: https://example.com/1\n";
+        let doc = render_document(source);
+
+        assert!(
+            doc.html.contains("<code>[[1]][1]</code>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html
+                .contains("<pre class=\"code\"><code>[[1]][1]\n</code></pre>"),
+            "code keeps the source verbatim: {}",
+            doc.html
+        );
+        // Only the definition block renders a link; nothing inside code does.
+        assert_eq!(doc.html.matches("<a ").count(), 1, "html: {}", doc.html);
+    }
+
+    #[test]
+    fn the_folded_citation_resolves_to_one_destination() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with(&citation_source("x[[1]][1]y"), &mut recorder);
+
+        assert_eq!(
+            recorder.seen,
+            [
+                ("https://example.com/1".to_string(), 1),
+                ("https://example.com/1".to_string(), 3),
+                ("https://example.com/2".to_string(), 4),
+            ],
+            "the duplicate body link is dropped, each definition is resolved once"
+        );
+        assert_eq!(
+            doc.html.matches("href=").count(),
+            3,
+            "one body link and two definitions: {}",
+            doc.html
+        );
+        // `x[1]y`: the duplicate link is gone, so the surviving one sits
+        // between the brackets instead of a `[1]1` run.
+        assert!(
+            doc.html
+                .contains("<p>x<a href=\"rewritten:https://example.com/1\">[1]</a>y</p>"),
+            "the duplicate citation must not survive: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("]</a>1"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn a_link_at_the_end_of_a_paragraph_is_still_rewritten() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with(&citation_source("see [[1]]"), &mut recorder);
+
+        assert_eq!(
+            recorder.seen,
+            [
+                ("https://example.com/1".to_string(), 1),
+                ("https://example.com/1".to_string(), 3),
+                ("https://example.com/2".to_string(), 4),
+            ]
+        );
+        assert_eq!(
+            doc.html,
+            "<p>see [<a href=\"rewritten:https://example.com/1\">1</a>]</p>\n\
+             <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"rewritten:https://example.com/1\">https://example.com/1</a></p>\n\
+             <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[2]:</span> \
+             <a href=\"rewritten:https://example.com/2\">https://example.com/2</a></p>\n",
+            "html: {}",
+            doc.html
         );
     }
 }

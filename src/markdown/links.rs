@@ -47,8 +47,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::assets::{ASSET_PLACEHOLDER_PREFIX, AssetTable};
-use crate::markdown::{LinkRewriter, LinkTarget};
 use crate::scan::Diagnostic;
+
+use super::highlight::escape_into;
 
 /// Prefix of the hash route that addresses one document.
 pub const ROUTE_PREFIX: &str = "#/doc/";
@@ -96,6 +97,122 @@ pub enum LinkClass {
         /// Why the destination was rejected.
         reason: MissingReason,
     },
+}
+
+/// Final addressing form of one destination, as the build decides it.
+///
+/// Most destinations only need a string, but a block reference can name a
+/// chapter its target document does not have: the route then cannot carry
+/// the anchor — no element emits it — yet the reader is expected to say
+/// *which* chapter was asked for. The authored spelling therefore travels
+/// beside the route, and the serialiser turns it into the attributes the
+/// reader looks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkTarget {
+    /// Destination written into the `href` or `src`.
+    pub dest: String,
+    /// Chapter the author named when the target document has no such
+    /// chapter.
+    ///
+    /// `Some` is the authored spelling, kept verbatim so the message quotes
+    /// the line the author has to fix. Only a chapter mismatch ever sets it.
+    pub missing_anchor: Option<String>,
+    /// Whether the destination is a web page the reader opens in a new tab.
+    ///
+    /// Only a web navigation — an `http`/`https` URL or a protocol-relative
+    /// `//host` — sets it; the serialiser turns it into the `target` and
+    /// `rel` attributes on the anchor. Other schemes (`mailto`, `tel`,
+    /// `data`, …) hand over to the browser or the operating system as they
+    /// always have, and every destination inside the site stays in this tab.
+    pub new_tab: bool,
+}
+
+impl LinkTarget {
+    /// A destination that addresses exactly what was asked for.
+    pub fn new(dest: impl Into<String>) -> Self {
+        Self {
+            dest: dest.into(),
+            missing_anchor: None,
+            new_tab: false,
+        }
+    }
+
+    /// A web page the reader opens in a new tab.
+    pub fn external(dest: impl Into<String>) -> Self {
+        Self {
+            dest: dest.into(),
+            missing_anchor: None,
+            new_tab: true,
+        }
+    }
+
+    /// This destination, plus the chapter that could not be resolved.
+    pub fn missing_chapter(dest: impl Into<String>, anchor: impl Into<String>) -> Self {
+        Self {
+            dest: dest.into(),
+            missing_anchor: Some(anchor.into()),
+            new_tab: false,
+        }
+    }
+}
+
+/// Rewrites link and image destinations while a document is rendered.
+///
+/// The serialiser calls this for every link, image and reference
+/// destination it meets, in document order and before any HTML exists, so a
+/// destination can be replaced without touching attribute quoting. `line`
+/// is the 1-based source line the element starts on, which is what
+/// diagnostics quote.
+pub trait LinkRewriter {
+    /// Final target for `destination`.
+    fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget;
+}
+
+/// Leaves every destination exactly as the author wrote it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NoRewrite;
+
+impl LinkRewriter for NoRewrite {
+    fn rewrite(&mut self, destination: &str, _line: usize) -> LinkTarget {
+        LinkTarget::new(destination)
+    }
+}
+
+/// Class of a link whose block-reference chapter the target document lacks.
+///
+/// The stylesheet uses it to mark the link in the document itself, so a
+/// broken reference is visible before it is ever hovered or clicked.
+pub const MISSING_LINK_CLASS: &str = "doc-link-missing";
+
+/// Attribute carrying the chapter a broken block reference named.
+///
+/// The route cannot carry it, because no element of the target document
+/// emits that anchor; the reader reads the attribute instead and reports
+/// it. Must stay in step with `MISSING_ANCHOR_ATTRIBUTE` in
+/// `src/web/js/links.js`.
+pub const MISSING_ANCHOR_ATTRIBUTE: &str = "data-wikicc-missing-anchor";
+
+/// Attributes a web-page link carries so the reader opens it in a new tab.
+///
+/// `noopener noreferrer` keeps the opened page from reaching back into this
+/// one and keeps the site's address out of the referrer. Both serialisers
+/// that write an `<a>` use this verbatim, so the attribute never drifts.
+pub(crate) const NEW_TAB_ATTRIBUTES: &str = " target=\"_blank\" rel=\"noopener noreferrer\"";
+
+/// Opening-tag attributes for a link whose chapter does not exist.
+///
+/// Built from escaped parts, so the authored chapter cannot terminate the
+/// attribute it is written into.
+pub(crate) fn missing_link_attributes(anchor: &str) -> String {
+    let mut attributes = String::with_capacity(anchor.len() + 64);
+    attributes.push_str(" class=\"");
+    attributes.push_str(MISSING_LINK_CLASS);
+    attributes.push_str("\" ");
+    attributes.push_str(MISSING_ANCHOR_ATTRIBUTE);
+    attributes.push_str("=\"");
+    escape_into(&mut attributes, anchor);
+    attributes.push('"');
+    attributes
 }
 
 /// Classify one destination without touching the filesystem.

@@ -10,6 +10,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::ast::{OwnKind, OwnNode};
+use super::slug::Slugger;
+
 /// One heading as collected while rendering a document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Heading {
@@ -150,6 +153,69 @@ pub fn anchors(headings: &[Heading]) -> Vec<String> {
     headings.iter().map(|heading| heading.id.clone()).collect()
 }
 
+/// Collect every heading, assigning its anchor.
+///
+/// The slugger sees the headings in document order, so the anchors are the
+/// same whatever pass collects them — the render pass serialises exactly
+/// this list.
+pub(crate) fn collect_headings(node: &OwnNode, slugger: &mut Slugger, out: &mut Vec<Heading>) {
+    if let OwnKind::Heading { depth, children } = &node.kind {
+        let mut text = HeadingText::new();
+        collect_heading_text(children, &mut text);
+        let finished = text.finish();
+        let id = slugger.unique(&finished);
+        out.push(Heading {
+            level: u32::from(*depth),
+            id,
+            text: finished,
+        });
+    }
+
+    if let Some(children) = node.children() {
+        for child in children {
+            collect_headings(child, slugger, out);
+        }
+    }
+}
+
+/// Plain text of a heading's children: what the outline shows.
+fn collect_heading_text(children: &[OwnNode], into: &mut HeadingText) {
+    for node in children {
+        match &node.kind {
+            OwnKind::Text(value) | OwnKind::InlineCode(value) | OwnKind::InlineMath(value) => {
+                into.push(value)
+            }
+            OwnKind::Break => into.push_break(),
+            OwnKind::Image { alt, .. } | OwnKind::ImageReference { alt, .. } => into.push(alt),
+            OwnKind::FootnoteReference { label, identifier } => {
+                into.push(label.as_deref().unwrap_or(identifier));
+            }
+            OwnKind::Html { value } => into.push(value),
+            OwnKind::Tag(name) => into.push(&format!("#{name}")),
+            OwnKind::Shortcode { emoji, .. } => into.push(&emoji.to_string()),
+            OwnKind::Wikilink { target, alias } => {
+                into.push(alias.as_deref().unwrap_or(target));
+            }
+            OwnKind::Embed { target } => into.push(target),
+            OwnKind::Highlight(inner)
+            | OwnKind::Sub(inner)
+            | OwnKind::Sup(inner)
+            | OwnKind::Emphasis(inner)
+            | OwnKind::Strong(inner)
+            | OwnKind::Delete(inner)
+            | OwnKind::Link {
+                children: inner, ..
+            }
+            | OwnKind::LinkReference {
+                children: inner, ..
+            } => {
+                collect_heading_text(inner, into);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Entry addressed by `path`, which must be non-empty and valid.
 fn entry_at<'a>(entries: &'a [TocEntry], path: &[usize]) -> &'a TocEntry {
     let (first, rest) = path
@@ -181,6 +247,9 @@ fn entry_at_mut<'a>(entries: &'a mut [TocEntry], path: &[usize]) -> &'a mut TocE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markdown::{
+        LinkRewriter, LinkTarget, RenderedDoc, render_document, render_document_with,
+    };
 
     fn heading(level: u32, text: &str) -> Heading {
         Heading {
@@ -302,5 +371,114 @@ mod tests {
         assert_eq!(toc[0].id, "hello-world");
         assert_eq!(toc[0].text, "Hello, World!");
         assert_eq!(toc[0].level, 2);
+    }
+
+    // The outline as the full render produces it.
+
+    fn heading_ids(doc: &RenderedDoc) -> Vec<&str> {
+        doc.toc.iter().map(|entry| entry.id.as_str()).collect()
+    }
+
+    /// Rewriter that records every destination and tags it, so a test can see
+    /// exactly what the serialiser handed over.
+    struct Recorder {
+        seen: Vec<(String, usize)>,
+    }
+
+    impl Recorder {
+        fn new() -> Self {
+            Self { seen: Vec::new() }
+        }
+    }
+
+    impl LinkRewriter for Recorder {
+        fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget {
+            self.seen.push((destination.to_string(), line));
+            LinkTarget::new(format!("rewritten:{destination}"))
+        }
+    }
+
+    #[test]
+    fn outline_mirrors_document_order_and_levels() {
+        let doc = render_document("# A\n\n## A1\n\n### A1a\n\n# B\n");
+
+        assert_eq!(doc.toc.len(), 2);
+        assert_eq!(doc.toc[0].text, "A");
+        assert_eq!(doc.toc[0].children[0].text, "A1");
+        assert_eq!(doc.toc[0].children[0].children[0].text, "A1a");
+        assert_eq!(doc.toc[1].text, "B");
+    }
+
+    #[test]
+    fn outline_text_strips_inline_markup() {
+        let doc = render_document("## **Bold** and `code` and [link](other.md)\n");
+
+        assert_eq!(doc.toc[0].text, "Bold and code and link");
+        assert_eq!(doc.toc[0].id, "bold-and-code-and-link");
+    }
+
+    #[test]
+    fn headings_inside_code_blocks_are_not_collected() {
+        let doc = render_document("```\n# Not a heading\n```\n");
+
+        assert!(doc.toc.is_empty());
+        assert!(!doc.html.contains("<h1"));
+    }
+
+    #[test]
+    fn injects_ids_on_headings() {
+        let doc = render_document("## Hello, World!\n\ntext\n");
+
+        assert!(doc.html.contains("<h2 id=\"hello-world\">"));
+        assert!(doc.html.contains("Hello, World!"));
+    }
+
+    #[test]
+    fn keeps_cjk_heading_ids() {
+        let doc = render_document("## 第一章\n");
+
+        assert!(
+            doc.html.contains("<h2 id=\"第一章\">"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(heading_ids(&doc), ["第一章"]);
+    }
+
+    #[test]
+    fn duplicate_headings_get_unique_ids() {
+        let doc = render_document("## Notes\n\n## Notes\n\n## Notes\n");
+
+        assert!(doc.html.contains("<h2 id=\"notes\">"));
+        assert!(doc.html.contains("<h2 id=\"notes-1\">"));
+        assert!(doc.html.contains("<h2 id=\"notes-2\">"));
+        assert_eq!(heading_ids(&doc), ["notes", "notes-1", "notes-2"]);
+    }
+
+    #[test]
+    fn heading_text_collapses_whitespace() {
+        let doc = render_document("## Spaced   out\n");
+
+        assert_eq!(doc.toc[0].text, "Spaced out");
+    }
+
+    #[test]
+    fn code_block_followed_by_a_heading_keeps_the_outline() {
+        let doc = render_document("```rust\nfn main() {}\n```\n\n## After\n");
+
+        assert_eq!(doc.toc.len(), 1);
+        assert_eq!(doc.toc[0].text, "After");
+        assert!(doc.html.contains("<h2 id=\"after\">"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn rewriting_does_not_change_heading_slugs() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with("## [Guide](guide.md)\n", &mut recorder);
+
+        assert_eq!(doc.toc[0].id, "guide");
+        assert_eq!(doc.toc[0].text, "Guide");
+        assert_eq!(recorder.seen, [("guide.md".to_string(), 1)]);
     }
 }

@@ -613,3 +613,559 @@ fn escape_text(html: &mut String, value: &str) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::markdown::{
+        LinkRewriter, LinkTarget, NoRewrite, render_document, render_document_with,
+    };
+
+    /// Rewriter that records every destination and tags it, so a test can see
+    /// exactly what the serialiser handed over.
+    struct Recorder {
+        seen: Vec<(String, usize)>,
+    }
+
+    impl Recorder {
+        fn new() -> Self {
+            Self { seen: Vec::new() }
+        }
+    }
+
+    impl LinkRewriter for Recorder {
+        fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget {
+            self.seen.push((destination.to_string(), line));
+            LinkTarget::new(format!("rewritten:{destination}"))
+        }
+    }
+
+    /// Rewriter that reports every destination as an unknown chapter, so the
+    /// markup a broken block reference produces can be inspected directly.
+    struct Missing {
+        anchor: String,
+    }
+
+    impl LinkRewriter for Missing {
+        fn rewrite(&mut self, destination: &str, _line: usize) -> LinkTarget {
+            LinkTarget::missing_chapter(destination.to_string(), self.anchor.clone())
+        }
+    }
+
+    #[test]
+    fn renders_gfm_tables_footnotes_tasks_and_strikethrough() {
+        let source = "\
+| a | b |
+| - | - |
+| 1 | 2 |
+
+~~old~~ text[^note]
+
+- [x] done
+- [ ] pending
+
+[^note]: the footnote
+";
+        let doc = render_document(source);
+
+        assert!(doc.html.contains("<table>"), "html: {}", doc.html);
+        assert!(doc.html.contains("<thead>"), "html: {}", doc.html);
+        assert!(doc.html.contains("<del>old</del>"), "html: {}", doc.html);
+        assert!(
+            doc.html.contains("class=\"footnote-reference\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("class=\"footnote-definition\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("type=\"checkbox\" checked=\"\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("type=\"checkbox\"/"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn table_cells_align_by_the_delimiter_row() {
+        let source = "| a | b | c |\n| :- | -: | :-: |\n| 1 | 2 | 3 |\n";
+        let doc = render_document(source);
+
+        assert!(
+            doc.html.contains("<th style=\"text-align: left\">"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("<td style=\"text-align: right\">"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("<td style=\"text-align: center\">"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn an_ordered_list_keeps_its_start() {
+        let doc = render_document("3. third\n4. fourth\n");
+
+        assert!(doc.html.contains("<ol start=\"3\">"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn smart_punctuation_stays_off() {
+        let doc = render_document("He said \"hi\" -- and left...\n");
+
+        assert!(
+            doc.html.contains("\"hi\" -- and left..."),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains('“'));
+    }
+
+    #[test]
+    fn raw_html_passes_through_unchanged() {
+        let doc = render_document("<div class=\"raw\">keep</div>\n");
+
+        assert!(doc.html.contains("<div class=\"raw\">keep</div>"));
+    }
+
+    #[test]
+    fn inline_html_passes_through_inside_a_paragraph() {
+        let doc = render_document("a <b>bold</b> word\n");
+
+        assert!(
+            doc.html.contains("<p>a <b>bold</b> word</p>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn empty_document_renders_nothing() {
+        let doc = render_document("");
+
+        assert_eq!(doc.html, "");
+        assert!(doc.toc.is_empty());
+    }
+
+    #[test]
+    fn fenced_code_block_is_highlighted() {
+        let doc = render_document("```rust\nfn main() {}\n```\n");
+
+        assert!(
+            doc.html
+                .contains("<pre class=\"code\"><code class=\"language-rust\">"),
+            "html: {}",
+            doc.html
+        );
+        assert!(doc.html.contains("<span class=\""), "html: {}", doc.html);
+        assert!(doc.html.contains("</code></pre>"), "html: {}", doc.html);
+        assert!(!doc.html.contains("```"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn unknown_fence_is_escaped_without_spans() {
+        let doc = render_document("```foo\na < b\n```\n");
+
+        assert!(
+            doc.html.contains(
+                "<pre class=\"code\"><code class=\"language-foo\">a &lt; b\n</code></pre>"
+            ),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("<span"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn indented_code_block_has_no_language_class() {
+        let doc = render_document("    let x = 1;\n");
+
+        assert!(
+            doc.html
+                .contains("<pre class=\"code\"><code>let x = 1;\n</code></pre>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn inline_code_stays_inline_and_unhighlighted() {
+        let doc = render_document("use `let x = 1;` here\n");
+
+        assert!(
+            doc.html.contains("<code>let x = 1;</code>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("<pre"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn link_rewriter_sees_every_destination_and_its_line() {
+        let source = "# T\n\ntext [a](a.md) and ![i](i.png)\n\n[d](b.md#x)\n";
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with(source, &mut recorder);
+
+        assert_eq!(
+            recorder.seen,
+            [
+                ("a.md".to_string(), 3),
+                ("i.png".to_string(), 3),
+                ("b.md#x".to_string(), 5),
+            ]
+        );
+        assert!(
+            doc.html.contains("href=\"rewritten:a.md\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("src=\"rewritten:i.png\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("href=\"rewritten:b.md#x\""),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_marked_link_carries_the_authored_chapter_before_its_opening_tag() {
+        let mut missing = Missing {
+            anchor: "1.4 配色与字体".to_string(),
+        };
+
+        let doc = render_document_with("see [x](b.md)\n", &mut missing);
+
+        assert_eq!(
+            doc.html,
+            "<p>see <span hidden class=\"doc-link-missing\" \
+             data-wikicc-missing-anchor=\"1.4 配色与字体\"></span><a href=\"b.md\">x</a></p>\n",
+            "the mark must sit inside the paragraph, right before the link"
+        );
+    }
+
+    #[test]
+    fn a_marked_link_composes_with_emphasis_and_tables() {
+        let mut missing = Missing {
+            anchor: "gone".to_string(),
+        };
+
+        let doc = render_document_with(
+            "**bold [x](b.md)** and `code`\n\n| a |\n| - |\n| [x](b.md) |\n",
+            &mut missing,
+        );
+
+        assert_eq!(
+            doc.html.matches("data-wikicc-missing-anchor").count(),
+            2,
+            "inline markup and table cells both keep the mark: {}",
+            doc.html
+        );
+        assert!(
+            doc.html
+                .contains("<td><span hidden class=\"doc-link-missing\""),
+            "a cell keeps its inline shape: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn the_authored_chapter_cannot_break_out_of_its_attribute() {
+        let mut missing = Missing {
+            anchor: "a\"b&c<d>".to_string(),
+        };
+
+        let doc = render_document_with("[x](b.md)\n", &mut missing);
+
+        assert!(
+            doc.html
+                .contains("data-wikicc-missing-anchor=\"a&quot;b&amp;c&lt;d&gt;\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("<d>"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn an_unmarked_document_has_no_extra_markup() {
+        let doc = render_document_with("[x](b.md)\n", &mut NoRewrite);
+
+        assert!(
+            !doc.html.contains("span"),
+            "a plain destination writes no mark: {}",
+            doc.html
+        );
+        assert_eq!(
+            doc.html, "<p><a href=\"b.md\">x</a></p>\n",
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn destinations_inside_code_blocks_are_not_rewritten() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with("```\n[a](a.md)\n```\n", &mut recorder);
+
+        assert!(recorder.seen.is_empty(), "seen: {:?}", recorder.seen);
+        assert!(doc.html.contains("[a](a.md)"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn text_covers_every_block_kind_without_markup() {
+        let source = "\
+# Title
+
+A **bold** paragraph with `code` and a [link](other.md).
+
+- one
+- two
+
+| name | value |
+| ---- | ----- |
+| a    | 1     |
+
+```rust
+fn main() {}
+```
+";
+        let doc = render_document(source);
+
+        for expected in [
+            "Title",
+            "A bold paragraph with code and a link.",
+            "one two",
+            "name value",
+            "a 1",
+            "fn main() {}",
+        ] {
+            assert!(
+                doc.text.contains(expected),
+                "missing {expected:?} in text: {}",
+                doc.text
+            );
+        }
+        for marker in ['#', '*', '`', '|'] {
+            assert!(
+                !doc.text.contains(marker),
+                "text still carries {marker:?}: {}",
+                doc.text
+            );
+        }
+    }
+
+    #[test]
+    fn text_keeps_unicode_and_collapses_whitespace() {
+        let doc = render_document("## 第一章\n\n中文   文本\n");
+
+        assert_eq!(doc.text, "第一章 中文 文本");
+    }
+
+    #[test]
+    fn text_of_an_empty_document_is_empty() {
+        assert_eq!(render_document("").text, "");
+    }
+
+    #[test]
+    fn text_separates_adjacent_blocks_but_not_inline_runs() {
+        let doc = render_document("alpha\n\nbeta **gamma** delta\n");
+
+        assert_eq!(doc.text, "alpha beta gamma delta");
+    }
+
+    #[test]
+    fn a_bare_url_autolinks_like_typora() {
+        let doc = render_document("see https://example.com/page now\n");
+
+        assert!(
+            doc.html
+                .contains("<a href=\"https://example.com/page\">https://example.com/page</a>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn math_renders_as_stylable_elements() {
+        let doc = render_document("inline $E=mc^2$ math\n\n$$\na+b\n$$\n");
+
+        assert!(
+            doc.html
+                .contains("<code class=\"math-inline\">E=mc^2</code>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("<pre class=\"math\">a+b</pre>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    // Reference definitions in place.
+
+    /// A source whose definitions end the document, the way a reference list
+    /// sits under its last heading.
+    fn reference_list_source() -> String {
+        "# 参考链接\n\n\
+         [1]: https://example.com/one \"First source\"\n\
+         [2]: https://example.com/two\n"
+            .to_string()
+    }
+
+    #[test]
+    fn definitions_are_rendered_where_the_author_wrote_them() {
+        let doc = render_document(&reference_list_source());
+
+        assert!(
+            doc.html.starts_with("<h1 id=\"参考链接\">参考链接</h1>\n"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(
+            doc.html.matches("<p class=\"link-ref-def\">").count(),
+            2,
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains(
+                "<span class=\"link-ref-def-label\">[1]:</span> \
+                 <a href=\"https://example.com/one\">https://example.com/one</a> \"First source\"</p>"
+            ),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains(
+                "<span class=\"link-ref-def-label\">[2]:</span> \
+                 <a href=\"https://example.com/two\">https://example.com/two</a></p>"
+            ),
+            "a definition without a title gets no quotes: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn definitions_are_searchable_and_feed_the_outline() {
+        let doc = render_document(&reference_list_source());
+
+        assert_eq!(
+            doc.text,
+            "参考链接 [1]: https://example.com/one \"First source\" [2]: https://example.com/two"
+        );
+        assert_eq!(doc.toc.len(), 1, "definitions are not headings");
+        assert_eq!(doc.toc[0].text, "参考链接");
+    }
+
+    #[test]
+    fn definitions_between_paragraphs_keep_their_position() {
+        let source = "alpha\n\n[1]: https://example.com/1\n\nbeta\n";
+        let doc = render_document(source);
+
+        assert_eq!(
+            doc.html,
+            "<p>alpha</p>\n\
+             <p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"https://example.com/1\">https://example.com/1</a></p>\n\
+             <p>beta</p>\n",
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_repeated_definition_renders_only_its_first_occurrence() {
+        let source = "[1]: https://example.com/first\n[1]: https://example.com/second\n";
+        let doc = render_document(source);
+
+        assert_eq!(doc.html.matches("<p class=\"link-ref-def\">").count(), 1);
+        assert!(
+            doc.html.contains("https://example.com/first"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            !doc.html.contains("https://example.com/second"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_document_of_definitions_alone_renders_them() {
+        let doc = render_document("[1]: https://example.com/1\n");
+
+        assert_eq!(
+            doc.html,
+            "<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"https://example.com/1\">https://example.com/1</a></p>\n",
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "[1]: https://example.com/1");
+    }
+
+    #[test]
+    fn definition_parts_are_escaped() {
+        let source = "[a&b]: https://example.com/?a=1&b=2 \"x < y & \\\"q\\\"\"\n";
+        let doc = render_document(source);
+
+        assert!(
+            doc.html
+                .contains("<span class=\"link-ref-def-label\">[a&amp;b]:</span>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html
+                .contains("href=\"https://example.com/?a=1&amp;b=2\""),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.html.contains("\"x &lt; y &amp; &quot;q&quot;\"</p>"),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("x < y"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn a_definition_destination_reaches_the_resolver_once() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with("[1]: a.md\n\nsee [1]\n", &mut recorder);
+
+        assert_eq!(
+            recorder.seen,
+            [("a.md".to_string(), 1), ("a.md".to_string(), 3),],
+            "the definition is resolved on its own line, not through the citation"
+        );
+        assert_eq!(
+            doc.html,
+            "<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
+             <a href=\"rewritten:a.md\">a.md</a></p>\n\
+             <p>see <a href=\"rewritten:a.md\">1</a></p>\n",
+            "html: {}",
+            doc.html
+        );
+    }
+}

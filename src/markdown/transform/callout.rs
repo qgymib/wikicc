@@ -163,6 +163,7 @@ mod tests {
     use crate::markdown::ast::to_own;
     use crate::markdown::parse::parse_document;
     use crate::markdown::refdefs;
+    use crate::markdown::render_document;
 
     /// The root children after the full transform chain.
     fn shapes(source: &str) -> Vec<String> {
@@ -260,5 +261,50 @@ mod tests {
         let shapes = shapes("> [!NOTE] head\n");
 
         assert!(shapes[0].contains("kind: \"note\""), "{shapes:?}");
+    }
+
+    // Callouts rendered end to end.
+
+    #[test]
+    fn a_callout_renders_as_the_callout_markup() {
+        let doc = render_document("> [!note] Remember\n> body text\n");
+
+        assert!(
+            doc.html.contains(
+                "<div class=\"callout\" data-callout=\"note\">\n\
+                 <p class=\"callout-title\">Remember</p>\n\
+                 <div class=\"callout-content\">\n<p>body text</p>\n</div>\n</div>"
+            ),
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.text.contains("Remember body text"),
+            "text: {}",
+            doc.text
+        );
+    }
+
+    #[test]
+    fn a_markerless_callout_takes_its_kind_as_the_title() {
+        let doc = render_document("> [!warning]\n> body\n");
+
+        assert!(
+            doc.html.contains("<p class=\"callout-title\">Warning</p>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_plain_blockquote_renders_as_a_blockquote() {
+        let doc = render_document("> just quoted\n");
+
+        assert!(
+            doc.html
+                .contains("<blockquote>\n<p>just quoted</p>\n</blockquote>"),
+            "html: {}",
+            doc.html
+        );
     }
 }

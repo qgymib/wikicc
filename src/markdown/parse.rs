@@ -166,4 +166,24 @@ mod tests {
         assert_eq!(position.start.line, 3);
         assert_eq!(position.start.offset, 9);
     }
+
+    #[test]
+    fn the_construct_set_matches_the_documented_syntax_promise() {
+        let options = parse_options();
+
+        // The GFM subset the product promises.
+        assert!(options.constructs.gfm_table);
+        assert!(options.constructs.gfm_footnote_definition);
+        assert!(options.constructs.gfm_strikethrough);
+        assert!(options.constructs.gfm_task_list_item);
+        assert!(options.constructs.gfm_autolink_literal);
+        // The Typora constructs that arrive with the parser.
+        assert!(options.constructs.frontmatter);
+        assert!(options.constructs.math_flow);
+        assert!(options.constructs.math_text);
+        // Single tilde belongs to the own-layer subscript transform.
+        assert!(!options.gfm_strikethrough_single_tilde);
+        // MDX is a component format, not a document format.
+        assert!(!options.constructs.mdx_esm);
+    }
 }

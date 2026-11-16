@@ -132,6 +132,7 @@ pub fn slice(html: &str, starts: &[usize], ids: &[String], levels: &[u32]) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markdown::{LinkRewriter, LinkTarget, render_document, render_document_with};
 
     fn ids(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
@@ -422,5 +423,110 @@ mod tests {
         // Markdown allows.
         let indices: usize = deep.iter().map(|block| block.subtree.len()).sum();
         assert_eq!(indices, 10, "1 + 2 + 3 + 4 for a chain of four");
+    }
+
+    // The chapter blocks as the full render slices them.
+
+    /// Rewriter that records every destination and tags it, so a test can see
+    /// exactly what the serialiser handed over.
+    struct Recorder {
+        seen: Vec<(String, usize)>,
+    }
+
+    impl Recorder {
+        fn new() -> Self {
+            Self { seen: Vec::new() }
+        }
+    }
+
+    impl LinkRewriter for Recorder {
+        fn rewrite(&mut self, destination: &str, line: usize) -> LinkTarget {
+            self.seen.push((destination.to_string(), line));
+            LinkTarget::new(format!("rewritten:{destination}"))
+        }
+    }
+
+    #[test]
+    fn blocks_follow_the_heading_order_and_carry_their_level() {
+        let doc = render_document("# A\n\none\n\n## A1\n\ntwo\n\n# B\n\nthree\n");
+
+        assert_eq!(
+            doc.blocks
+                .iter()
+                .map(|block| (block.id.as_str(), block.level, block.parent))
+                .collect::<Vec<_>>(),
+            [("a", 1, None), ("a1", 2, Some(0)), ("b", 1, None),],
+            "the blocks mirror the outline the toc builds"
+        );
+        assert_eq!(doc.blocks[0].html, "<h1 id=\"a\">A</h1>\n<p>one</p>\n");
+        assert_eq!(doc.blocks[1].html, "<h2 id=\"a1\">A1</h2>\n<p>two</p>\n");
+        assert_eq!(doc.blocks[2].html, "<h1 id=\"b\">B</h1>\n<p>three</p>\n");
+    }
+
+    #[test]
+    fn the_renderer_reports_a_whole_chapter_through_the_block_subtree() {
+        let doc = render_document("# A\n\none\n\n## A1\n\ntwo\n\n## A2\n\nthree\n\n# B\n\nfour\n");
+        let chapter: String = doc.blocks[0]
+            .subtree
+            .iter()
+            .map(|&index| doc.blocks[index].html.as_str())
+            .collect();
+
+        assert_eq!(doc.blocks[0].subtree, [0, 1, 2]);
+        assert_eq!(doc.blocks[3].subtree, [3], "B has no children");
+        assert!(
+            chapter.starts_with("<h1 id=\"a\">A</h1>"),
+            "chapter: {chapter}"
+        );
+        assert!(
+            chapter.ends_with("<p>three</p>\n"),
+            "the chapter stops before the next root: {chapter}"
+        );
+        assert!(
+            !chapter.contains("four"),
+            "a sibling root is not part of the chapter"
+        );
+    }
+
+    #[test]
+    fn blocks_leave_the_body_html_untouched() {
+        let source =
+            "# Title\n\npara with `code` and [link](a.md)\n\n| a | b |\n| - | - |\n| 1 | 2 |\n";
+        let doc = render_document(source);
+
+        assert_eq!(
+            doc.html,
+            "<h1 id=\"title\">Title</h1>\n\
+             <p>para with <code>code</code> and <a href=\"a.md\">link</a></p>\n\
+             <table><thead><tr><th>a</th><th>b</th></tr></thead><tbody>\n\
+             <tr><td>1</td><td>2</td></tr>\n\
+             </tbody></table>\n",
+            "the block slicing must not disturb the document body"
+        );
+        assert_eq!(
+            doc.blocks[0].html, doc.html,
+            "a document with a single heading is one block"
+        );
+    }
+
+    #[test]
+    fn a_document_without_headings_has_no_blocks_but_keeps_its_body() {
+        let doc = render_document("just text\n");
+
+        assert!(doc.blocks.is_empty());
+        assert_eq!(doc.html, "<p>just text</p>\n");
+    }
+
+    #[test]
+    fn blocks_carry_rewritten_links() {
+        let mut recorder = Recorder::new();
+
+        let doc = render_document_with("# A\n\n[gone](missing.md)\n", &mut recorder);
+
+        assert!(
+            doc.blocks[0].html.contains("href=\"rewritten:missing.md\""),
+            "block: {}",
+            doc.blocks[0].html
+        );
     }
 }

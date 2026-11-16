@@ -465,6 +465,7 @@ mod tests {
     use crate::markdown::ast::to_own;
     use crate::markdown::parse::parse_document;
     use crate::markdown::refdefs;
+    use crate::markdown::render_document;
 
     /// The first paragraph's children after the full transform chain.
     fn shapes(source: &str) -> Vec<String> {
@@ -635,5 +636,57 @@ mod tests {
             shapes.iter().all(|shape| !shape.contains("Highlight")),
             "{shapes:?}"
         );
+    }
+
+    // The Typora sugar rendered end to end.
+
+    #[test]
+    fn highlight_renders_as_a_mark_element() {
+        let doc = render_document("a ==marked== word\n");
+
+        assert!(
+            doc.html.contains("<p>a <mark>marked</mark> word</p>"),
+            "html: {}",
+            doc.html
+        );
+        assert_eq!(doc.text, "a marked word");
+    }
+
+    #[test]
+    fn subscript_and_superscript_render_as_their_elements() {
+        let doc = render_document("H~2~O and X^2^\n");
+
+        assert!(
+            doc.html.contains("H<sub>2</sub>O and X<sup>2</sup>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn comments_render_nothing() {
+        let doc = render_document("a %%secret%% b\n");
+
+        assert_eq!(doc.html, "<p>a  b</p>\n", "html: {}", doc.html);
+        assert_eq!(doc.text, "a b");
+    }
+
+    #[test]
+    fn tags_render_as_tagged_spans() {
+        let doc = render_document("tagged #v2 here\n");
+
+        assert!(
+            doc.html.contains("<span class=\"doc-tag\">#v2</span>"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn shortcodes_render_their_emoji() {
+        let doc = render_document("well done :tada:\n");
+
+        assert!(doc.html.contains("🎉"), "html: {}", doc.html);
+        assert!(doc.text.contains('🎉'), "text: {}", doc.text);
     }
 }
