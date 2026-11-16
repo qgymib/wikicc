@@ -24,6 +24,17 @@ import {
   DOC_LINK_ATTRIBUTE,
   DOC_LINK_SELECTOR,
 } from "../../src/web/js/links.js";
+import {
+  createFakeElement,
+  createFakeTimers,
+  createTextNode,
+  createTreeWalker,
+  descendantsByTag,
+  hasClass,
+  parseInto,
+  walkDescendants,
+  withGlobals,
+} from "./helpers/dom.js";
 
 /**
  * The real timer, captured before any session replaces `globalThis.setTimeout`
@@ -57,180 +68,65 @@ const SHELL_IDS = [
 
 /** A fake element with the handful of members the session touches. */
 function fakeElement(tagName) {
-  const element = {
-    tagName: String(tagName).toUpperCase(),
-    className: "",
-    id: "",
-    children: [],
-    attributes: {},
-    listeners: {},
-    hidden: false,
-    style: {},
-    parentNode: null,
-    scrollCalls: [],
-    appendChild(child) {
-      this.children.push(child);
-      child.parentNode = this;
-      return child;
-    },
-    removeChild(child) {
-      const index = this.children.indexOf(child);
-      if (index >= 0) {
-        this.children.splice(index, 1);
-      }
-      child.parentNode = null;
-      return child;
-    },
-    replaceChild(next, child) {
-      const index = this.children.indexOf(child);
-      if (index < 0) {
-        return child;
-      }
-      this.children[index] = next;
-      next.parentNode = this;
-      child.parentNode = null;
-      return child;
-    },
-    insertBefore(child) {
-      this.children.unshift(child);
-      child.parentNode = this;
-      return child;
-    },
-    setAttribute(name, value) {
-      this.attributes[name] = String(value);
-    },
-    hasAttribute(name) {
-      return Object.hasOwn(this.attributes, name);
-    },
-    removeAttribute(name) {
-      delete this.attributes[name];
-    },
-    getAttribute(name) {
-      return Object.hasOwn(this.attributes, name)
-        ? this.attributes[name]
-        : null;
-    },
-    addEventListener(type, handler) {
-      if (!this.listeners[type]) {
-        this.listeners[type] = [];
-      }
-      this.listeners[type].push(handler);
-    },
-    removeEventListener() {},
-    fire(type, event) {
-      (this.listeners[type] || []).slice().forEach(function (handler) {
-        handler(event || {});
-      });
-    },
-    focus() {
-      this.focused = true;
-    },
-    select() {
-      this.selected = true;
-    },
-    /**
-     * Answer a selector over this element's subtree.
-     *
-     * The session asks one question by class — the article's document body —
-     * so it is honoured over children, which is the shape the browser answers
-     * it in.
-     */
-    querySelector(selector) {
-      const found = this.querySelectorAll(selector);
-      return found.length ? found[0] : null;
-    },
-    querySelectorAll(selector) {
-      const found = [];
-      const wanted = String(selector).replace(/^\./, "");
+  const element = createFakeElement(tagName);
 
-      if (String(selector).indexOf(".") === 0) {
-        (function walk(node) {
-          (node.children || []).forEach(function (child) {
-            if (String(child.className).split(" ").indexOf(wanted) !== -1) {
-              found.push(child);
-            }
-            walk(child);
-          });
-        })(this);
-      }
-
-      // The hover preview tags its links and asks for them by the tag and
-      // attribute every route carries, which is the one other selector the
-      // reader's views ask of this fake.
-      if (String(selector) === "a[href]") {
-        (function walk(node) {
-          (node.children || []).forEach(function (child) {
-            if (child.tagName === "A" && child.getAttribute("href") !== null) {
-              found.push(child);
-            }
-            walk(child);
-          });
-        })(this);
-      }
-
-      return found;
-    },
-    scrollIntoView(options) {
-      this.scrollCalls.push(options || {});
-    },
-    // The hover preview's handlers find the link an event started on by the
-    // mark the tag step wrote on it; the two selectors a real `closest` is
-    // asked here are the link mark and the head's buttons.
-    closest(selector) {
-      if (selector === "button") {
-        return this.tagName === "BUTTON" ? this : null;
-      }
-      if (selector !== DOC_LINK_SELECTOR) {
-        return null;
-      }
-      const tagged = Object.hasOwn(this.attributes, DOC_LINK_ATTRIBUTE);
-      return this.tagName === "A" && tagged ? this : null;
-    },
-    // The preview's placement measures the link it describes; one fixed
-    // rectangle keeps the panel beside the link instead of inside it.
-    getBoundingClientRect() {
-      return {
-        top: 100,
-        bottom: 120,
-        left: 40,
-        right: 160,
-        width: 120,
-        height: 20,
-      };
-    },
-    // Containment is decided over the whole subtree, as the browser does: the
-    // search panel asks whether a press landed inside it.
-    contains(node) {
-      if (node === this) {
-        return true;
-      }
-      return this.children.some(function (child) {
-        return typeof child.contains === "function" && child.contains(node);
-      });
-    },
+  /**
+   * Answer a selector over this element's subtree.
+   *
+   * The session asks one question by class — the article's document body —
+   * so it is honoured over children, which is the shape the browser answers
+   * it in.
+   */
+  element.querySelector = function (selector) {
+    const found = element.querySelectorAll(selector);
+    return found.length ? found[0] : null;
   };
 
-  // `classList` reads and writes the same `className` string the browser's
-  // does, so a module that adds a class is visible to a selector asking for it.
-  element.classList = {
-    add(name) {
-      const parts = String(element.className).split(" ").filter(Boolean);
-      if (parts.indexOf(name) === -1) {
-        parts.push(name);
-      }
-      element.className = parts.join(" ");
-    },
-    remove(name) {
-      element.className = String(element.className)
-        .split(" ")
-        .filter(function (part) {
-          return part && part !== name;
-        })
-        .join(" ");
-    },
-    contains(name) {
-      return String(element.className).split(" ").indexOf(name) !== -1;
-    },
+  element.querySelectorAll = function (selector) {
+    const found = [];
+    const wanted = String(selector).replace(/^\./, "");
+
+    if (String(selector).indexOf(".") === 0) {
+      walkDescendants(element, function (node) {
+        if (hasClass(node, wanted)) {
+          found.push(node);
+        }
+      });
+    }
+
+    // The hover preview tags its links and asks for them by the tag and
+    // attribute every route carries, which is the one other selector the
+    // reader's views ask of this fake.
+    if (String(selector) === "a[href]") {
+      walkDescendants(element, function (node) {
+        if (node.tagName === "A" && node.getAttribute("href") !== null) {
+          found.push(node);
+        }
+      });
+    }
+
+    return found;
+  };
+
+  // The preview's placement measures the link it describes; one fixed
+  // rectangle keeps the panel beside the link instead of inside it.
+  element.scrollCalls = [];
+  element.scrollIntoView = function (options) {
+    element.scrollCalls.push(options || {});
+  };
+
+  // The hover preview's handlers find the link an event started on by the
+  // mark the tag step wrote on it; the two selectors a real `closest` is
+  // asked here are the link mark and the head's buttons.
+  element.closest = function (selector) {
+    if (selector === "button") {
+      return element.tagName === "BUTTON" ? element : null;
+    }
+    if (selector !== DOC_LINK_SELECTOR) {
+      return null;
+    }
+    const tagged = Object.hasOwn(element.attributes, DOC_LINK_ATTRIBUTE);
+    return element.tagName === "A" && tagged ? element : null;
   };
 
   // `textContent` is a real setter on the elements the session empties.
@@ -244,6 +140,7 @@ function fakeElement(tagName) {
       element.children = [];
     },
   });
+
   Object.defineProperty(element, "innerHTML", {
     get() {
       return element.__html || "";
@@ -255,202 +152,16 @@ function fakeElement(tagName) {
       // build's own markup asks for. The string stays on `__html` for the
       // tests that read the markup back.
       element.children = [];
-      parseInto(element, String(value));
+      parseInto(element, String(value), fakeElement);
     },
   });
 
   return element;
 }
 
-/**
- * Parse the tags of `html` into children of `root`.
- *
- * Ported from the search panel's own fake, and deliberately just as minimal:
- * every tag opens or closes, nothing is void, and attributes matter only as
- * far as the class name. That is exactly what the build emits for a document
- * body, and anything more would be a parser the tests then have to trust.
- */
-function parseInto(root, html) {
-  const open = [root];
-  const pattern = /<(\/?)([a-zA-Z0-9]+)([^>]*)>|([^<]+)/g;
-  let match = pattern.exec(html);
-
-  while (match) {
-    if (match[4] !== undefined) {
-      if (match[4]) {
-        open[open.length - 1].appendChild(textNode(decodeText(match[4])));
-      }
-    } else if (match[1]) {
-      if (open.length > 1) {
-        open.pop();
-      }
-    } else {
-      const node = fakeElement(match[2]);
-      const attribute = /([a-zA-Z-]+)="([^"]*)"/g;
-      let found = attribute.exec(match[3] || "");
-
-      while (found) {
-        node.setAttribute(found[1], found[2]);
-        if (found[1] === "class") {
-          node.className = found[2];
-        }
-        found = attribute.exec(match[3] || "");
-      }
-
-      open[open.length - 1].appendChild(node);
-      open.push(node);
-    }
-    match = pattern.exec(html);
-  }
-}
-
-/** The few entities the build writes into a body. */
-function decodeText(value) {
-  return String(value)
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
-}
-
-/**
- * A text node the way the search jump's highlight meets it.
- *
- * `splitText` is the one member the highlight's cutting needs, and the walk
- * it serves is live: the halves a cut leaves behind are visited where a
- * browser would visit them, because the slot numbering depends on that
- * behaviour rather than on a snapshot of it.
- */
-function textNode(value) {
-  const node = {
-    nodeType: 3,
-    tagName: "#text",
-    children: [],
-    parentNode: null,
-  };
-  let text = String(value);
-
-  Object.defineProperty(node, "textContent", {
-    get() {
-      return text;
-    },
-    set(next) {
-      text = String(next);
-    },
-  });
-
-  Object.defineProperty(node, "nodeValue", {
-    get() {
-      return text;
-    },
-    set(next) {
-      text = String(next);
-    },
-  });
-
-  node.splitText = function (offset) {
-    if (!node.parentNode) {
-      return node;
-    }
-
-    const tail = textNode(text.slice(offset));
-    node.textContent = text.slice(0, offset);
-
-    const parent = node.parentNode;
-    const index = parent.children.indexOf(node);
-    parent.children.splice(index + 1, 0, tail);
-    tail.parentNode = parent;
-
-    return tail;
-  };
-
-  return node;
-}
-
-/**
- * A walker over the text nodes below `root`, in document order.
- *
- * Live, as the browser's own is: nodes that enter the tree while it runs —
- * the halves `splitText` leaves behind, the text a fresh mark now holds —
- * are visited where a browser would visit them.
- */
-function treeWalker(root) {
-  /** The node the walk last returned, or the root before the first ask. */
-  let current = root;
-
-  /** The first text node below `node`, or `null`. */
-  function firstText(node) {
-    for (let index = 0; index < node.children.length; index += 1) {
-      const child = node.children[index];
-      if (child.nodeType === 3) {
-        return child;
-      }
-      const found = firstText(child);
-      if (found) {
-        return found;
-      }
-    }
-
-    return null;
-  }
-
-  /** The next text node from `node`'s position onward, or `null` at the end. */
-  function nextFrom(node) {
-    if (node.nodeType !== 3) {
-      const inner = firstText(node);
-      if (inner) {
-        return inner;
-      }
-    }
-
-    let parent = node.parentNode;
-    while (parent) {
-      const siblings = parent.children;
-      for (
-        let index = siblings.indexOf(node) + 1;
-        index < siblings.length;
-        index += 1
-      ) {
-        if (siblings[index].nodeType === 3) {
-          return siblings[index];
-        }
-        const found = firstText(siblings[index]);
-        if (found) {
-          return found;
-        }
-      }
-
-      node = parent;
-      if (node === root) {
-        return null;
-      }
-      parent = node.parentNode;
-    }
-
-    return null;
-  }
-
-  return {
-    nextNode() {
-      current = nextFrom(current);
-      return current;
-    },
-  };
-}
-
 /** Every `<mark>` below `root`, in document order. */
 function marksOf(root) {
-  const found = [];
-  (function walk(node) {
-    (node.children || []).forEach(function (child) {
-      if (child.tagName === "MARK") {
-        found.push(child);
-      }
-      walk(child);
-    });
-  })(root);
-  return found;
+  return descendantsByTag(root, "MARK");
 }
 
 /** The payload the session routes against. */
@@ -585,24 +296,9 @@ function lazyCorpus() {
  * find by id, the address bar, and the frame queue.
  */
 async function withSession(options, body) {
-  const previous = {
-    document: globalThis.document,
-    location: globalThis.location,
-    history: globalThis.history,
-    requestAnimationFrame: globalThis.requestAnimationFrame,
-    scrollTo: globalThis.scrollTo,
-    matchMedia: globalThis.matchMedia,
-    localStorage: globalThis.localStorage,
-    addEventListener: globalThis.addEventListener,
-    setTimeout: globalThis.setTimeout,
-    clearTimeout: globalThis.clearTimeout,
-    fetch: globalThis.fetch,
-  };
-
   // The search panel debounces its query, so the timers it schedules are kept
   // for the test to run instead of waiting for them.
-  const timers = [];
-  let timerIds = 0;
+  const timers = createFakeTimers();
 
   const shell = new Map();
   SHELL_IDS.forEach(function (id) {
@@ -632,6 +328,7 @@ async function withSession(options, body) {
   // The pages session fetches its documents; the requests are recorded
   // so a test can see what the reader asked for.
   const fetchCalls = [];
+  let fetchImpl = null;
   if (options.lazy) {
     // `options.chunks` seeds a manifest's chunks of its own; without one the
     // stock chunks and the stock corpus serve, and `broken` serves nothing.
@@ -639,13 +336,13 @@ async function withSession(options, body) {
     if (!options.chunks && !options.broken) {
       chunks["search.json"] = lazyCorpus();
     }
-    globalThis.fetch = function (url) {
+    fetchImpl = function (url) {
       fetchCalls.push(url);
-      const body = Object.hasOwn(chunks, url) ? chunks[url] : null;
+      const response = Object.hasOwn(chunks, url) ? chunks[url] : null;
       return Promise.resolve({
-        ok: body !== null,
+        ok: response !== null,
         json() {
-          return Promise.resolve(body);
+          return Promise.resolve(response);
         },
       });
     };
@@ -729,10 +426,10 @@ async function withSession(options, body) {
       return fakeElement(tagName);
     },
     createTextNode(value) {
-      return textNode(value);
+      return createTextNode(value);
     },
     createTreeWalker(root) {
-      return treeWalker(root);
+      return createTreeWalker(root);
     },
     addEventListener(type, handler) {
       if (!doc.listeners[type]) {
@@ -764,67 +461,64 @@ async function withSession(options, body) {
   const history = { replaceState() {} };
   let scrollTop = 0;
 
-  globalThis.document = doc;
-  globalThis.location = location;
-  globalThis.history = history;
-  // The theme query stays light-hostile so the reader stays dark; a test that
-  // sets `options.drawer` moves the session to the width where the document
-  // list is a drawer, which is the only other query the session branches on.
-  globalThis.matchMedia = function (query) {
-    return {
-      matches: Boolean(options.drawer) && query === "(max-width: 640px)",
-    };
-  };
-  // The store starts empty; `options.storage` seeds it, and the same map is
-  // handed back on the session for the tests that read a write back.
-  const storageMap = options.storage || {};
-  globalThis.localStorage = {
-    getItem(key) {
-      return Object.hasOwn(storageMap, key) ? storageMap[key] : null;
-    },
-    setItem(key, value) {
-      storageMap[key] = String(value);
-    },
-  };
   // `start()` listens for `hashchange` on the window, which is `globalThis` in
   // a page and in this fake one too.
   const windowListeners = {};
-  globalThis.addEventListener = function (type, handler) {
-    if (!windowListeners[type]) {
-      windowListeners[type] = [];
-    }
-    windowListeners[type].push(handler);
-  };
-  globalThis.removeEventListener = function (type, handler) {
-    const handlers = windowListeners[type] || [];
-    const index = handlers.indexOf(handler);
-    if (index >= 0) {
-      handlers.splice(index, 1);
-    }
-  };
-  globalThis.requestAnimationFrame = function (handler) {
-    frames.push(handler);
-    return frames.length;
-  };
-  globalThis.scrollTo = function (_x, y) {
-    scrollTop = y;
-  };
-  globalThis.setTimeout = function (callback) {
-    timerIds += 1;
-    timers.push({ id: timerIds, callback: callback });
-    return timerIds;
-  };
-  globalThis.clearTimeout = function (id) {
-    const index = timers.findIndex(function (timer) {
-      return timer.id === id;
-    });
-    if (index >= 0) {
-      timers.splice(index, 1);
-    }
-  };
 
-  try {
-    return await body({
+  // The store starts empty; `options.storage` seeds it, and the same map is
+  // handed back on the session for the tests that read a write back.
+  const storageMap = options.storage || {};
+
+  const overrides = {
+    document: doc,
+    location: location,
+    history: history,
+    // The theme query stays light-hostile so the reader stays dark; a test
+    // that sets `options.drawer` moves the session to the width where the
+    // document list is a drawer, which is the only other query the session
+    // branches on.
+    matchMedia(query) {
+      return {
+        matches: Boolean(options.drawer) && query === "(max-width: 640px)",
+      };
+    },
+    localStorage: {
+      getItem(key) {
+        return Object.hasOwn(storageMap, key) ? storageMap[key] : null;
+      },
+      setItem(key, value) {
+        storageMap[key] = String(value);
+      },
+    },
+    addEventListener(type, handler) {
+      if (!windowListeners[type]) {
+        windowListeners[type] = [];
+      }
+      windowListeners[type].push(handler);
+    },
+    removeEventListener(type, handler) {
+      const handlers = windowListeners[type] || [];
+      const index = handlers.indexOf(handler);
+      if (index >= 0) {
+        handlers.splice(index, 1);
+      }
+    },
+    requestAnimationFrame(handler) {
+      frames.push(handler);
+      return frames.length;
+    },
+    scrollTo(_x, y) {
+      scrollTop = y;
+    },
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+  };
+  if (fetchImpl) {
+    overrides.fetch = fetchImpl;
+  }
+
+  return withGlobals(overrides, function () {
+    return body({
       doc,
       shell,
       location,
@@ -850,10 +544,7 @@ async function withSession(options, body) {
       },
       /** Run the timers the session scheduled, which is what a debounce is. */
       runTimers() {
-        const pending = timers.splice(0, timers.length);
-        pending.forEach(function (timer) {
-          timer.callback();
-        });
+        timers.runAll();
       },
       /**
        * Let every pending promise settle, which is what a fetched document
@@ -866,19 +557,7 @@ async function withSession(options, body) {
         return scrollTop;
       },
     });
-  } finally {
-    globalThis.document = previous.document;
-    globalThis.location = previous.location;
-    globalThis.history = previous.history;
-    globalThis.requestAnimationFrame = previous.requestAnimationFrame;
-    globalThis.scrollTo = previous.scrollTo;
-    globalThis.matchMedia = previous.matchMedia;
-    globalThis.localStorage = previous.localStorage;
-    globalThis.addEventListener = previous.addEventListener;
-    globalThis.setTimeout = previous.setTimeout;
-    globalThis.clearTimeout = previous.clearTimeout;
-    globalThis.fetch = previous.fetch;
-  }
+  });
 }
 
 /**

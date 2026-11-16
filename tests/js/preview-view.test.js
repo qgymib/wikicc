@@ -62,137 +62,18 @@ import {
   MISSING_ANCHOR_ATTRIBUTE,
   MISSING_CLASS,
 } from "../../src/web/js/links.js";
+import {
+  createFakeDocument,
+  createFakeElement,
+  createFakeTimers,
+  walkDescendants,
+  withGlobals,
+} from "./helpers/dom.js";
 
 /** Element stub: attributes, listeners, closest and the geometry `position` reads. */
 function fakeElement(tagName) {
-  const element = {
-    tagName: String(tagName).toUpperCase(),
-    className: "",
-    children: [],
-    attributes: {},
-    listeners: {},
-    classes: [],
-    hidden: false,
-    textContent: "",
-    // `innerHTML` is only ever assigned a preview body or cleared, so a string
-    // that records the write is enough to see what the panel was told to show.
-    innerHTML: "",
-    style: {},
-    offsetWidth: 480,
-    parentNode: null,
-    appendChild(child) {
-      this.children.push(child);
-      child.parentNode = this;
-      return child;
-    },
-    // Deliberately absent: a real `SVGElement` has no `createElementNS` — only
-    // `document` does. A stub that hands it to every node would let a view that
-    // creates SVG children through its parent pass here and throw
-    // "createElementNS is not a function" in a browser, which is exactly the
-    // defect this file failed to catch.
-    removeChild(child) {
-      const index = this.children.indexOf(child);
-      if (index >= 0) {
-        this.children.splice(index, 1);
-      }
-      child.parentNode = null;
-      return child;
-    },
-    setAttribute(name, value) {
-      this.attributes[name] = String(value);
-    },
-    hasAttribute(name) {
-      return Object.hasOwn(this.attributes, name);
-    },
-    removeAttribute(name) {
-      delete this.attributes[name];
-    },
-    getAttribute(name) {
-      return Object.hasOwn(this.attributes, name)
-        ? this.attributes[name]
-        : null;
-    },
-    getBoundingClientRect() {
-      return {
-        top: 100,
-        bottom: 120,
-        left: 40,
-        right: 160,
-        width: 120,
-        height: 20,
-      };
-    },
-    // A click inside the panel arrives with one of its descendants as the
-    // target, so containment has to be decided over the whole subtree.
-    contains(node) {
-      if (node === this) {
-        return true;
-      }
-      return this.children.some(function (child) {
-        return typeof child.contains === "function" && child.contains(node);
-      });
-    },
-    closest(selector) {
-      if (selector === "button") {
-        return this.tagName === "BUTTON" ? this : null;
-      }
-      if (selector !== DOC_LINK_SELECTOR) {
-        return null;
-      }
-      var tagged = Object.hasOwn(this.attributes, DOC_LINK_ATTRIBUTE);
-      return this.tagName === "A" && tagged ? this : null;
-    },
-    /** Every descendant matching `a[href]`, the one selector `tag` asks for. */
-    querySelectorAll(selector) {
-      if (selector !== "a[href]") {
-        return [];
-      }
-
-      const found = [];
-      (function walk(node) {
-        (node.children || []).forEach(function (child) {
-          if (child.tagName === "A" && child.getAttribute("href") !== null) {
-            found.push(child);
-          }
-          walk(child);
-        });
-      })(this);
-
-      return found;
-    },
-    /** Set the class list the view reads through `classList.add`. */
-    classList: null,
-    addEventListener(type, handler) {
-      if (!this.listeners[type]) {
-        this.listeners[type] = [];
-      }
-      this.listeners[type].push(handler);
-    },
-    removeEventListener(type, handler) {
-      const handlers = this.listeners[type] || [];
-      const index = handlers.indexOf(handler);
-      if (index >= 0) {
-        handlers.splice(index, 1);
-      }
-    },
-    /** Dispatch one event to every listener, as the browser would. */
-    fire(type, event) {
-      (this.listeners[type] || []).slice().forEach(function (handler) {
-        handler(event || {});
-      });
-    },
-  };
-
-  element.classList = {
-    add(name) {
-      if (element.classes.indexOf(name) === -1) {
-        element.classes.push(name);
-      }
-    },
-    contains(name) {
-      return element.classes.indexOf(name) !== -1;
-    },
-  };
+  const element = createFakeElement(tagName);
+  element.offsetWidth = 480;
 
   // The real `textContent` setter replaces the whole subtree, which is how the
   // view empties a panel: `innerHTML` and the children have to follow, or a
@@ -226,6 +107,36 @@ function fakeElement(tagName) {
     },
   });
 
+  // A click inside the panel arrives with one of its descendants as the
+  // target; the two selectors the handlers find their marks by are the link
+  // mark and the head's buttons, and anything else stays unmatched.
+  element.closest = function (selector) {
+    if (selector === "button") {
+      return element.tagName === "BUTTON" ? element : null;
+    }
+    if (selector !== DOC_LINK_SELECTOR) {
+      return null;
+    }
+    const tagged = Object.hasOwn(element.attributes, DOC_LINK_ATTRIBUTE);
+    return element.tagName === "A" && tagged ? element : null;
+  };
+
+  /** Every descendant matching `a[href]`, the one selector `tag` asks for. */
+  element.querySelectorAll = function (selector) {
+    if (selector !== "a[href]") {
+      return [];
+    }
+
+    const found = [];
+    walkDescendants(element, function (node) {
+      if (node.tagName === "A" && node.getAttribute("href") !== null) {
+        found.push(node);
+      }
+    });
+
+    return found;
+  };
+
   return element;
 }
 
@@ -237,72 +148,45 @@ function fakeElement(tagName) {
  * handlers create.
  */
 function fakeDocument() {
-  const body = fakeElement("body");
-  const created = [];
+  const doc = createFakeDocument({
+    createElement: fakeElement,
+  });
 
-  return {
-    body,
-    created,
-    documentElement: { clientWidth: 1200, clientHeight: 800 },
-    createElement(tagName) {
-      const element = fakeElement(tagName);
-      created.push(element);
-      return element;
-    },
-    createElementNS(_namespace, tagName) {
-      const element = fakeElement(tagName);
-      created.push(element);
-      return element;
-    },
-    createTextNode(value) {
-      return { nodeType: 3, textContent: String(value) };
-    },
-    // Both the document and the window stand for the page in these tests: a
-    // handler registered on either is dispatched through the same `fire`.
-    addEventListener(type, handler) {
-      if (!globalThis.__previewListeners) {
-        globalThis.__previewListeners = {};
-      }
-      const listeners = globalThis.__previewListeners;
-      if (!listeners[type]) {
-        listeners[type] = [];
-      }
-      listeners[type].push(handler);
-    },
-    removeEventListener(type, handler) {
-      const listeners = globalThis.__previewListeners || {};
-      const handlers = listeners[type] || [];
-      const index = handlers.indexOf(handler);
-      if (index >= 0) {
-        handlers.splice(index, 1);
-      }
-    },
+  doc.createElementNS = function (_namespace, tagName) {
+    const element = fakeElement(tagName);
+    element.ownerDocument = doc;
+    doc.created.push(element);
+    return element;
   };
+
+  // Both the document and the window stand for the page in these tests: a
+  // handler registered on either is dispatched through the same `fire`.
+  doc.addEventListener = function (type, handler) {
+    if (!globalThis.__previewListeners) {
+      globalThis.__previewListeners = {};
+    }
+    const listeners = globalThis.__previewListeners;
+    if (!listeners[type]) {
+      listeners[type] = [];
+    }
+    listeners[type].push(handler);
+  };
+
+  doc.removeEventListener = function (type, handler) {
+    const listeners = globalThis.__previewListeners || {};
+    const handlers = listeners[type] || [];
+    const index = handlers.indexOf(handler);
+    if (index >= 0) {
+      handlers.splice(index, 1);
+    }
+  };
+
+  return doc;
 }
 
 /** Fake global timers and viewport, installed around `run` and removed after. */
 function withFakeWindow(run) {
-  const timers = new Map();
-  let nextId = 1;
-  const previous = {
-    setTimeout: globalThis.setTimeout,
-    clearTimeout: globalThis.clearTimeout,
-    innerWidth: globalThis.innerWidth,
-    innerHeight: globalThis.innerHeight,
-    addEventListener: globalThis.addEventListener,
-    removeEventListener: globalThis.removeEventListener,
-  };
-
-  globalThis.setTimeout = function (handler, delay) {
-    const id = nextId++;
-    timers.set(id, { handler, delay });
-    return id;
-  };
-  globalThis.clearTimeout = function (id) {
-    timers.delete(id);
-  };
-  globalThis.innerWidth = 1200;
-  globalThis.innerHeight = 800;
+  const timers = createFakeTimers();
 
   const fire = function (type, event) {
     (
@@ -314,65 +198,46 @@ function withFakeWindow(run) {
         handler(event || {});
       });
   };
-  globalThis.__previewListeners = {};
-  globalThis.addEventListener = function (type, handler) {
-    const listeners = globalThis.__previewListeners;
-    if (!listeners[type]) {
-      listeners[type] = [];
-    }
-    listeners[type].push(handler);
-  };
-  globalThis.removeEventListener = function (type, handler) {
-    const handlers = globalThis.__previewListeners[type] || [];
-    const index = handlers.indexOf(handler);
-    if (index >= 0) {
-      handlers.splice(index, 1);
-    }
-  };
 
-  const restore = function () {
-    globalThis.setTimeout = previous.setTimeout;
-    globalThis.clearTimeout = previous.clearTimeout;
-    globalThis.innerWidth = previous.innerWidth;
-    globalThis.innerHeight = previous.innerHeight;
-    globalThis.addEventListener = previous.addEventListener;
-    globalThis.removeEventListener = previous.removeEventListener;
-    delete globalThis.__previewListeners;
-  };
-
-  let outcome;
-  try {
-    outcome = run({
-      /** Delays of the timers still pending, in scheduling order. */
-      delays() {
-        return Array.from(timers.values()).map((timer) => timer.delay);
+  return withGlobals(
+    {
+      __previewListeners: {},
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+      innerWidth: 1200,
+      innerHeight: 800,
+      addEventListener(type, handler) {
+        const listeners = globalThis.__previewListeners;
+        if (!listeners[type]) {
+          listeners[type] = [];
+        }
+        listeners[type].push(handler);
       },
-      pending() {
-        return timers.size;
+      removeEventListener(type, handler) {
+        const handlers = globalThis.__previewListeners[type] || [];
+        const index = handlers.indexOf(handler);
+        if (index >= 0) {
+          handlers.splice(index, 1);
+        }
       },
-      /** Run every pending timer once. */
-      runAll() {
-        const due = Array.from(timers.entries());
-        timers.clear();
-        due.forEach(function (entry) {
-          entry[1].handler();
-        });
-      },
-      fire,
-    });
-  } catch (error) {
-    restore();
-    throw error;
-  }
-
-  // A body that awaits promise answers keeps the fakes until it settles: the
-  // unlock attempts resolve in microtasks, not in the timers these tests own.
-  if (outcome && typeof outcome.then === "function") {
-    return outcome.finally(restore);
-  }
-
-  restore();
-  return outcome;
+    },
+    function () {
+      return run({
+        /** Delays of the timers still pending, in scheduling order. */
+        delays() {
+          return timers.delays();
+        },
+        pending() {
+          return timers.pending();
+        },
+        /** Run every pending timer once. */
+        runAll() {
+          timers.runAll();
+        },
+        fire,
+      });
+    },
+  );
 }
 
 /** A link as the build writes it for a chapter that exists. */

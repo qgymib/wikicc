@@ -39,264 +39,66 @@ import {
   createSearchView,
   isSearchShortcut,
 } from "../../src/web/js/search-view.js";
-
-/** Every timer the view scheduled while the fake timers were installed. */
-const timers = [];
+import {
+  closestMatch,
+  createFakeDocument,
+  createFakeElement,
+  createFakeTimers,
+  descendantsByTag,
+  hasClass,
+  textOf,
+  walkDescendants,
+  withGlobals,
+} from "./helpers/dom.js";
 
 /** A fake element: attributes, listeners, children and the text written into it. */
 function fakeElement(tagName) {
-  var element = {
-    tagName: String(tagName).toUpperCase(),
-    className: "",
-    children: [],
-    attributes: {},
-    listeners: {},
-    hidden: false,
-    focused: false,
-    selected: false,
-    value: "",
-    parentNode: null,
-    appendChild(child) {
-      this.children.push(child);
-      child.parentNode = this;
-      return child;
-    },
-    removeChild(child) {
-      var index = this.children.indexOf(child);
-      if (index >= 0) {
-        this.children.splice(index, 1);
-      }
-      child.parentNode = null;
-      return child;
-    },
-    replaceChild(next, child) {
-      var index = this.children.indexOf(child);
-      if (index < 0) {
-        return child;
-      }
-      this.children[index] = next;
-      next.parentNode = this;
-      child.parentNode = null;
-      return child;
-    },
-    insertBefore(next, child) {
-      var index = this.children.indexOf(child);
-      if (index < 0) {
-        this.children.push(next);
-      } else {
-        this.children.splice(index, 0, next);
-      }
-      next.parentNode = this;
-      return next;
-    },
-    /** Descendants in document order, the way a tree walker visits them. */
-    querySelectorAll() {
-      return [];
-    },
-    setAttribute(name, value) {
-      this.attributes[name] = String(value);
-    },
-    getAttribute(name) {
-      return Object.hasOwn(this.attributes, name)
-        ? this.attributes[name]
-        : null;
-    },
-    hasAttribute(name) {
-      return Object.hasOwn(this.attributes, name);
-    },
-    removeAttribute(name) {
-      delete this.attributes[name];
-    },
-    addEventListener(type, handler) {
-      if (!this.listeners[type]) {
-        this.listeners[type] = [];
-      }
-      this.listeners[type].push(handler);
-    },
-    removeEventListener(type, handler) {
-      var list = this.listeners[type] || [];
-      var index = list.indexOf(handler);
-      if (index >= 0) {
-        list.splice(index, 1);
-      }
-    },
-    fire(type, event) {
-      (this.listeners[type] || []).slice().forEach(function (handler) {
-        handler(event || {});
-      });
-    },
-    focus() {
-      this.focused = true;
-    },
-    select() {
-      this.selected = true;
-    },
-    contains(node) {
-      if (node === this) {
-        return true;
-      }
-      return this.children.some(function (child) {
-        return typeof child.contains === "function" && child.contains(node);
-      });
-    },
-    /**
-     * The nearest ancestor — this node included — matching a tag selector.
-     *
-     * Only the two forms the view asks for are understood: `a` and `a[href]`,
-     * the latter requiring the attribute the view relies on.
-     */
-    closest(selector) {
-      var wanted = String(selector).toUpperCase();
-      var needsHref = wanted.indexOf("[HREF]") !== -1;
-      var tag = wanted.split("[")[0];
-      var node = this;
-
-      while (node) {
-        if (
-          node.tagName === tag &&
-          (!needsHref || node.getAttribute("href") !== null)
-        ) {
-          return node;
-        }
-        node = node.parentNode;
-      }
-
-      return null;
-    },
-    /** Every descendant whose class list holds `name`, the panel included. */
-    findAll(name) {
-      var found = [];
-      (function walk(node) {
-        (node.children || []).forEach(function (child) {
-          if (String(child.className).split(" ").indexOf(name) !== -1) {
-            found.push(child);
-          }
-          walk(child);
-        });
-      })(this);
-
-      return found;
-    },
-    /** Every descendant with `tagName`, which is how a `<mark>` is counted. */
-    findAllByTag(tagName) {
-      var found = [];
-      var wanted = String(tagName).toUpperCase();
-      (function walk(node) {
-        (node.children || []).forEach(function (child) {
-          if (child.tagName === wanted) {
-            found.push(child);
-          }
-          walk(child);
-        });
-      })(this);
-
-      return found;
-    },
-  };
-
-  var text = "";
-  Object.defineProperty(element, "textContent", {
-    get() {
-      // A node with children reads theirs, as a browser does; a node written
-      // with `textContent` holds its own text and has none.
-      return element.children.length
-        ? element.children.map(textOf).join("")
-        : text;
-    },
-    set(value) {
-      text = String(value);
-      element.children = [];
+  const element = createFakeElement(tagName, {
+    markup: "parse",
+    parseFactory() {
+      return createNode;
     },
   });
 
   /**
-   * The markup written into the element, parsed into children.
+   * The nearest ancestor — this node included — matching a tag selector.
    *
-   * A real parser is not needed here: the payload's HTML is the build's own
-   * output, so a test that reads it back only has to know tags and text. The
-   * reading side returns the same markup it was given, which is what lets a
-   * test prove a document was inserted *as* markup rather than as text.
+   * Only the two forms the view asks for are understood: `a` and `a[href]`,
+   * the latter requiring the attribute the view relies on.
    */
-  var markup = "";
-  Object.defineProperty(element, "innerHTML", {
-    get() {
-      return markup || element.children.map(outerOf).join("");
-    },
-    set(value) {
-      markup = String(value);
-      text = "";
-      element.children = [];
-      parseInto(element, markup);
-    },
-  });
+  element.closest = function (selector) {
+    const wanted = String(selector).toUpperCase();
+    const needsHref = wanted.indexOf("[HREF]") !== -1;
+    const tag = wanted.split("[")[0];
+    return closestMatch(element, function (node) {
+      return (
+        node.tagName === tag &&
+        (!needsHref || node.getAttribute("href") !== null)
+      );
+    });
+  };
+
+  element.querySelectorAll = function () {
+    return [];
+  };
+
+  /** Every descendant whose class list holds `name`, the panel included. */
+  element.findAll = function (name) {
+    const found = [];
+    walkDescendants(element, function (node) {
+      if (hasClass(node, name)) {
+        found.push(node);
+      }
+    });
+    return found;
+  };
+
+  /** Every descendant with `tagName`, which is how a `<mark>` is counted. */
+  element.findAllByTag = function (tagName) {
+    return descendantsByTag(element, tagName);
+  };
 
   return element;
-}
-
-/** Markup of one node, rebuilt from what it holds. */
-function outerOf(node) {
-  if (node.nodeType === 3) {
-    return node.textContent;
-  }
-
-  var attributes = Object.keys(node.attributes || {})
-    .map(function (name) {
-      return " " + name + '="' + node.attributes[name] + '"';
-    })
-    .join("");
-
-  return (
-    "<" +
-    node.tagName.toLowerCase() +
-    attributes +
-    ">" +
-    node.children.map(outerOf).join("") +
-    "</" +
-    node.tagName.toLowerCase() +
-    ">"
-  );
-}
-
-/**
- * Parse the tags of `html` into children of `root`.
- *
- * Deliberately minimal: every tag opens or closes, nothing is void, no
- * attributes matter beyond the class name. That is exactly what the build
- * emits for a document body, and anything more would be a parser the tests
- * then have to trust.
- */
-function parseInto(root, html) {
-  var open = [root];
-  var pattern = /<(\/?)([a-zA-Z0-9]+)([^>]*)>|([^<]+)/g;
-  var match = pattern.exec(html);
-
-  while (match) {
-    if (match[4] !== undefined) {
-      if (match[4]) {
-        open[open.length - 1].appendChild(textNode(decodeText(match[4])));
-      }
-    } else if (match[1]) {
-      if (open.length > 1) {
-        open.pop();
-      }
-    } else {
-      var node = createNode(match[2]);
-      var attribute = /([a-zA-Z-]+)="([^"]*)"/g;
-      var found = attribute.exec(match[3] || "");
-
-      while (found) {
-        node.setAttribute(found[1], found[2]);
-        if (found[1] === "class") {
-          node.className = found[2];
-        }
-        found = attribute.exec(match[3] || "");
-      }
-
-      open[open.length - 1].appendChild(node);
-      open.push(node);
-    }
-    match = pattern.exec(html);
-  }
 }
 
 /**
@@ -309,164 +111,11 @@ function parseInto(root, html) {
  */
 var createNode = fakeElement;
 
-/** The few entities the build writes into a body. */
-function decodeText(value) {
-  return String(value)
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
-}
-
-/**
- * A text node, which is how a snippet's plain text reaches the page.
- *
- * `markup` is what a browser would make of the text if it were parsed as HTML;
- * it is never set here, so a test that finds it missing proves the text was
- * written with `textContent` instead of `innerHTML`.
- */
-function textNode(value) {
-  var node = { nodeType: 3, tagName: "#text", children: [], parentNode: null };
-  var text = String(value);
-
-  Object.defineProperty(node, "textContent", {
-    get() {
-      return text;
-    },
-    set(next) {
-      text = String(next);
-    },
-  });
-
-  Object.defineProperty(node, "nodeValue", {
-    get() {
-      return text;
-    },
-    set(next) {
-      text = String(next);
-    },
-  });
-
-  /**
-   * Split this node at `offset`, as the browser does: the half after the cut
-   * becomes a new node inserted right behind this one and is returned.
-   */
-  node.splitText = function (offset) {
-    if (!node.parentNode) {
-      return node;
-    }
-
-    const tail = textNode(text.slice(offset));
-    node.textContent = text.slice(0, offset);
-
-    const parent = node.parentNode;
-    const index = parent.children.indexOf(node);
-    parent.children.splice(index + 1, 0, tail);
-    tail.parentNode = parent;
-
-    return tail;
-  };
-
-  return node;
-}
-
-/** The text of a subtree, as `textContent` reads it in a browser. */
-function textOf(node) {
-  if (node.nodeType === 3) {
-    return node.textContent;
-  }
-  if (!node.children.length) {
-    return node.textContent;
-  }
-
-  return node.children.map(textOf).join("");
-}
-
-/**
- * A walker over the text nodes below `root`, in document order.
- *
- * The walk is live, as the browser's own is: nodes that enter the tree while
- * it runs — the halves `splitText` leaves behind, the text a fresh mark now
- * holds — are visited where a browser would visit them, because the view's
- * bookkeeping depends on that behaviour rather than on a snapshot of it.
- */
-function treeWalker(root) {
-  /** The node the walk last returned, or the root before the first ask. */
-  var current = root;
-
-  /** The first text node below `node`, or `null`. */
-  function firstText(node) {
-    for (var index = 0; index < node.children.length; index += 1) {
-      var child = node.children[index];
-      if (child.nodeType === 3) {
-        return child;
-      }
-      var found = firstText(child);
-      if (found) {
-        return found;
-      }
-    }
-
-    return null;
-  }
-
-  /** The next text node from `node`'s position onward, or `null` at the end. */
-  function nextFrom(node) {
-    if (node.nodeType !== 3) {
-      var inner = firstText(node);
-      if (inner) {
-        return inner;
-      }
-    }
-
-    var parent = node.parentNode;
-    while (parent) {
-      var siblings = parent.children;
-      for (
-        var index = siblings.indexOf(node) + 1;
-        index < siblings.length;
-        index += 1
-      ) {
-        if (siblings[index].nodeType === 3) {
-          return siblings[index];
-        }
-        var found = firstText(siblings[index]);
-        if (found) {
-          return found;
-        }
-      }
-
-      node = parent;
-      if (node === root) {
-        return null;
-      }
-      parent = node.parentNode;
-    }
-
-    return null;
-  }
-
-  return {
-    nextNode() {
-      current = nextFrom(current);
-      return current;
-    },
-  };
-}
-
 /** Install a fake page, run `work`, then restore it. */
 function withPage(work) {
-  var previous = {
-    document: globalThis.document,
-    NodeFilter: globalThis.NodeFilter,
-    setTimeout: globalThis.setTimeout,
-    clearTimeout: globalThis.clearTimeout,
-    createNode: createNode,
-  };
-
-  var body = fakeElement("body");
-  var container = fakeElement("div");
+  const timers = createFakeTimers();
+  const body = fakeElement("body");
+  const container = fakeElement("div");
   container.id = "search-panel";
   body.appendChild(container);
 
@@ -476,10 +125,10 @@ function withPage(work) {
    * The view builds its own nodes, so a test that has to observe one — the
    * `<mark>` it scrolls to — can only do it from here.
    */
-  var decorators = [];
+  const decorators = [];
 
   function make(tagName) {
-    var element = fakeElement(tagName);
+    const element = fakeElement(tagName);
     decorators.forEach(function (decorate) {
       decorate(element);
     });
@@ -487,94 +136,59 @@ function withPage(work) {
     return element;
   }
 
-  var documentListeners = {};
-  var doc = {
-    body: body,
-    documentElement: fakeElement("html"),
-    getElementById() {
-      return null;
-    },
-    createElement(tagName) {
-      return make(tagName);
-    },
-    createElementNS(_namespace, tagName) {
-      return make(tagName);
-    },
-    createTextNode(value) {
-      return textNode(value);
-    },
-    createTreeWalker(root) {
-      return treeWalker(root);
-    },
-    addEventListener(type, handler) {
-      if (!documentListeners[type]) {
-        documentListeners[type] = [];
-      }
-      documentListeners[type].push(handler);
-    },
-    removeEventListener(type, handler) {
-      var list = documentListeners[type] || [];
-      var index = list.indexOf(handler);
-      if (index >= 0) {
-        list.splice(index, 1);
-      }
-    },
-  };
-
-  globalThis.document = doc;
-  globalThis.NodeFilter = { SHOW_TEXT: 4 };
   // Parsed markup's elements go through the page's factory, so a test can
   // observe the `<pre>` a code block's hit is brought to as well.
+  const previousCreateNode = createNode;
   createNode = function (tagName) {
     return make(tagName);
   };
-  globalThis.setTimeout = function (callback) {
-    timers.push(callback);
-    return timers.length;
-  };
-  globalThis.clearTimeout = function (id) {
-    if (id > 0 && id <= timers.length) {
-      timers[id - 1] = null;
-    }
+
+  const doc = createFakeDocument({
+    createElement: make,
+  });
+  doc.body = body;
+  doc.getElementById = function () {
+    return null;
   };
 
+  let outcome;
   try {
-    return work({
-      container: container,
-      /** Deliver a press anywhere: the panel listens to the whole document. */
-      press(target) {
-        (documentListeners.pointerdown || [])
-          .slice()
-          .forEach(function (handler) {
-            handler({ target: target });
-          });
+    outcome = withGlobals(
+      {
+        document: doc,
+        NodeFilter: { SHOW_TEXT: 4 },
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
       },
-      /** Run the debounced query the field scheduled, if any is pending. */
-      settle() {
-        var pending = timers.splice(0, timers.length).filter(Boolean);
-        pending.forEach(function (callback) {
-          callback();
+      function () {
+        return work({
+          container: container,
+          /** Deliver a press anywhere: the panel listens to the whole document. */
+          press(target) {
+            doc.fire("pointerdown", { target: target });
+          },
+          /** Run the debounced query the field scheduled, if any is pending. */
+          settle() {
+            timers.runAll();
+          },
+          pending() {
+            return timers.pending();
+          },
+          documentListenerCount() {
+            return (doc.listeners.pointerdown || []).length;
+          },
+          /** Observe every element created from now on. */
+          decorate(fn) {
+            decorators.push(fn);
+          },
         });
       },
-      pending() {
-        return timers.filter(Boolean).length;
-      },
-      documentListenerCount() {
-        return (documentListeners.pointerdown || []).length;
-      },
-      /** Observe every element created from now on. */
-      decorate(fn) {
-        decorators.push(fn);
-      },
-    });
+    );
   } finally {
-    globalThis.document = previous.document;
-    globalThis.NodeFilter = previous.NodeFilter;
-    globalThis.setTimeout = previous.setTimeout;
-    globalThis.clearTimeout = previous.clearTimeout;
-    createNode = previous.createNode;
-    timers.length = 0;
+    createNode = previousCreateNode;
   }
+
+  return outcome;
 }
 
 /** The snippet a result carries: a body hit with both ends cut. */

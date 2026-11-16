@@ -37,6 +37,16 @@ import {
   expandTo,
   fillDocBody,
 } from "../../src/web/js/doc-body.js";
+import {
+  closestMatch,
+  createFakeDocument,
+  createFakeElement,
+  createFakeTimers,
+  hasClass,
+  installGlobal,
+  walkDescendants,
+  withGlobals,
+} from "./helpers/dom.js";
 
 /**
  * Element stub: records markup writes and every query run over it.
@@ -45,149 +55,49 @@ import {
  * because chapter folding reads it as the browser's live collection.
  */
 function fakeElement(tagName, owner) {
-  const element = {
-    tagName: String(tagName).toUpperCase(),
-    className: "",
-    children: [],
-    parentNode: null,
-    attributes: {},
-    listeners: {},
-    queries: [],
-    innerHTML: "",
-    ownerDocument: owner || null,
-    classList: null,
-    style: {},
-    appendChild(child) {
-      this.children.push(child);
-      child.parentNode = this;
-      return child;
-    },
-    removeChild(child) {
-      const index = this.children.indexOf(child);
-      if (index >= 0) {
-        this.children.splice(index, 1);
-      }
-      child.parentNode = null;
-      return child;
-    },
-    /** The copy wrapper takes the block's own place among the siblings. */
-    replaceChild(next, child) {
-      const index = this.children.indexOf(child);
-      if (index < 0) {
-        return child;
-      }
-      this.children[index] = next;
-      next.parentNode = this;
-      child.parentNode = null;
-      return child;
-    },
-    insertBefore(child, reference) {
-      const index = reference ? this.children.indexOf(reference) : -1;
-      if (index < 0) {
-        this.children.push(child);
-      } else {
-        this.children.splice(index, 0, child);
-      }
-      child.parentNode = this;
-      return child;
-    },
-    setAttribute(name, value) {
-      this.attributes[name] = String(value);
-    },
-    getAttribute(name) {
-      return Object.hasOwn(this.attributes, name)
-        ? this.attributes[name]
-        : null;
-    },
-    hasAttribute(name) {
-      return Object.hasOwn(this.attributes, name);
-    },
-    removeAttribute(name) {
-      delete this.attributes[name];
-    },
-    /** A textarea answers select, the way the copy's veteran route asks. */
-    select() {
-      this.selected = true;
-    },
-    get firstChild() {
-      return this.children[0] || null;
-    },
-    /** A heading answers its own next sibling from the parent's collection. */
-    get nextSibling() {
-      if (!this.parentNode) {
+  const element = createFakeElement(tagName);
+  if (owner) {
+    element.ownerDocument = owner;
+  }
+  element.queries = [];
+
+  // A heading answers its own next sibling from the parent's collection.
+  Object.defineProperty(element, "nextSibling", {
+    get() {
+      if (!element.parentNode) {
         return null;
       }
-      const index = this.parentNode.children.indexOf(this);
-      return index >= 0 ? this.parentNode.children[index + 1] || null : null;
+      const index = element.parentNode.children.indexOf(element);
+      return index >= 0 ? element.parentNode.children[index + 1] || null : null;
     },
-    addEventListener(type, handler) {
-      if (!this.listeners[type]) {
-        this.listeners[type] = [];
-      }
-      this.listeners[type].push(handler);
-    },
-    /** Fire at this element: the handlers are those delegated onto it. */
-    fire(type, event) {
-      (this.listeners[type] || []).slice().forEach(function (handler) {
-        handler(event || { target: this });
+  });
+
+  element.querySelectorAll = function (selector) {
+    element.queries.push(String(selector));
+    if (String(selector) === "h1,h2,h3,h4,h5,h6") {
+      return element.children.filter(function (child) {
+        return /^H[1-6]$/.test(child.tagName);
       });
-    },
-    querySelectorAll(selector) {
-      this.queries.push(String(selector));
-      if (String(selector) === "h1,h2,h3,h4,h5,h6") {
-        return this.children.filter(function (child) {
-          return /^H[1-6]$/.test(child.tagName);
-        });
-      }
-      if (String(selector) === "pre.code") {
-        const found = [];
-        (function walk(node) {
-          (node.children || []).forEach(function (child) {
-            if (
-              child.tagName === "PRE" &&
-              String(child.className).split(" ").indexOf("code") !== -1
-            ) {
-              found.push(child);
-            }
-            walk(child);
-          });
-        })(this);
-        return found;
-      }
-      return [];
-    },
-    closest(selector) {
-      const wanted = String(selector).replace(/^\./, "");
-      let node = this;
-      while (node) {
-        if (String(node.className).split(" ").indexOf(wanted) !== -1) {
-          return node;
+    }
+    if (String(selector) === "pre.code") {
+      const found = [];
+      walkDescendants(element, function (node) {
+        if (node.tagName === "PRE" && hasClass(node, "code")) {
+          found.push(node);
         }
-        node = node.parentNode;
-      }
-      return null;
-    },
+      });
+      return found;
+    }
+    return [];
   };
 
-  element.classList = {
-    add(name) {
-      const parts = String(element.className).split(" ").filter(Boolean);
-      if (parts.indexOf(name) === -1) {
-        parts.push(name);
-      }
-      element.className = parts.join(" ");
-    },
-    remove(name) {
-      element.className = String(element.className)
-        .split(" ")
-        .filter(function (part) {
-          return part && part !== name;
-        })
-        .join(" ");
-    },
-    contains(name) {
-      return String(element.className).split(" ").indexOf(name) !== -1;
-    },
+  // The copy's revert and the fold's clicks land below the body, so the
+  // nearest ancestor carrying the asked class answers.
+  element.closest = function (selector) {
+    const wanted = String(selector).replace(/^\./, "");
+    return closestMatch(element, function (node) {
+      return hasClass(node, wanted);
+    });
   };
 
   return element;
@@ -195,52 +105,28 @@ function fakeElement(tagName, owner) {
 
 /** A document stub whose elements all know their owner. */
 function fakeDocument() {
-  const doc = {
-    created: [],
-    createdNS: [],
-    commands: [],
+  const doc = createFakeDocument({
     createElement(tagName) {
-      const element = fakeElement(tagName, doc);
-      doc.created.push(element);
-      return element;
-    },
-    createElementNS(_namespace, tagName) {
-      const element = fakeElement(tagName, doc);
-      doc.createdNS.push(element);
-      return element;
-    },
-    /** The copy command's veteran route, as a real document answers it. */
-    execCommand(command) {
-      doc.commands.push(String(command));
-      return true;
-    },
-  };
-
-  // `document.body` is there the moment a page is; the fake builds its own
-  // the first time something asks, so the tests that never copy pay nothing.
-  Object.defineProperty(doc, "body", {
-    get() {
-      if (!doc.pageBody) {
-        doc.pageBody = fakeElement("body", doc);
-      }
-      return doc.pageBody;
+      return fakeElement(tagName, doc);
     },
   });
+  doc.commands = [];
+
+  // The copy command's veteran route, as a real document answers it.
+  doc.execCommand = function (command) {
+    doc.commands.push(String(command));
+    return true;
+  };
 
   return doc;
 }
 
 /** Install a fake `document`, run `work` with it, restore. */
 function withDocument(work) {
-  const previous = globalThis.document;
   const doc = fakeDocument();
-  globalThis.document = doc;
-
-  try {
+  withGlobals({ document: doc }, function () {
     work(doc);
-  } finally {
-    globalThis.document = previous;
-  }
+  });
 }
 
 /**
@@ -342,23 +228,6 @@ function copyButtonOfBlock(pre) {
 }
 
 /**
- * Install a fake global for as long as the synchronous `work` runs, restore
- * after.
- *
- * The same gesture-scoped swap `graph-view.test.js` makes for its globals:
- * nothing installed here may outlive the test that asked for it.
- */
-function installGlobal(name, value) {
-  const previous = globalThis[name];
-  Object.defineProperty(globalThis, name, {
-    value: value,
-    configurable: true,
-    writable: true,
-  });
-  return previous;
-}
-
-/**
  * Run `work` with the fake timers installed, then settle what it scheduled.
  *
  * The runtime's own `setTimeout` is back before this returns — the test
@@ -370,14 +239,10 @@ function installGlobal(name, value) {
 function withTimers(work) {
   const realSetTimeout = globalThis.setTimeout;
   const realClearTimeout = globalThis.clearTimeout;
-  const queue = [];
-  let ids = 0;
+  const timers = createFakeTimers();
 
-  installGlobal("setTimeout", function (callback) {
-    queue.push({ callback: callback });
-    return ++ids;
-  });
-  installGlobal("clearTimeout", function () {});
+  installGlobal("setTimeout", timers.setTimeout);
+  installGlobal("clearTimeout", timers.clearTimeout);
 
   try {
     work();
@@ -385,10 +250,7 @@ function withTimers(work) {
     installGlobal("setTimeout", realSetTimeout);
     installGlobal("clearTimeout", realClearTimeout);
 
-    const pending = queue.splice(0, queue.length);
-    for (const timer of pending) {
-      timer.callback();
-    }
+    timers.runAll();
   }
 }
 

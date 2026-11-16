@@ -37,6 +37,12 @@ import {
   enhanceTable,
   relayoutLockedTables,
 } from "../../src/web/js/table-view.js";
+import {
+  createFakeDocument,
+  createFakeElement,
+  walkDescendants,
+  withGlobals,
+} from "./helpers/dom.js";
 
 const MARKER = "data-wikicc-table";
 
@@ -45,125 +51,100 @@ const MARKER = "data-wikicc-table";
  * listeners recorded per type, and the geometry members the pin reads.
  */
 function fakeElement(tagName, owner) {
-  const classNames = new Set();
-  const element = {
-    tagName: String(tagName).toUpperCase(),
-    children: [],
-    parentNode: null,
-    attributes: {},
-    listeners: {},
-    style: {},
-    ownerDocument: owner || null,
-    offsetWidth: 0,
-    offsetHeight: 0,
-    value: "",
-    type: "",
-    checked: false,
-    rect: { left: 100, top: 50, right: 120, bottom: 70, width: 20, height: 20 },
-    appendChild(child) {
-      if (child && child.isFragment) {
-        child.children.slice().forEach(function (moving) {
-          element.appendChild(moving);
-        });
-        return child;
-      }
-      if (child.parentNode) {
-        child.parentNode.removeChild(child);
-      }
+  const element = createFakeElement(tagName);
+  if (owner) {
+    element.ownerDocument = owner;
+  }
+  element.type = "";
+  element.checked = false;
+  // The pin's own rect vocabulary: left and top first, twenty by twenty.
+  element.rect = {
+    left: 100,
+    top: 50,
+    right: 120,
+    bottom: 70,
+    width: 20,
+    height: 20,
+  };
+
+  // A browser moves a child that already has a parent, and the pin really
+  // moves a panel between anchors, so appending follows the move; a
+  // fragment contributes its children where it is appended.
+  element.appendChild = function (child) {
+    if (child && child.isFragment) {
+      child.children.slice().forEach(function (moving) {
+        element.appendChild(moving);
+      });
+      return child;
+    }
+    if (child.parentNode) {
+      child.parentNode.removeChild(child);
+    }
+    element.children.push(child);
+    child.parentNode = element;
+    return child;
+  };
+
+  element.insertBefore = function (child, reference) {
+    if (child && child.isFragment) {
+      child.children.slice().forEach(function (moving) {
+        element.insertBefore(moving, reference);
+      });
+      return child;
+    }
+    if (child.parentNode) {
+      child.parentNode.removeChild(child);
+    }
+    const index = reference ? element.children.indexOf(reference) : -1;
+    if (index < 0) {
       element.children.push(child);
-      child.parentNode = element;
-      return child;
-    },
-    removeChild(child) {
-      const index = element.children.indexOf(child);
-      if (index >= 0) {
-        element.children.splice(index, 1);
-      }
-      child.parentNode = null;
-      return child;
-    },
-    insertBefore(child, reference) {
-      if (child && child.isFragment) {
-        child.children.slice().forEach(function (moving) {
-          element.insertBefore(moving, reference);
-        });
-        return child;
-      }
-      if (child.parentNode) {
-        child.parentNode.removeChild(child);
-      }
-      const index = reference ? element.children.indexOf(reference) : -1;
-      if (index < 0) {
-        element.children.push(child);
-      } else {
-        element.children.splice(index, 0, child);
-      }
-      child.parentNode = element;
-      return child;
-    },
-    remove() {
-      if (element.parentNode) {
-        element.parentNode.removeChild(element);
-      }
-    },
-    setAttribute(name, value) {
-      element.attributes[name] = String(value);
-    },
-    getAttribute(name) {
-      return Object.hasOwn(element.attributes, name)
-        ? element.attributes[name]
-        : null;
-    },
-    hasAttribute(name) {
-      return Object.hasOwn(element.attributes, name);
-    },
-    removeAttribute(name) {
-      delete element.attributes[name];
-    },
-    addEventListener(type, listener) {
-      if (!element.listeners[type]) {
-        element.listeners[type] = [];
-      }
-      element.listeners[type].push(listener);
-    },
-    removeEventListener(type, listener) {
-      element.listeners[type] = (element.listeners[type] || []).filter(
-        function (held) {
-          return held !== listener;
-        },
-      );
-    },
-    focus() {},
-    getBoundingClientRect() {
-      return element.rect;
-    },
-    /** The browser's live collections hold the section elements only. */
-    get cells() {
+    } else {
+      element.children.splice(index, 0, child);
+    }
+    child.parentNode = element;
+    return child;
+  };
+
+  element.remove = function () {
+    if (element.parentNode) {
+      element.parentNode.removeChild(element);
+    }
+  };
+
+  /** The browser's live collections hold the section elements only. */
+  Object.defineProperty(element, "cells", {
+    get() {
       return element.children.filter(function (child) {
         return child.tagName === "TD" || child.tagName === "TH";
       });
     },
-    get rows() {
+  });
+  Object.defineProperty(element, "rows", {
+    get() {
       return element.children.filter(function (child) {
         return child.tagName === "TR";
       });
     },
-    get tBodies() {
+  });
+  Object.defineProperty(element, "tBodies", {
+    get() {
       return element.children.filter(function (child) {
         return child.tagName === "TBODY";
       });
     },
-    get tHead() {
+  });
+  Object.defineProperty(element, "tHead", {
+    get() {
       return (
         element.children.find(function (child) {
           return child.tagName === "THEAD";
         }) || null
       );
     },
-    get firstChild() {
-      return element.children[0] || null;
-    },
-    get isConnected() {
+  });
+
+  Object.defineProperty(element, "isConnected", {
+    get() {
       let node = element;
       while (node) {
         if (node.isDocumentRoot) {
@@ -173,47 +154,6 @@ function fakeElement(tagName, owner) {
       }
       return false;
     },
-  };
-
-  Object.defineProperty(element, "className", {
-    get() {
-      return [...classNames].join(" ");
-    },
-    set(value) {
-      classNames.clear();
-      String(value)
-        .split(/\s+/)
-        .filter(Boolean)
-        .forEach(function (name) {
-          classNames.add(name);
-        });
-    },
-  });
-  element.classList = {
-    contains(name) {
-      return classNames.has(name);
-    },
-    add(name) {
-      classNames.add(name);
-    },
-    remove(name) {
-      classNames.delete(name);
-    },
-  };
-
-  // Writing text replaces the children with a text node, exactly as the
-  // browser does; reading it walks them back.
-  Object.defineProperty(element, "textContent", {
-    get() {
-      return element.children
-        .map(function (child) {
-          return child.textContent;
-        })
-        .join("");
-    },
-    set(value) {
-      element.children = value === "" ? [] : [{ textContent: String(value) }];
-    },
   });
 
   return element;
@@ -221,53 +161,25 @@ function fakeElement(tagName, owner) {
 
 /** Document stub: the factories the view calls, and one live table query. */
 function fakeDocument() {
-  const doc = {
-    isDocumentRoot: true,
-    listeners: {},
+  const doc = createFakeDocument({
     createElement(tag) {
       return fakeElement(tag, doc);
     },
     createElementNS() {
       return fakeElement("svg", doc);
     },
-    createDocumentFragment() {
-      const fragment = fakeElement("#document-fragment", doc);
-      fragment.isFragment = true;
-      return fragment;
-    },
-    addEventListener(type, listener) {
-      if (!doc.listeners[type]) {
-        doc.listeners[type] = [];
-      }
-      doc.listeners[type].push(listener);
-    },
-    removeEventListener(type, listener) {
-      doc.listeners[type] = (doc.listeners[type] || []).filter(function (held) {
-        return held !== listener;
-      });
-    },
-    querySelectorAll(selector) {
-      const found = [];
-      const tag = selector.toUpperCase();
-      const walk = function (node) {
-        node.children.forEach(function (child) {
-          if (child.tagName === tag) {
-            found.push(child);
-          }
-          walk(child);
-        });
-      };
-      walk(doc.documentElement);
-      return found;
-    },
-  };
+  });
 
-  doc.documentElement = fakeElement("html", doc);
-  doc.documentElement.parentNode = doc;
-  doc.documentElement.clientWidth = 1200;
-  doc.documentElement.clientHeight = 800;
-  doc.body = fakeElement("body", doc);
-  doc.body.parentNode = doc.documentElement;
+  doc.querySelectorAll = function (selector) {
+    const found = [];
+    const tag = selector.toUpperCase();
+    walkDescendants(doc.documentElement, function (node) {
+      if (node.tagName === tag) {
+        found.push(node);
+      }
+    });
+    return found;
+  };
 
   return doc;
 }
@@ -282,50 +194,46 @@ const pageListeners = {};
 
 /** Install a fake `document`, `window` and page registry, run, restore. */
 function withDocument(work) {
-  const previousDocument = globalThis.document;
-  const previousWindow = globalThis.window;
-  const previousAdd = globalThis.addEventListener;
-  const previousRemove = globalThis.removeEventListener;
   const doc = fakeDocument();
-  globalThis.document = doc;
-  globalThis.window = {
-    innerWidth: 1200,
-    innerHeight: 800,
-    listeners: {},
-    addEventListener(type, listener) {
-      if (!globalThis.window.listeners[type]) {
-        globalThis.window.listeners[type] = [];
-      }
-      globalThis.window.listeners[type].push(listener);
+  withGlobals(
+    {
+      document: doc,
+      window: {
+        innerWidth: 1200,
+        innerHeight: 800,
+        listeners: {},
+        addEventListener(type, listener) {
+          if (!globalThis.window.listeners[type]) {
+            globalThis.window.listeners[type] = [];
+          }
+          globalThis.window.listeners[type].push(listener);
+        },
+        removeEventListener(type, listener) {
+          globalThis.window.listeners[type] = (
+            globalThis.window.listeners[type] || []
+          ).filter(function (held) {
+            return held !== listener;
+          });
+        },
+      },
+      addEventListener(type, listener) {
+        if (!pageListeners[type]) {
+          pageListeners[type] = [];
+        }
+        pageListeners[type].push(listener);
+      },
+      removeEventListener(type, listener) {
+        pageListeners[type] = (pageListeners[type] || []).filter(
+          function (held) {
+            return held !== listener;
+          },
+        );
+      },
     },
-    removeEventListener(type, listener) {
-      globalThis.window.listeners[type] = (
-        globalThis.window.listeners[type] || []
-      ).filter(function (held) {
-        return held !== listener;
-      });
+    function () {
+      work(doc);
     },
-  };
-  globalThis.addEventListener = function (type, listener) {
-    if (!pageListeners[type]) {
-      pageListeners[type] = [];
-    }
-    pageListeners[type].push(listener);
-  };
-  globalThis.removeEventListener = function (type, listener) {
-    pageListeners[type] = (pageListeners[type] || []).filter(function (held) {
-      return held !== listener;
-    });
-  };
-
-  try {
-    work(doc);
-  } finally {
-    globalThis.document = previousDocument;
-    globalThis.window = previousWindow;
-    globalThis.addEventListener = previousAdd;
-    globalThis.removeEventListener = previousRemove;
-  }
+  );
 }
 
 /** Deliver a page-level event, a window resize above all, to the registry. */
