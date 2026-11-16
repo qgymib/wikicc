@@ -28,6 +28,11 @@
 //!   and trailing whitespace belong to the password.
 //! - `strict`: whether warnings fail the build, spelled as a JSON boolean.
 //!
+//! The keys and their value grammar are the entries of the settings spec
+//! (`src/options/spec.rs`), not a match arm here: the loader looks each key
+//! up in that table and hands it the value, so adding a key is one entry
+//! there and nothing in this file.
+//!
 //! Every value the file names is a default: a set `WIKICC_*` environment
 //! variable overrides it, and an explicit command line flag overrides the
 //! variable.
@@ -57,7 +62,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::error::{Error, Result};
-use crate::options::{OutputFormat, Settings, normalize_candidate, normalize_excludes};
+use crate::options::spec::SettingSpec;
+use crate::options::{Settings, normalize_candidate};
 use crate::scan::Diagnostic;
 
 /// Name of the configuration file, looked up at the input folder root.
@@ -193,8 +199,9 @@ pub fn init(dir: &Path, out: &mut dyn Write) -> Result<()> {
 ///
 /// `base` is the folder the file lives in: a relative `out` is resolved
 /// against it right here, so the merge in [`crate::options`] sees the same
-/// kind of value a command line `--out` carries.
-fn parse(bytes: &[u8], path: &Path, base: &Path) -> Result<SiteConfig> {
+/// kind of value a command line `--out` carries. Crate-visible so the
+/// settings spec's walk test can drive every entry through this reader.
+pub(crate) fn parse(bytes: &[u8], path: &Path, base: &Path) -> Result<SiteConfig> {
     let text = String::from_utf8_lossy(bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let value: Value = serde_json::from_str(text).map_err(|error| {
@@ -210,106 +217,18 @@ fn parse(bytes: &[u8], path: &Path, base: &Path) -> Result<SiteConfig> {
 
     let mut config = SiteConfig::default();
     for (key, value) in entries {
-        match (key.as_str(), value) {
-            ("home", Value::Null) => {}
-            ("home", Value::String(text)) => {
-                if text.trim().is_empty() {
-                    return Err(Error::InvalidInput(
-                        "'home' must be a non-empty string".to_string(),
-                    ));
-                }
-                config.settings.home = Some(text);
-            }
-            ("home", _) => {
-                return Err(Error::InvalidInput("'home' must be a string".to_string()));
-            }
-            ("exclude", Value::Null) => {}
-            ("exclude", Value::Array(entries)) => {
-                let mut list = Vec::new();
-                for entry in entries {
-                    let Value::String(raw) = entry else {
-                        return Err(Error::InvalidInput(
-                            "'exclude' entries must be strings".to_string(),
-                        ));
-                    };
-                    list.push(raw);
-                }
-                config.settings.exclude = Some(normalize_excludes(&list)?);
-            }
-            ("exclude", _) => {
-                return Err(Error::InvalidInput(
-                    "'exclude' must be an array of strings".to_string(),
-                ));
-            }
-            ("out", Value::Null) => {}
-            ("out", Value::String(text)) => {
-                if text.trim().is_empty() {
-                    return Err(Error::InvalidInput(
-                        "'out' must be a non-empty directory path".to_string(),
-                    ));
-                }
-                config.settings.out = Some(base.join(text));
-            }
-            ("out", _) => {
-                return Err(Error::InvalidInput("'out' must be a string".to_string()));
-            }
-            ("format", Value::Null) => {}
-            ("format", Value::String(text)) => {
-                config.settings.format = Some(text.parse::<OutputFormat>()?);
-            }
-            ("format", _) => {
-                return Err(Error::InvalidInput("'format' must be a string".to_string()));
-            }
-            ("title", Value::Null) => {}
-            ("title", Value::String(text)) => {
-                config.settings.title = Some(text);
-            }
-            ("title", _) => {
-                return Err(Error::InvalidInput("'title' must be a string".to_string()));
-            }
-            ("favicon", Value::Null) => {}
-            ("favicon", Value::String(text)) => {
-                if text.trim().is_empty() {
-                    return Err(Error::InvalidInput(
-                        "'favicon' must be a non-empty file path".to_string(),
-                    ));
-                }
-                config.settings.favicon = Some(text);
-            }
-            ("favicon", _) => {
-                return Err(Error::InvalidInput(
-                    "'favicon' must be a string".to_string(),
-                ));
-            }
-            ("password", Value::Null) => {}
-            ("password", Value::String(text)) => {
-                if text.trim().is_empty() {
-                    return Err(Error::InvalidInput(
-                        "'password' must be a non-empty string".to_string(),
-                    ));
-                }
-                config.settings.password = Some(text);
-            }
-            ("password", _) => {
-                return Err(Error::InvalidInput(
-                    "'password' must be a string".to_string(),
-                ));
-            }
-            ("strict", Value::Null) => {}
-            ("strict", Value::Bool(flag)) => {
-                config.settings.strict = Some(flag);
-            }
-            ("strict", _) => {
-                return Err(Error::InvalidInput(
-                    "'strict' must be a boolean".to_string(),
-                ));
-            }
-            (unknown, _) => {
-                config.diagnostics.push(Diagnostic::warning(format!(
-                    "{DIAGNOSTIC_PREFIX} unknown key '{unknown}' ignored"
-                )));
-            }
+        let Some(spec) = SettingSpec::by_key(&key) else {
+            config.diagnostics.push(Diagnostic::warning(format!(
+                "{DIAGNOSTIC_PREFIX} unknown key '{key}' ignored"
+            )));
+            continue;
+        };
+        // A `null` says the key exists but did not speak: the setting stays
+        // unset, exactly as if the key were absent.
+        if value.is_null() {
+            continue;
         }
+        spec.apply_config(&mut config.settings, value, base)?;
     }
 
     Ok(config)
@@ -318,6 +237,7 @@ fn parse(bytes: &[u8], path: &Path, base: &Path) -> Result<SiteConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::options::OutputFormat;
 
     /// Parse a configuration whose relative `out` resolves against `input`.
     fn parse_text(text: &str) -> Result<SiteConfig> {

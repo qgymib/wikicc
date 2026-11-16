@@ -4,7 +4,9 @@
 //! explicit command line flag overrides them, and they override
 //! `.wikicc.json`. Eight variables name the settings both other surfaces
 //! carry ([`crate::options::Settings`]), spelled with a `WIKICC_` prefix and
-//! in upper case only:
+//! in upper case only — one entry of the settings spec each
+//! (`src/options/spec.rs`), which is where their names and their value
+//! grammar come from:
 //!
 //! - `WIKICC_OUT`: the output directory. A relative value is resolved
 //!   against the working directory, exactly like a command line `--out` —
@@ -51,10 +53,11 @@
 //! rules are unit tested against plain data without touching the process
 //! environment; [`settings`] only reads [`std::env`] and delegates.
 
-use std::path::PathBuf;
-
-use crate::error::{Error, Result};
-use crate::options::{OutputFormat, Settings};
+use crate::error::Result;
+use crate::options::Settings;
+use crate::options::spec::{
+    EXCLUDE, FAVICON, FORMAT, HOME, OUT, PASSWORD, STRICT, SettingSpec, TITLE,
+};
 
 /// Prefix of the environment variables this module reads.
 ///
@@ -63,28 +66,28 @@ use crate::options::{OutputFormat, Settings};
 pub const VAR_PREFIX: &str = "WIKICC_";
 
 /// Environment variable naming the output directory.
-pub const OUT_VAR: &str = "WIKICC_OUT";
+pub const OUT_VAR: &str = OUT.var;
 
 /// Environment variable naming the output artifact format.
-pub const FORMAT_VAR: &str = "WIKICC_FORMAT";
+pub const FORMAT_VAR: &str = FORMAT.var;
 
 /// Environment variable naming the site title.
-pub const TITLE_VAR: &str = "WIKICC_TITLE";
+pub const TITLE_VAR: &str = TITLE.var;
 
 /// Environment variable naming the `--strict` gate.
-pub const STRICT_VAR: &str = "WIKICC_STRICT";
+pub const STRICT_VAR: &str = STRICT.var;
 
 /// Environment variable naming the opening document.
-pub const HOME_VAR: &str = "WIKICC_HOME";
+pub const HOME_VAR: &str = HOME.var;
 
 /// Environment variable naming the comma-separated exclusion list.
-pub const EXCLUDE_VAR: &str = "WIKICC_EXCLUDE";
+pub const EXCLUDE_VAR: &str = EXCLUDE.var;
 
 /// Environment variable naming the favicon file.
-pub const FAVICON_VAR: &str = "WIKICC_FAVICON";
+pub const FAVICON_VAR: &str = FAVICON.var;
 
 /// Environment variable naming the global sealing password.
-pub const PASSWORD_VAR: &str = "WIKICC_PASSWORD";
+pub const PASSWORD_VAR: &str = PASSWORD.var;
 
 /// Read the `WIKICC_*` settings from the process environment.
 ///
@@ -115,77 +118,31 @@ where
     let mut settings = Settings::default();
     for (name, raw) in entries {
         let name = name.as_ref();
-        let Some(key) = name.strip_prefix(VAR_PREFIX) else {
+        if !name.starts_with(VAR_PREFIX) {
             continue;
-        };
+        }
         let value = raw.as_ref().trim();
         if value.is_empty() {
             continue;
         }
-        match key {
-            "OUT" => settings.out = Some(PathBuf::from(value)),
-            "FORMAT" => settings.format = Some(parse_format(name, value)?),
-            "TITLE" => settings.title = Some(value.to_string()),
-            "STRICT" => settings.strict = Some(parse_bool(name, value)?),
-            "HOME" => settings.home = Some(value.to_string()),
-            "EXCLUDE" => settings.exclude = Some(parse_excludes(name, value)?),
-            "FAVICON" => settings.favicon = Some(value.to_string()),
-            "PASSWORD" => settings.password = Some(value.to_string()),
-            // The environment is a shared namespace: an upper-case name this
-            // version does not know may belong to another program, so it is
-            // ignored instead of being called a typo.
-            _ => {}
+        // The variable name finds its entry in the settings spec; the name
+        // handling and the value grammar live there, not here.
+        if let Some(spec) = SettingSpec::by_var(name) {
+            spec.apply_env(&mut settings, value)?;
         }
+        // Any other upper-case name this version does not know may belong
+        // to another program: the environment is a shared namespace, so it
+        // is ignored instead of being called a typo.
     }
     Ok(settings)
-}
-
-/// Parse a `WIKICC_FORMAT` value, naming the variable in the error.
-fn parse_format(name: &str, value: &str) -> Result<OutputFormat> {
-    value
-        .parse::<OutputFormat>()
-        .map_err(|error| invalid(name, &error.to_string()))
-}
-
-/// Parse a `WIKICC_STRICT` value: `true`, `false`, `1` or `0`.
-///
-/// Letter case does not matter; anything else is a hard error naming the
-/// variable.
-fn parse_bool(name: &str, value: &str) -> Result<bool> {
-    match value.to_ascii_lowercase().as_str() {
-        "true" | "1" => Ok(true),
-        "false" | "0" => Ok(false),
-        _ => Err(invalid(name, "must be 'true', 'false', '1' or '0'")),
-    }
-}
-
-/// Split a `WIKICC_EXCLUDE` value on commas; an empty entry is a hard error.
-///
-/// The entries are kept verbatim: the normalization and the escape guards
-/// both other sources share run later, in
-/// [`crate::options::Options::resolve`], on whichever list wins.
-fn parse_excludes(name: &str, value: &str) -> Result<Vec<String>> {
-    let mut list = Vec::new();
-    for entry in value.split(',') {
-        if entry.trim().is_empty() {
-            return Err(invalid(
-                name,
-                "entries must be non-empty, comma-separated directory paths",
-            ));
-        }
-        list.push(entry.to_string());
-    }
-    Ok(list)
-}
-
-/// An [`Error::InvalidInput`] that names the offending variable.
-fn invalid(name: &str, reason: &str) -> Error {
-    Error::InvalidInput(format!("environment variable '{name}': {reason}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    use crate::options::OutputFormat;
 
     /// Parse a fixed set of name/value pairs, as the environment would hand
     /// them over.

@@ -10,6 +10,7 @@ mod format;
 mod guards;
 mod resolve;
 mod settings;
+pub(crate) mod spec;
 mod values;
 
 pub use format::OutputFormat;
