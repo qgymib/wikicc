@@ -1,0 +1,347 @@
+//! Output-path guards: lexical normalization and the safety checks that run
+//! before anything is written or removed.
+
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
+
+use crate::error::{Error, Result};
+
+/// Reject an unusable input folder.
+pub fn validate_input(input: &Path) -> Result<()> {
+    if !input.exists() {
+        return Err(Error::InvalidInput(format!(
+            "input directory not found: {}",
+            input.display()
+        )));
+    }
+    if !input.is_dir() {
+        return Err(Error::InvalidInput(format!(
+            "input path is not a directory: {}",
+            input.display()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Reject unusable input/output combinations.
+///
+/// This is the only place that guards the output directory, so it must run
+/// before anything is written or removed. It runs on the merged options, so
+/// an output directory that arrived through the configuration file is
+/// guarded exactly like one typed on the command line.
+pub fn validate_paths(input: &Path, out: &Path) -> Result<()> {
+    let input = normalize(input);
+    let out = normalize(out);
+
+    if same_path(&input, &out) {
+        return Err(Error::InvalidInput(format!(
+            "output directory must differ from the input directory: {}",
+            out.display()
+        )));
+    }
+    if is_ancestor(&out, &input) {
+        return Err(Error::InvalidInput(format!(
+            "output directory must not be an ancestor of the input directory: {}",
+            out.display()
+        )));
+    }
+    if same_path(&normalize(&std::env::current_dir()?), &out) {
+        return Err(Error::InvalidInput(format!(
+            "refusing to use the current working directory as the output directory: {}",
+            out.display()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Make `path` absolute and collapse `.`/`..` segments without touching the
+/// filesystem (the output directory usually does not exist yet).
+pub fn normalize(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(path),
+            Err(_) => path.to_path_buf(),
+        }
+    };
+
+    let mut prefix: Option<OsString> = None;
+    let mut root: Option<OsString> = None;
+    let mut parts: Vec<OsString> = Vec::new();
+
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(value) => prefix = Some(value.as_os_str().to_os_string()),
+            Component::RootDir => root = Some(component.as_os_str().to_os_string()),
+            Component::CurDir => {}
+            // A parent segment above the root has nowhere to go, so the root is
+            // the floor: `..` only cancels a normal segment that is still there.
+            Component::ParentDir => {
+                parts.pop();
+            }
+            Component::Normal(name) => parts.push(name.to_os_string()),
+        }
+    }
+
+    let mut normalized = PathBuf::new();
+    if let Some(prefix) = prefix {
+        normalized.push(prefix);
+    }
+    if let Some(root) = root {
+        normalized.push(root);
+    }
+    for part in parts {
+        normalized.push(part);
+    }
+    normalized
+}
+
+/// Path components, lower-cased on Windows so comparisons ignore case.
+///
+/// Shared with [`crate::scan`] so every path comparison in the crate follows the
+/// same platform rules.
+pub(crate) fn path_components(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|component| {
+            let text = component.as_os_str().to_string_lossy();
+            if cfg!(windows) {
+                text.to_lowercase()
+            } else {
+                text.into_owned()
+            }
+        })
+        .collect()
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    path_components(left) == path_components(right)
+}
+
+/// Whether `ancestor` is a strict parent directory of `descendant`.
+fn is_ancestor(ancestor: &Path, descendant: &Path) -> bool {
+    let ancestor = path_components(ancestor);
+    let descendant = path_components(descendant);
+
+    ancestor.len() < descendant.len()
+        && ancestor
+            .iter()
+            .zip(descendant.iter())
+            .all(|(left, right)| left == right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::options::{Options, Request, Settings};
+
+    /// Options for one request whose command line carries only `out`.
+    fn options_for(input: &Path, out: Option<&Path>) -> Options {
+        let settings = Settings {
+            out: out.map(Path::to_path_buf),
+            ..Settings::default()
+        };
+        let request = Request {
+            input: input.to_path_buf(),
+            settings,
+            force: false,
+            quiet: false,
+        };
+        Options::resolve(&request, &Settings::default(), &Settings::default())
+            .expect("the request resolves")
+    }
+
+    #[test]
+    fn rejects_missing_input_directory() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let missing = dir.path().join("nope");
+        let error = options_for(&missing, None).validate().unwrap_err();
+
+        assert!(
+            error.to_string().contains("input directory not found"),
+            "unexpected message: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_input_that_is_a_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("notes.md");
+        std::fs::write(&file, "# Notes\n").expect("write fixture");
+        let error = options_for(&file, None).validate().unwrap_err();
+
+        assert!(
+            error.to_string().contains("input path is not a directory"),
+            "unexpected message: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_output_equal_to_input() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let error = options_for(dir.path(), Some(dir.path()))
+            .validate()
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("output directory must differ from the input directory"),
+            "unexpected message: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_output_that_is_an_ancestor_of_input() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let input = dir.path().join("site");
+        std::fs::create_dir(&input).expect("create input");
+        let error = options_for(&input, Some(dir.path()))
+            .validate()
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("output directory must not be an ancestor of the input directory"),
+            "unexpected message: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_current_working_directory_as_output() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cwd = std::env::current_dir().expect("cwd");
+        let error = options_for(dir.path(), Some(&cwd)).validate().unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("refusing to use the current working directory"),
+            "unexpected message: {error}"
+        );
+    }
+
+    #[test]
+    fn accepts_default_configuration() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let input = dir.path().join("site");
+        std::fs::create_dir(&input).expect("create input");
+
+        assert!(options_for(&input, None).validate().is_ok());
+        assert!(
+            options_for(&input, Some(&input.join("build")))
+                .validate()
+                .is_ok(),
+            "a nested output directory is allowed"
+        );
+    }
+
+    #[test]
+    fn normalize_makes_paths_absolute_and_collapses_segments() {
+        let cwd = normalize(Path::new("."));
+        assert!(cwd.is_absolute());
+        assert_eq!(normalize(Path::new("a/./b/../c")), cwd.join("a").join("c"));
+        assert_eq!(normalize(&cwd), cwd);
+    }
+
+    /// Filesystem root of the current working directory, computed independently
+    /// of [`normalize`] by walking the path's own ancestors.
+    fn filesystem_root() -> PathBuf {
+        std::env::current_dir()
+            .expect("cwd")
+            .ancestors()
+            .last()
+            .expect("filesystem root")
+            .to_path_buf()
+    }
+
+    /// A relative path that walks from the working directory up past the root.
+    ///
+    /// The depth is derived from the working directory, never hard-coded: how
+    /// many segments stand between the working directory and the root depends
+    /// on where the tests run (`/home/runner/work/<repo>/<repo>` on Linux,
+    /// `D:\a\<repo>\<repo>` on Windows), so a fixed `../..` reaches the root on
+    /// one platform and a directory above it on another.
+    fn parent_segments_to_root(extra: usize) -> PathBuf {
+        let depth = std::env::current_dir()
+            .expect("cwd")
+            .ancestors()
+            .filter(|ancestor| ancestor.file_name().is_some())
+            .count();
+
+        std::iter::repeat_n("..", depth + extra).collect()
+    }
+
+    #[test]
+    fn normalize_ignores_parent_segments_above_the_root() {
+        let root = filesystem_root();
+
+        assert_eq!(
+            normalize(&parent_segments_to_root(0)),
+            root,
+            "walking to the root lands on the root"
+        );
+        assert_eq!(
+            normalize(&parent_segments_to_root(4)),
+            root,
+            "walking past the root stays on the root"
+        );
+        assert_eq!(
+            normalize(&parent_segments_to_root(32)),
+            root,
+            "walking far past the root stays on the root"
+        );
+    }
+
+    #[test]
+    fn normalize_clamps_parent_segments_that_leave_the_root() {
+        let root = filesystem_root();
+        let absolute = normalize(Path::new("."));
+
+        assert_eq!(
+            normalize(&absolute.join(parent_segments_to_root(1))),
+            root,
+            "an absolute path cannot be walked above its root"
+        );
+        assert_eq!(
+            normalize(&root.join("..").join("..").join("tmp")),
+            root.join("tmp"),
+            "the root survives and later segments still apply"
+        );
+        assert_eq!(
+            normalize(&absolute.join("a").join("..")),
+            absolute,
+            "a parent segment inside the path still cancels"
+        );
+    }
+
+    #[test]
+    fn normalize_keeps_the_filesystem_root_stable() {
+        let root = filesystem_root();
+
+        assert_eq!(normalize(&root), root);
+        assert_eq!(normalize(&root.join(".")), root);
+        assert_eq!(normalize(&normalize(&root)), root);
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        let once = normalize(Path::new("a/../b"));
+        assert_eq!(normalize(&once), once);
+    }
+
+    #[test]
+    fn ancestor_detection_respects_component_boundaries() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let site = root.path().join("site");
+        let sibling = root.path().join("site2");
+
+        assert!(is_ancestor(root.path(), &site));
+        assert!(!is_ancestor(&site, root.path()));
+        assert!(!is_ancestor(&sibling, &site));
+        assert!(!is_ancestor(&site, &site), "equality is not ancestry");
+    }
+}

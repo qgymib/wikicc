@@ -61,7 +61,7 @@ src/main.rs                 binary: parse arguments, dispatch --init-config, run
                             map errors to exit codes
 src/lib.rs                  library root and re-exports
 src/cli.rs                  clap definitions
-src/options.rs              the shared Settings of the CLI, the WIKICC_* environment
+src/options/                the shared Settings of the CLI, the WIKICC_* environment
                             variables and the configuration file, the three-source
                             merge, defaults, path guards
 src/error.rs                error type and exit-code mapping

@@ -54,6 +54,48 @@ fn help_lists_documented_options() {
 }
 
 #[test]
+fn help_output_is_pinned_byte_for_byte() {
+    let output = wikicc().arg("--help").output().expect("run wikicc");
+    assert!(output.status.success(), "--help should succeed");
+    let stdout = String::from_utf8(output.stdout).expect("help output is utf-8");
+
+    // The exact `--help` text, pinned line by line: the lines are
+    // joined with an explicit `\n` so the assertion never depends on
+    // the checkout's line endings. Captured from the pre-split
+    // binary; the options module reorganization must not change it.
+    let expected = [
+        "Compile a folder of Markdown documents into a self-contained offline HTML reader",
+        "",
+        "Usage: wikicc [OPTIONS] [INPUT_DIR]",
+        "",
+        "Arguments:",
+        "  [INPUT_DIR]  Folder that contains the Markdown documents to compile (required unless `--init-config` was given)",
+        "",
+        "Options:",
+        "  -o, --out <DIR>            Output directory [default: <INPUT_DIR>/dist]",
+        "      --format <FMT>         Output format: single-html (one self-contained file), html-dir (page plus an assets folder) or pages (static site for GitHub Pages) [default: single-html]",
+        "      --title <TITLE>        Site title [default: input folder name]",
+        "      --strict[=<BOOL>]      Treat warnings (broken links, missing assets) as errors; `--strict=false` overrides the configuration [possible values: true, false]",
+        "      --home <DOC>           Document the reader opens at an empty or unknown address; overrides `.wikicc.json`",
+        "      --exclude <DIR>        Directory whose entire subtree stays out of the site; repeatable, overrides `.wikicc.json`",
+        "      --favicon <FILE>       Favicon file relative to the input folder; overrides `.wikicc.json` [default: the wikicc logo]",
+        "      --password <PASSWORD>  Global password for documents whose front matter declares encryption; overrides `.wikicc.json`. Prefer the `WIKICC_PASSWORD` environment variable: a command line value stays in the shell history and the process list",
+        "      --force                Overwrite the output directory without confirmation",
+        "  -q, --quiet                Suppress the summary line",
+        "      --init-config [<DIR>]  Write a default `.wikicc.json` into DIR [default: the current directory] and exit",
+        "  -h, --help                 Print help",
+        "  -V, --version              Print version",
+    ]
+    .join("\n")
+        + "\n";
+
+    assert_eq!(
+        stdout, expected,
+        "--help output drifted from the pinned text"
+    );
+}
+
+#[test]
 fn version_prints_binary_name_and_version() {
     wikicc()
         .arg("--version")
