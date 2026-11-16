@@ -47,14 +47,6 @@ var SIDEBAR_KEY = "wikicc.sidebar";
  */
 var SIDE_VIEW_KEY = "wikicc.side-view";
 
-/**
- * `localStorage` key holding whether the graph was put away. The outline
- * moved into the sidebar and answers to the side switches now, so the key
- * the two panels once shared carries the graph alone — and a value the old
- * reader wrote still parses (see `storedPanels`).
- */
-var PANELS_KEY = "wikicc.panels";
-
 /** The media query below which the document list is a drawer, not a column. */
 var DRAWER_QUERY = "(max-width: 640px)";
 
@@ -152,31 +144,6 @@ function storeSideView(view) {
   }
 }
 
-/**
- * Whether the graph was put away on an earlier visit.
- *
- * The old reader wrote the two panels' state as `graph`, `outline`, `both` or
- * `none`; `graph` and `both` meant the graph was hidden, and the other two
- * spellings now say only that the graph was showing — the outline they named
- * answers to the side view, not to this key.
- */
-function storedPanels() {
-  try {
-    var value = globalThis.localStorage.getItem(PANELS_KEY);
-    return value === "graph" || value === "both";
-  } catch (_error) {
-    return false;
-  }
-}
-
-function storePanels(graphHidden) {
-  try {
-    globalThis.localStorage.setItem(PANELS_KEY, graphHidden ? "graph" : "none");
-  } catch (_error) {
-    /* Storage can be disabled; the panel still folds for this page. */
-  }
-}
-
 /** Theme currently in effect: the explicit choice, or the system preference. */
 function currentTheme() {
   return document.documentElement.getAttribute("data-theme") || systemTheme();
@@ -198,30 +165,6 @@ export function applyTheme(theme, toggle) {
     toggle.setAttribute("aria-label", label);
     toggle.setAttribute("title", label);
   }
-}
-
-/**
- * Describe the graph's mode on its button: what is shown now, and what a click
- * would show instead.
- *
- * The label names the *next* state rather than the current one, as a switch
- * does: the reader is looking at the panel and can see what it holds, so the
- * button only has to say where it leads. `aria-pressed` carries the state
- * itself, which is what a screen reader announces before the label.
- */
-export function syncModeButton(button, mode) {
-  if (!button) {
-    return;
-  }
-
-  var global = mode === GraphView.GLOBAL_MODE;
-  var label = global
-    ? "Show only this document and its neighbours"
-    : "Show the whole graph";
-  button.textContent = global ? "Global" : "Local";
-  button.setAttribute("aria-pressed", global ? "true" : "false");
-  button.setAttribute("aria-label", label);
-  button.setAttribute("title", label);
 }
 
 export function start() {
@@ -287,7 +230,8 @@ export function start() {
   var sidebarCollapse = document.getElementById("sidebar-collapse");
   var backdrop = document.getElementById("drawer-backdrop");
   var themeToggle = document.getElementById("theme-toggle");
-  var graphToggle = document.getElementById("graph-toggle");
+  var graphLocalToggle = document.getElementById("graph-local-toggle");
+  var graphGlobalToggle = document.getElementById("graph-global-toggle");
   var outlineToggle = document.getElementById("outline-toggle");
 
   /**
@@ -426,33 +370,36 @@ export function start() {
     onNavigate: navigate,
   });
 
-  var graph = GraphView.createGraph({
-    container: document.getElementById("graph"),
+  // Two views, two components, one picture each: the local one answers what
+  // the document at hand is connected to — the view a reader starts in — and
+  // the global one holds the whole site. The global layout is spent the first
+  // time its panel is shown (see `createGlobalGraph`), so a reader who never
+  // opens it never pays for it.
+  var localGraph = GraphView.createLocalGraph({
+    container: document.getElementById("graph-local"),
     docs: docs,
     edges: Array.isArray(bundle.edges) ? bundle.edges : [],
     onSelect: navigate,
-    // A reader lands on the document they came for, not on a picture of the
-    // whole site: the local view answers what this document is connected to.
-    mode: GraphView.LOCAL_MODE,
   });
 
-  var modeButton = document.getElementById("graph-mode");
-  if (modeButton) {
-    syncModeButton(modeButton, graph.getMode());
-    modeButton.addEventListener("click", function () {
-      var next =
-        graph.getMode() === GraphView.GLOBAL_MODE
-          ? GraphView.LOCAL_MODE
-          : GraphView.GLOBAL_MODE;
-      graph.setMode(next);
-      syncModeButton(modeButton, graph.getMode());
+  var globalGraph = GraphView.createGlobalGraph({
+    container: document.getElementById("graph-global"),
+    docs: docs,
+    edges: Array.isArray(bundle.edges) ? bundle.edges : [],
+    onSelect: navigate,
+  });
+
+  var fitLocalButton = document.getElementById("graph-fit-local");
+  if (fitLocalButton) {
+    fitLocalButton.addEventListener("click", function () {
+      localGraph.fit();
     });
   }
 
-  var fitButton = document.getElementById("graph-fit");
-  if (fitButton) {
-    fitButton.addEventListener("click", function () {
-      graph.fit();
+  var fitGlobalButton = document.getElementById("graph-fit-global");
+  if (fitGlobalButton) {
+    fitGlobalButton.addEventListener("click", function () {
+      globalGraph.fit();
     });
   }
 
@@ -641,26 +588,86 @@ export function start() {
   }
 
   /**
-   * Put the graph panel away or bring it back.
+   * The graph view currently selected, and whether its panel is showing.
    *
-   * The graph answers to its own body attribute, and the stylesheet folds
-   * the panel column when the attribute is set and the width has a panel
-   * column at all. The switch is rail furniture like the side switches: its
-   * accessible state and the label it offers follow the panel, not the
-   * gesture.
+   * The view is one body attribute the stylesheet answers to, and the other
+   * is the one that folds the panel column; the switches read both through
+   * here, so a screen reader hears the same answer whichever switch asked.
    */
-  function setGraphHidden(hidden) {
-    if (hidden) {
-      document.body.setAttribute("data-graph", "hidden");
+  function currentGraphView() {
+    return document.body.getAttribute("data-graph-view") === "global"
+      ? "global"
+      : "local";
+  }
+
+  function graphVisible() {
+    return document.body.getAttribute("data-graph") !== "hidden";
+  }
+
+  /**
+   * Point every graph switch at the state it now offers.
+   *
+   * Each switch speaks for the view it selects, not for the panel column as a
+   * whole: its expanded state says whether that view is the one showing, and
+   * its label offers what a press would do — bring the view up, or put the
+   * column away when the view is already up.
+   */
+  function syncGraphButtons() {
+    var view = currentGraphView();
+    var visible = graphVisible();
+
+    var localLit = view === "local" && visible;
+    var localLabel = localLit ? "Hide local graph" : "Show local graph";
+    if (graphLocalToggle) {
+      graphLocalToggle.setAttribute(
+        "aria-expanded",
+        localLit ? "true" : "false",
+      );
+      graphLocalToggle.setAttribute("aria-label", localLabel);
+      graphLocalToggle.setAttribute("title", localLabel);
+    }
+
+    var globalLit = view === "global" && visible;
+    var globalLabel = globalLit ? "Hide global graph" : "Show global graph";
+    if (graphGlobalToggle) {
+      graphGlobalToggle.setAttribute(
+        "aria-expanded",
+        globalLit ? "true" : "false",
+      );
+      graphGlobalToggle.setAttribute("aria-label", globalLabel);
+      graphGlobalToggle.setAttribute("title", globalLabel);
+    }
+  }
+
+  /**
+   * Select the view the graph panel shows.
+   *
+   * The attribute is the state the stylesheet answers to; showing a view
+   * always unfolds the column, and the first look at the global view spends
+   * its layout — a panel never shown has never been laid out (see
+   * `createGlobalGraph`).
+   */
+  function setGraphView(view) {
+    if (view === "global") {
+      document.body.setAttribute("data-graph-view", "global");
+      globalGraph.refresh();
     } else {
-      document.body.removeAttribute("data-graph");
+      document.body.setAttribute("data-graph-view", "local");
     }
-    if (graphToggle) {
-      var label = hidden ? "Show graph panel" : "Hide graph panel";
-      graphToggle.setAttribute("aria-expanded", hidden ? "false" : "true");
-      graphToggle.setAttribute("aria-label", label);
-      graphToggle.setAttribute("title", label);
-    }
+    document.body.removeAttribute("data-graph");
+    syncGraphButtons();
+  }
+
+  /**
+   * Put the graph panel away.
+   *
+   * The stylesheet folds the panel column when the attribute is set and the
+   * width has a panel column at all. The selected view stays selected, so
+   * bringing the column back restores exactly the picture that was showing.
+   */
+  function hideGraph() {
+    document.body.setAttribute("data-graph", "hidden");
+    syncGraphButtons();
   }
 
   /**
@@ -683,7 +690,8 @@ export function start() {
     }
 
     docList.render(null, doc.id);
-    graph.setActive(doc.id);
+    localGraph.setActive(doc.id);
+    globalGraph.setActive(doc.id);
 
     if (!route.anchor) {
       if (typeof globalThis.scrollTo === "function") {
@@ -1177,7 +1185,8 @@ export function start() {
     }
 
     docList.render(null, route.id);
-    graph.setActive(route.id);
+    localGraph.setActive(route.id);
+    globalGraph.setActive(route.id);
 
     // A banner explains the *previous* navigation, so it never outlives it.
     banner.hide();
@@ -1472,17 +1481,28 @@ export function start() {
   }
 
   /**
-   * One gesture for the graph's switch: flip the panel and remember the
-   * choice, so the arrangement the reader leaves survives a reload.
+   * One gesture for a graph's switch: bring its view up, or — the view
+   * already showing — put the panel column away. The choice is the page's own
+   * for this visit only; no record is kept across a reload.
    */
-  function toggleGraph() {
-    var hidden = document.body.getAttribute("data-graph") === "hidden";
-    setGraphHidden(!hidden);
-    storePanels(!hidden);
+  function selectGraph(view) {
+    if (currentGraphView() === view && graphVisible()) {
+      hideGraph();
+      return;
+    }
+    setGraphView(view);
   }
 
-  if (graphToggle) {
-    graphToggle.addEventListener("click", toggleGraph);
+  if (graphLocalToggle) {
+    graphLocalToggle.addEventListener("click", function () {
+      selectGraph("local");
+    });
+  }
+
+  if (graphGlobalToggle) {
+    graphGlobalToggle.addEventListener("click", function () {
+      selectGraph("global");
+    });
   }
 
   document.addEventListener("keydown", function (event) {
@@ -1533,12 +1553,14 @@ export function start() {
   // consulted: their `href`s start with the route prefix, not with `data:`.
   AssetLinks.listenForInlineDataLinks(document);
 
-  // The drawer starts closed; the sidebar's view and the graph start where
-  // the reader last left them, which the switches' accessible states then
-  // follow.
+  // The drawer starts closed; the sidebar's view starts where the reader last
+  // left it, and the graph starts in the local view — the states the
+  // switches' accessible records then follow. The graph keeps no record
+  // across a reload: every visit starts from the picture of the document at
+  // hand.
   setDrawer(false);
   setSideView(storedSideView());
   setSidebarHidden(storedSidebar());
-  setGraphHidden(storedPanels());
+  setGraphView("local");
   render();
 }

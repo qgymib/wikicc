@@ -39,15 +39,17 @@ const SHELL_IDS = [
   "inspector",
   "sidebar-toggle",
   "sidebar-collapse",
-  "graph-toggle",
+  "graph-local-toggle",
+  "graph-global-toggle",
   "outline-toggle",
   "drawer-backdrop",
   "theme-toggle",
   "doc-list",
   "toc",
-  "graph",
-  "graph-fit",
-  "graph-mode",
+  "graph-local",
+  "graph-global",
+  "graph-fit-local",
+  "graph-fit-global",
   "search-toggle",
   "search-panel",
   "doc-alert",
@@ -706,9 +708,10 @@ async function withSession(options, body) {
       if (id === "wikicc-payload") {
         return payloadElement;
       }
-      // The graph is drawn with d3, which needs a real layout engine; a missing
-      // container makes `createGraph` a no-op without touching this test.
-      if (id === "graph") {
+      // The graphs are drawn with d3, which needs a real layout engine; a
+      // missing container makes `createLocalGraph` and `createGlobalGraph`
+      // no-ops without touching this test.
+      if (id === "graph-local" || id === "graph-global") {
         return null;
       }
       return shell.get(id) || null;
@@ -1267,83 +1270,91 @@ test("the reader remembers which side view was showing", async () => {
   );
 });
 
-test("the graph's switch puts the panel away on its own", async () => {
+test("the local view starts showing and both switches say so", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
 
     const body = session.doc.body;
-    const graph = session.shell.get("graph-toggle");
+    const local = session.shell.get("graph-local-toggle");
+    const global = session.shell.get("graph-global-toggle");
     const outline = session.shell.get("outline-toggle");
 
+    assert.equal(body.getAttribute("data-graph-view"), "local");
     assert.equal(body.getAttribute("data-graph"), null);
-    assert.equal(graph.getAttribute("aria-expanded"), "true");
-    assert.equal(graph.getAttribute("aria-label"), "Hide graph panel");
-
-    graph.fire("click");
-    assert.equal(body.getAttribute("data-graph"), "hidden");
-    assert.equal(
-      body.getAttribute("data-side-view"),
-      "docs",
-      "the graph's switch never touches the sidebar's view",
-    );
-    assert.equal(
-      graph.getAttribute("aria-expanded"),
-      "false",
-      "the switch answers for the panel it hid",
-    );
-    assert.equal(
-      graph.getAttribute("aria-label"),
-      "Show graph panel",
-      "the rail's switch now offers to bring the panel back",
-    );
+    assert.equal(local.getAttribute("aria-expanded"), "true");
+    assert.equal(local.getAttribute("aria-label"), "Hide local graph");
+    assert.equal(global.getAttribute("aria-expanded"), "false");
+    assert.equal(global.getAttribute("aria-label"), "Show global graph");
     assert.equal(
       outline.getAttribute("aria-label"),
       "Show outline panel",
       "the side switches keep their own answer",
     );
-
-    graph.fire("click");
-    assert.equal(body.getAttribute("data-graph"), null);
-    assert.equal(graph.getAttribute("aria-expanded"), "true");
   });
 });
 
-test("putting the graph away writes the choice down", async () => {
+test("the graph's switches trade the views and fold the column", async () => {
   withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
 
-    const graph = session.shell.get("graph-toggle");
+    const body = session.doc.body;
+    const local = session.shell.get("graph-local-toggle");
+    const global = session.shell.get("graph-global-toggle");
 
-    graph.fire("click");
-    assert.equal(session.storage["wikicc.panels"], "graph");
+    // The other switch brings its view up and puts the first one away.
+    global.fire("click");
+    assert.equal(body.getAttribute("data-graph-view"), "global");
+    assert.equal(body.getAttribute("data-graph"), null);
+    assert.equal(global.getAttribute("aria-expanded"), "true");
+    assert.equal(global.getAttribute("aria-label"), "Hide global graph");
+    assert.equal(local.getAttribute("aria-expanded"), "false");
+    assert.equal(local.getAttribute("aria-label"), "Show local graph");
+    assert.equal(
+      body.getAttribute("data-side-view"),
+      "docs",
+      "the graph's switches never touch the sidebar's view",
+    );
 
-    graph.fire("click");
-    assert.equal(session.storage["wikicc.panels"], "none");
+    // The switch whose view is showing puts the column away.
+    global.fire("click");
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(body.getAttribute("data-graph-view"), "global");
+    assert.equal(global.getAttribute("aria-expanded"), "false");
+    assert.equal(global.getAttribute("aria-label"), "Show global graph");
+    assert.equal(local.getAttribute("aria-expanded"), "false");
+
+    // A switch of the folded column brings its own view back.
+    local.fire("click");
+    assert.equal(body.getAttribute("data-graph"), null);
+    assert.equal(body.getAttribute("data-graph-view"), "local");
+    assert.equal(local.getAttribute("aria-expanded"), "true");
+    assert.equal(local.getAttribute("aria-label"), "Hide local graph");
+
+    // And its own switch folds it again.
+    local.fire("click");
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(local.getAttribute("aria-expanded"), "false");
   });
 });
 
-test("the reader remembers the graph's fold, old spelling included", async () => {
-  withSession(
-    { hash: "#/doc/index.md", storage: { "wikicc.panels": "both" } },
-    (session) => {
-      startSession();
+test("the graph's switches keep no record of the fold", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
 
-      assert.equal(
-        session.doc.body.getAttribute("data-graph"),
-        "hidden",
-        "a value the two-panel reader wrote still folds the graph",
-      );
-      assert.equal(
-        session.doc.body.getAttribute("data-side-view"),
-        "docs",
-        "the old outline spelling says nothing about the sidebar's view",
-      );
-      assert.equal(
-        session.shell.get("graph-toggle").getAttribute("aria-expanded"),
-        "false",
-      );
-    },
-  );
+    session.shell.get("graph-global-toggle").fire("click");
+    session.shell.get("graph-global-toggle").fire("click");
+
+    assert.equal(
+      session.storage["wikicc.panels"],
+      undefined,
+      "no storage key is written for the graph's state",
+    );
+    assert.equal(
+      session.doc.body.getAttribute("data-graph"),
+      "hidden",
+      "the fold holds for this visit only",
+    );
+  });
 });
 
 /** How many document links the list holds. */
@@ -1367,56 +1378,6 @@ test("a document with no chapters opens at the top", async () => {
 
     assert.equal(session.scrollTop(), 0);
     assert.ok(activeEntry(session.shell), "the list follows the document");
-  });
-});
-
-test("the graph starts in the local view and the button says so", async () => {
-  withSession({ hash: "#/doc/index.md" }, (session) => {
-    startSession();
-
-    const button = session.shell.get("graph-mode");
-    assert.equal(button.textContent, "Local");
-    assert.equal(button.getAttribute("aria-pressed"), "false");
-    assert.equal(button.getAttribute("aria-label"), "Show the whole graph");
-    assert.equal(button.getAttribute("title"), "Show the whole graph");
-  });
-});
-
-test("the mode button switches the graph and describes the next state", async () => {
-  withSession({ hash: "#/doc/index.md" }, (session) => {
-    startSession();
-    const button = session.shell.get("graph-mode");
-
-    button.fire("click");
-
-    assert.equal(button.textContent, "Global");
-    assert.equal(button.getAttribute("aria-pressed"), "true");
-    assert.equal(
-      button.getAttribute("aria-label"),
-      "Show only this document and its neighbours",
-    );
-
-    button.fire("click");
-
-    assert.equal(button.textContent, "Local");
-    assert.equal(button.getAttribute("aria-pressed"), "false");
-  });
-});
-
-test("the mode survives a navigation to another document", async () => {
-  withSession({ hash: "#/doc/index.md" }, (session) => {
-    startSession();
-    const button = session.shell.get("graph-mode");
-
-    button.fire("click");
-    session.follow("#/doc/guide/intro.md#getting-started");
-
-    assert.equal(
-      button.getAttribute("aria-pressed"),
-      "true",
-      "the reader chose the global view, not one document",
-    );
-    assert.equal(button.textContent, "Global");
   });
 });
 

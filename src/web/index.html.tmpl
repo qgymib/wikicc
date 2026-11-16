@@ -59,29 +59,40 @@
     <article class="doc-article" id="doc-article"></article>
   </main>
   <aside class="inspector" id="inspector" aria-label="Graph">
-    <section class="panel graph-panel" id="graph-panel" aria-labelledby="graph-heading">
+    <!-- One panel per view, and one at a time on screen: the body attribute
+         `data-graph-view` picks which. Each draws from its own container, so
+         a picture a reader has arranged survives the other view being shown
+         and hiding it again. -->
+    <section class="panel graph-panel" id="graph-local-panel" aria-labelledby="graph-local-heading">
       <div class="panel-header">
-        <h2 class="panel-heading" id="graph-heading">Graph</h2>
-        <!-- Which documents the graph draws is a property of the panel, not of
-             a document: switching the mode keeps it for the whole session. -->
-        <button class="panel-action" id="graph-mode" type="button" aria-pressed="false" aria-label="Show the whole graph" title="Show the whole graph">Local</button>
-        <button class="panel-action" id="graph-fit" type="button" title="Fit graph to view" aria-label="Fit graph to view">Fit</button>
+        <h2 class="panel-heading" id="graph-local-heading">Local graph</h2>
+        <button class="panel-action" id="graph-fit-local" type="button" title="Fit graph to view" aria-label="Fit graph to view">Fit</button>
       </div>
-      <div class="graph" id="graph"></div>
+      <div class="graph" id="graph-local"></div>
+    </section>
+    <section class="panel graph-panel" id="graph-global-panel" aria-labelledby="graph-global-heading">
+      <div class="panel-header">
+        <h2 class="panel-heading" id="graph-global-heading">Global graph</h2>
+        <button class="panel-action" id="graph-fit-global" type="button" title="Fit graph to view" aria-label="Fit graph to view">Fit</button>
+      </div>
+      <div class="graph" id="graph-global"></div>
     </section>
   </aside>
   <!-- The right rail mirrors the left one across the page: the same strip of
        chrome closing the grid at the far edge, and the home of the reader's
-       app-level controls and the graph's switch. Search and the theme belong
-       to the whole reader; the graph answers for one panel — so it can be put
-       away on its own, folding the column; a lit switch is a panel that is
-       showing. The sidebar's views answer to the left rail instead. -->
+       app-level controls and the graph's switches. Search and the theme belong
+       to the whole reader; each graph switch answers for one view of the one
+       panel column, the way the sidebar's switches answer for its two views:
+       an unlit one brings its view up, a lit one puts the column away. -->
   <div class="rail rail-end" id="rail-end">
     <button class="icon-button" id="search-toggle" type="button" aria-label="Search documents" aria-expanded="false" aria-controls="search-panel" title="Search documents (Ctrl+F)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
     </button>
-    <button class="icon-button" id="graph-toggle" type="button" aria-label="Hide graph panel" aria-expanded="true" aria-controls="graph-panel" title="Hide graph panel">
+    <button class="icon-button" id="graph-local-toggle" type="button" aria-label="Hide local graph" aria-expanded="true" aria-controls="graph-local-panel" title="Hide local graph">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="6.5" r="2.5"/><circle cx="18.5" cy="6.5" r="2.5"/><circle cx="12" cy="17.5" r="2.5"/><path d="M7.6 8.4 10.6 15.7M16.4 8.4 13.4 15.7M8 6.5h8"/></svg>
+    </button>
+    <button class="icon-button" id="graph-global-toggle" type="button" aria-label="Show global graph" aria-expanded="false" aria-controls="graph-global-panel" title="Show global graph">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M6.6 6.6l3.8 3.8M17.4 6.6l-3.8 3.8M6.6 17.4l3.8-3.8M17.4 17.4l-3.8-3.8"/></svg>
     </button>
     <button class="icon-button" id="theme-toggle" type="button" aria-label="Switch colour theme" aria-pressed="false" title="Switch colour theme">
       <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>

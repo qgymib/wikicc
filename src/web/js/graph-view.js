@@ -1,19 +1,22 @@
 /**
- * Link graph view: SVG rendering and interaction.
+ * Link graph views: SVG rendering and interaction.
  *
  * `graph.js` owns the geometry; this module only draws it and wires the pointer
  * behaviour. `d3-selection` builds the markup, `d3-zoom` handles wheel/pinch
  * zoom and drag-to-pan, and `d3-drag` handles node dragging with pointer
  * capture.
  *
- * The panel has two modes. The local one — the default — draws the document on
- * screen and its neighbours, so the picture always answers "what is around
- * what I am reading"; the global one draws the whole site. The mode survives a
- * change of document: the picture follows the reader, the choice does not.
+ * Two components come out of this module, one per picture. The local one — the
+ * one the reader starts in — draws the document on screen and its neighbours,
+ * so the picture always answers "what is around what I am reading"; the global
+ * one draws the whole site, lays it out once, and afterwards only moves the
+ * highlight as the reader moves between documents. Each view lives in its own
+ * panel and its own container, and neither can turn into the other: what a
+ * reader asked for is what they keep looking at.
  *
- * A mode therefore decides *which* nodes exist, while changing the document in
- * the global mode only moves the highlight. The markup is built in one place —
- * `refresh` draws whenever the set of documents changes and otherwise leaves
+ * A view therefore decides *which* nodes exist, while changing the document in
+ * the global view only moves the highlight. The markup is built in one place —
+ * `draw` renders whenever the set of documents changes and otherwise leaves
  * the picture alone — so dragging still moves the existing elements, and a
  * reader who has arranged the graph keeps their arrangement until the graph
  * itself is a different one.
@@ -45,11 +48,11 @@ import { formatHash } from "./router.js";
 /** Marker id of the arrowhead; the page holds a single graph. */
 var ARROW_ID = "wikicc-graph-arrow";
 
-/** Mode that draws only the document on screen and its neighbours. */
-export var LOCAL_MODE = "local";
+/** The view that draws only the document on screen and its neighbours. */
+var LOCAL = "local";
 
-/** Mode that draws every document and every link of the site. */
-export var GLOBAL_MODE = "global";
+/** The view that draws every document and every link of the site. */
+var GLOBAL = "global";
 
 /** Class of a node that is hovered or a neighbour of the hovered node. */
 var HOT_CLASS = "is-hot";
@@ -159,7 +162,7 @@ function renderHint(container, text) {
 }
 
 /**
- * Render the link graph into `options.container`.
+ * Render one link graph view into `options.container`.
  *
  * `options.docs` is the payload's document list (only `id` and `title` are
  * used), `options.edges` its edge list, and `options.onSelect(id)` is called
@@ -168,34 +171,30 @@ function renderHint(container, text) {
  * document is the one `setActive` last reported calls nothing: the reader is
  * already there.
  *
- * `options.mode` picks what the graph shows: `"local"` (the default) draws only
- * the document on screen and its neighbours, `"global"` draws the whole site.
- * The mode belongs to the panel rather than to a document, so `setActive` keeps
- * it and only the picture follows the reader. Returns
- * `{ setActive(id), fit(), setMode(mode), getMode() }`; everything is a no-op
- * when the site has no documents.
+ * `kind` fixes what the graph shows for good: `"local"` draws only the document
+ * on screen and its neighbours, `"global"` draws the whole site. The choice
+ * belongs to the panel rather than to a document, so `setActive` keeps it and
+ * only the picture follows the reader. Returns
+ * `{ setActive(id), fit(), refresh() }`; everything is a no-op when the site
+ * has no documents.
+ *
+ * A global view waits for its first `refresh`: the site-wide layout is the
+ * dearest picture in the module, and a panel that has never been shown has no
+ * reader to show it to. Until then `setActive` only remembers; the first
+ * `refresh` lays the whole site out and marks the document on screen. A local
+ * view builds at once, because its panel is the one the reader starts in.
  */
-export function createGraph(options) {
+function createGraph(options, kind) {
   var container = options && options.container;
   var docs = (options && options.docs) || [];
   var edges = (options && options.edges) || [];
 
-  /** A graph that draws nothing but still knows which view it is in. */
+  /** A graph that draws nothing but keeps the shape of a real one. */
   function inertGraph() {
-    var current =
-      options && options.mode === GLOBAL_MODE ? GLOBAL_MODE : LOCAL_MODE;
-
     return {
       setActive: function () {},
       fit: function () {},
-      setMode: function (next) {
-        if (next === GLOBAL_MODE || next === LOCAL_MODE) {
-          current = next;
-        }
-      },
-      getMode: function () {
-        return current;
-      },
+      refresh: function () {},
     };
   }
 
@@ -221,7 +220,13 @@ export function createGraph(options) {
   /** The document on screen, as far as this module is concerned. */
   var activeId = null;
 
-  var mode = options && options.mode === GLOBAL_MODE ? GLOBAL_MODE : LOCAL_MODE;
+  /**
+   * Whether the first picture still waits for its panel to be shown.
+   *
+   * A global view spends its layout only once something displays it; a local
+   * view starts showing at once.
+   */
+  var waiting = kind === GLOBAL;
 
   /** What the last render drew, so a redraw of the same view can be skipped. */
   var drawn = null;
@@ -261,13 +266,10 @@ export function createGraph(options) {
    * cannot open what they are reading anywhere else, so it has to be in it.
    * Until a document is known — the first render arrives after the graph is
    * built — there is no neighbourhood to draw, and the whole site stands in so
-   * the panel is never briefly empty.
+   * the panel is never briefly empty. A global view is always the whole site.
    */
   function currentView() {
-    if (mode === GLOBAL_MODE) {
-      return { ids: ids, edges: edges };
-    }
-    if (!activeId) {
+    if (kind === GLOBAL || !activeId) {
       return { ids: ids, edges: edges };
     }
 
@@ -278,13 +280,13 @@ export function createGraph(options) {
    * A cheap identity of a view, so the same documents are not laid out twice.
    *
    * The ids are already in payload order, which `subgraph` preserves, so the
-   * join is stable. The mode is part of the key even though it also shows in
-   * the ids: a local view of a document whose neighbourhood happens to be the
-   * whole site draws the same nodes, and switching to it must still happen —
-   * the dimming the global view does has no place in a local one.
+   * join is stable. What a view does around its nodes — the dimming a global
+   * view paints, which a local one never does — belongs to the component
+   * rather than to the picture, so the ids alone decide whether a redraw can
+   * be skipped.
    */
   function signatureOf(view) {
-    return mode + "\u0000" + view.ids.join("\u0001");
+    return view.ids.join("\u0001");
   }
 
   /** Draw a view: layout, markup, gestures. Returns what it drew. */
@@ -443,7 +445,7 @@ export function createGraph(options) {
       // would grey out exactly the documents the reader came to see; there is
       // also no "elsewhere in the site" left to point at. The emphasis stays,
       // the dimming is only meaningful against a picture of the whole site.
-      var dimming = near !== null && mode === GLOBAL_MODE;
+      var dimming = near !== null && kind === GLOBAL;
 
       nodeSelection
         .classed(HOT_CLASS, function (node) {
@@ -739,7 +741,7 @@ export function createGraph(options) {
    * document usually means a new neighbourhood and a new layout; in a global
    * view the picture never changes, and only the active node moves.
    */
-  function refresh() {
+  function draw() {
     var view = currentView();
     var signature = signatureOf(view);
 
@@ -754,7 +756,7 @@ export function createGraph(options) {
     // A gesture that was under way belongs to the markup that is going away.
     discardPress();
     drawn = signature;
-    container.setAttribute("data-mode", mode);
+    container.setAttribute("data-mode", kind);
     var built = build(view);
     currentFit = built ? built.fit : function () {};
     currentMark = built ? built.markActive : function () {};
@@ -769,34 +771,55 @@ export function createGraph(options) {
   /** Mark the document on screen in the picture that is already drawn. */
   var currentMark = function () {};
 
+  /**
+   * Bring the picture up to date, ending any wait for the panel to be shown.
+   *
+   * A waiting view spends its first layout here — the moment its panel is
+   * displayed — and an already drawn view answers every navigation: a new
+   * document usually means a new neighbourhood in a local view, and only a
+   * moved highlight in a global one.
+   */
+  function refresh() {
+    waiting = false;
+    draw();
+  }
+
   function setActive(id) {
     activeId = id || null;
-    refresh();
-  }
-
-  function setMode(next) {
-    if (next !== GLOBAL_MODE && next !== LOCAL_MODE) {
-      return;
+    if (!waiting) {
+      draw();
     }
-    if (next === mode) {
-      return;
-    }
-
-    mode = next;
-    // The signature carries the mode, so the redraw happens even when the
-    // neighbourhood happens to be the whole site already.
-    refresh();
-  }
-
-  function getMode() {
-    return mode;
   }
 
   function fit() {
     currentFit();
   }
 
-  refresh();
+  if (!waiting) {
+    refresh();
+  }
 
-  return { setActive: setActive, fit: fit, setMode: setMode, getMode: getMode };
+  return { setActive: setActive, fit: fit, refresh: refresh };
+}
+
+/**
+ * The local view: the document on screen and its neighbours.
+ *
+ * The panel a reader starts in, so it builds at once and redraws whenever the
+ * document on screen — and therefore the neighbourhood — changes.
+ */
+export function createLocalGraph(options) {
+  return createGraph(options, LOCAL);
+}
+
+/**
+ * The global view: the whole site, laid out once.
+ *
+ * The site-wide layout is spent the first time its panel is shown
+ * (`refresh`); until then navigations are only remembered, so a reader who
+ * never opens the panel never pays for it. After the first draw the picture
+ * never changes — the active node alone moves.
+ */
+export function createGlobalGraph(options) {
+  return createGraph(options, GLOBAL);
 }

@@ -132,13 +132,14 @@ a {
   min-height: 100vh;
 }
 
-/* The four rail switches all start hidden: the width that has a use for one
+/* The rail switches all start hidden: the width that has a use for one
    brings it back — the drawer's toggle on the phone, the collapse switch on
-   the wider layouts, the outline's switch on both, and the graph's switch on
-   the wider layouts alone. */
+   the wider layouts, the outline's switch on both, and the graph's two
+   switches on the wider layouts alone. */
 #sidebar-toggle,
 #sidebar-collapse,
-#graph-toggle,
+#graph-local-toggle,
+#graph-global-toggle,
 #outline-toggle {
   display: none;
 }
@@ -2305,18 +2306,17 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   border-color: var(--border-strong);
 }
 
-/* The graph's mode is a switch rather than an action: its pressed state is
-   drawn so the current extent of the picture is readable at a glance. */
-#graph-mode {
-  /* A hint of extra width keeps the two labels from shunting the Fit button
-     around as the reader toggles. */
-  min-width: 54px;
+/* Two panels, one at a time: the body attribute `data-graph-view` picks the
+   view the column shows, and the other panel steps out of the flow. The
+   attribute is absent from the page's own markup — the local view is the
+   state a reader starts in — so the rule that hides the global panel reads
+   the negation. */
+body[data-graph-view="global"] #graph-local-panel {
+  display: none;
 }
 
-#graph-mode[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--text);
+body:not([data-graph-view="global"]) #graph-global-panel {
+  display: none;
 }
 
 /* ---------- search panel ---------- */
@@ -2997,7 +2997,8 @@ body[data-side-view="outline"] .sidebar .toc-panel {
    hold. The switches live wherever the layout has rails. */
 @media (min-width: 641px) {
   #sidebar-collapse,
-  #graph-toggle,
+  #graph-local-toggle,
+  #graph-global-toggle,
   #outline-toggle {
     display: inline-flex;
   }

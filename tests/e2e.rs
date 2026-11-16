@@ -76,8 +76,10 @@ fn the_page_carries_every_required_marker() {
     for marker in [
         r#"id="doc-list""#,
         r#"id="doc-content""#,
-        r#"id="graph""#,
-        r#"id="graph-fit""#,
+        r#"id="graph-local""#,
+        r#"id="graph-global""#,
+        r#"id="graph-fit-local""#,
+        r#"id="graph-fit-global""#,
         r#"id="toc""#,
         r#"id="theme-toggle""#,
         r#"id="search-toggle""#,
@@ -114,7 +116,7 @@ fn the_search_button_lives_in_the_right_rail() {
         .expect("search panel");
     let graph = page
         .html
-        .find(r#"<div class="graph" id="graph">"#)
+        .find(r#"<div class="graph" id="graph-local">"#)
         .expect("graph box");
 
     assert!(rail < button, "the button belongs to the right rail");
@@ -167,10 +169,12 @@ fn the_right_rail_reads_search_graph_theme() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
     // The theme is an app-level control like search, so both belong to the
-    // right rail, and the graph's switch sits between them: search, graph,
-    // theme, top to bottom. The outline's switch answers for the sidebar's
-    // views, so it lives in the left rail; the sidebar header is left
-    // holding nothing but the site title.
+    // right rail, and the graph's switches sit between them: search, the
+    // local graph, the global graph, theme, top to bottom — one switch per
+    // view, the way the left rail carries one switch per sidebar view. The
+    // outline's switch answers for the sidebar's views, so it lives in the
+    // left rail; the sidebar header is left holding nothing but the site
+    // title.
     let rail = page
         .html
         .find(r#"class="rail rail-end""#)
@@ -179,10 +183,14 @@ fn the_right_rail_reads_search_graph_theme() {
         .html
         .find(r#"id="search-toggle""#)
         .expect("search button");
-    let graph = page
+    let local = page
         .html
-        .find(r#"id="graph-toggle""#)
-        .expect("graph switch");
+        .find(r#"id="graph-local-toggle""#)
+        .expect("local graph switch");
+    let global = page
+        .html
+        .find(r#"id="graph-global-toggle""#)
+        .expect("global graph switch");
     let theme = page
         .html
         .find(r#"id="theme-toggle""#)
@@ -198,8 +206,8 @@ fn the_right_rail_reads_search_graph_theme() {
 
     assert!(rail < search, "search belongs to the right rail");
     assert!(
-        search < graph && graph < theme,
-        "the rail reads search, graph, theme, top to bottom"
+        search < local && local < global && global < theme,
+        "the rail reads search, the local graph, the global graph, theme"
     );
     assert!(
         !page.html[header..header_end].contains("theme-toggle"),
@@ -303,15 +311,18 @@ fn a_hidden_document_list_folds_without_leaving_the_grid() {
         "the rails' switches show wherever the layout has rails: {switches}"
     );
     assert!(
-        switches.contains("#graph-toggle") && switches.contains("#outline-toggle"),
+        switches.contains("#graph-local-toggle")
+            && switches.contains("#graph-global-toggle")
+            && switches.contains("#outline-toggle"),
         "the panels' switches come back with the list's own: {switches}"
     );
     let base_hidden = rule_of(css, "#sidebar-toggle,");
     assert!(
         base_hidden.contains("#sidebar-collapse")
-            && base_hidden.contains("#graph-toggle")
+            && base_hidden.contains("#graph-local-toggle")
+            && base_hidden.contains("#graph-global-toggle")
             && base_hidden.contains("#outline-toggle"),
-        "all four rail switches start hidden and come back by width: {base_hidden}"
+        "all five rail switches start hidden and come back by width: {base_hidden}"
     );
 
     let drawer = media_block(css, "max-width: 640px");
@@ -377,10 +388,14 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         .html
         .find(r#"id="search-toggle""#)
         .expect("search switch");
-    let graph = page
+    let local = page
         .html
-        .find(r#"id="graph-toggle""#)
-        .expect("graph switch");
+        .find(r#"id="graph-local-toggle""#)
+        .expect("local graph switch");
+    let global = page
+        .html
+        .find(r#"id="graph-global-toggle""#)
+        .expect("global graph switch");
     let theme = page
         .html
         .find(r#"id="theme-toggle""#)
@@ -390,15 +405,41 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         "the outline shares the sidebar's column, the graph keeps its own"
     );
     assert!(
-        rail < search && search < graph && graph < theme,
+        rail < search && search < local && local < global && global < theme,
         "the rail closes the page behind the panels, search and theme at its ends"
     );
 
-    let head = &page.html[graph..];
+    // One panel per view, and no mode switch left over: the split is between
+    // two panels and their two rail switches, not a mode inside one panel.
+    let local_panel = page.html.find(r#"id="graph-local-panel""#);
+    let global_panel = page.html.find(r#"id="graph-global-panel""#);
+    assert!(
+        local_panel.is_some() && global_panel.is_some(),
+        "the column holds one panel per view"
+    );
+    assert!(
+        !page.html.contains("graph-mode"),
+        "the mode switch is gone; the rail's switches answer for the views"
+    );
+
+    let head = &page.html[local..];
     let head = &head[..head.find('>').expect("the switch's open tag ends")];
     assert!(
-        head.contains(r#"aria-controls="graph-panel""#) && head.contains(r#"aria-expanded="true""#),
-        "the graph's switch names its panel and starts lit: {head}"
+        head.contains(r#"aria-controls="graph-local-panel""#)
+            && head.contains(r#"aria-expanded="true""#),
+        "the local switch names its panel and starts lit: {head}"
+    );
+
+    // The global view's switch starts offering the view: the local one is
+    // what a page shows before a press, so the switch is unlit and says what
+    // it brings.
+    let head = &page.html[global..];
+    let head = &head[..head.find('>').expect("the switch's open tag ends")];
+    assert!(
+        head.contains(r#"aria-controls="graph-global-panel""#)
+            && head.contains(r#"aria-expanded="false""#)
+            && head.contains("Show global graph"),
+        "the global switch names its panel and starts offering it: {head}"
     );
 
     // The outline's switch starts offering the view: the list is what a page
@@ -475,9 +516,33 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         "the outline's view fills the column like the list does: {shown}"
     );
 
-    // The graph's attribute takes the panel out of the column's flow alone,
-    // wherever the layout has rails; the outline answers to the side view
-    // now, so no panel attribute names it any more.
+    // Two panels, one at a time: one body attribute picks the view the
+    // column shows, and the other panel steps out of the flow. The page's
+    // markup carries no attribute at all — the local view is the state a
+    // reader starts in — so the rule that hides the global panel reads the
+    // negation.
+    let local_off = rule_of(
+        css,
+        r#"body[data-graph-view="global"] #graph-local-panel {"#,
+    );
+    assert_eq!(
+        declaration(local_off, "display"),
+        Some("none"),
+        "the global view takes the local panel out of the flow: {local_off}"
+    );
+    let global_off = rule_of(
+        css,
+        r#"body:not([data-graph-view="global"]) #graph-global-panel {"#,
+    );
+    assert_eq!(
+        declaration(global_off, "display"),
+        Some("none"),
+        "the local view is what a reader starts in: {global_off}"
+    );
+
+    // The graph's fold attribute takes the whole column out, wherever the
+    // layout has rails; the outline answers to the side view now, so no
+    // panel attribute names it any more.
     let wide = media_block(css, "min-width: 641px");
     let graph_hidden = rule_of(wide, r#"body[data-graph="hidden"] .graph-panel {"#);
     assert_eq!(
@@ -515,12 +580,13 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         "the middle grid hides the panel row outright: {row}"
     );
 
-    // The phone shows the graph and answers to no switch for it; the side
-    // switches answer there, so the drawer carries both views.
+    // The phone shows whichever graph view the attribute picked and answers
+    // to no switch for the column; the side switches answer there, so the
+    // drawer carries both views.
     let drawer = media_block(css, "max-width: 640px");
     assert!(
         !drawer.contains("data-graph"),
-        "the phone shows the graph and answers to no switch for it"
+        "the phone shows the picked graph view and answers to no switch for the column"
     );
     assert!(
         drawer.contains("#outline-toggle"),

@@ -41,7 +41,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createGraph } from "../../src/web/js/graph-view.js";
+import {
+  createGlobalGraph,
+  createLocalGraph,
+} from "../../src/web/js/graph-view.js";
 
 /** Namespace `d3-selection` gives every SVG child it creates. */
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -95,7 +98,11 @@ function fakeClearTimeout(id) {
 /**
  * Run `work` with the fake timers installed, then settle what it scheduled.
  *
- * The runtime's own `setTimeout` is back before this returns. The test runner
+ * `work` covers the whole life of the page — the graph's construction and the
+ * gestures the test performs on it — because both arm timers: `d3-drag` arms
+ * the touch "ghost click" window from inside a gesture, and `d3-zoom` answers
+ * a double click with a `d3-transition` whose frames run on `setTimeout`. The
+ * runtime's own `setTimeout` is back before this returns. The test runner
  * schedules its own bookkeeping through the same globals, so a replacement that
  * outlived the gesture would swallow it and keep the process alive for ever —
  * which looks exactly like a deadlock and wastes a run every time.
@@ -272,8 +279,10 @@ function fakeElement(tagName, namespaceURI) {
  * Install a fake page and build a graph into it.
  *
  * `options.docs` and `options.edges` replace the payload, and
- * `options.container: null` asks for the no-container case. `run` receives the
- * graph, the pieces a test dispatches on, and the `onSelect` calls it caused.
+ * `options.container: null` asks for the no-container case. `options.kind`
+ * picks the view: the local one builds at once, the global one waits for the
+ * `refresh` its panel's first showing causes. `run` receives the graph, the
+ * pieces a test dispatches on, and the `onSelect` calls it caused.
  */
 function withGraph(run, options) {
   // The fake page is a whole world, so nothing of it may leak between two tests.
@@ -337,12 +346,14 @@ function withGraph(run, options) {
   let graph = null;
 
   try {
-    graph = withTimers(function () {
-      return createGraph({
+    withTimers(function () {
+      const create =
+        payload.kind === "global" ? createGlobalGraph : createLocalGraph;
+
+      graph = create({
         container: payload.container === null ? null : container,
         docs: payload.docs || DOCS,
         edges: payload.edges || EDGES,
-        mode: payload.mode,
         onSelect(id) {
           selected.push(id);
           // A real click on a node changes the route, and the render that
@@ -352,60 +363,60 @@ function withGraph(run, options) {
           graph.setActive(id);
         },
       });
-    });
 
-    run({
-      graph,
-      container,
-      document,
-      window,
-      selected,
-      links: container.findAll("graph-edge"),
-      nodes: container.findAll("graph-node"),
-      /** Dispatch a real mouse press, releasing only when asked to. */
-      press: function (target, settings) {
-        return dispatchMouse(target, settings);
-      },
-      /** A whole click: press, then release at the same spot. */
-      click: function (target, settings) {
-        return dispatchMouse(
-          target,
-          Object.assign({}, settings, { release: true }),
-        );
-      },
-      /**
-       * A whole click as Chrome reports the one on a node: the press is taken by
-       * `d3-drag` and the browser never gets to announce the `click`.
-       */
-      nodeClick: function (target, settings) {
-        return dispatchMouse(
-          target,
-          Object.assign({}, settings, {
-            release: true,
-            click: false,
-            capturedOn: container,
-          }),
-        );
-      },
-      /**
-       * The same gesture, but the browser withholds the `click` without any
-       * handler on this page having cancelled the press.
-       *
-       * That is the shape a press on a node has after the reader has been
-       * elsewhere: the focus is moved onto the link by the browser itself, no
-       * `preventDefault` is involved, and `d3-drag` never gets to announce a
-       * click either.
-       */
-      silentNodeClick: function (target, settings) {
-        return dispatchMouse(
-          target,
-          Object.assign({}, settings, {
-            release: true,
-            suppressClick: true,
-            capturedOn: container,
-          }),
-        );
-      },
+      run({
+        graph,
+        container,
+        document,
+        window,
+        selected,
+        links: container.findAll("graph-edge"),
+        nodes: container.findAll("graph-node"),
+        /** Dispatch a real mouse press, releasing only when asked to. */
+        press: function (target, settings) {
+          return dispatchMouse(target, settings);
+        },
+        /** A whole click: press, then release at the same spot. */
+        click: function (target, settings) {
+          return dispatchMouse(
+            target,
+            Object.assign({}, settings, { release: true }),
+          );
+        },
+        /**
+         * A whole click as Chrome reports the one on a node: the press is taken by
+         * `d3-drag` and the browser never gets to announce the `click`.
+         */
+        nodeClick: function (target, settings) {
+          return dispatchMouse(
+            target,
+            Object.assign({}, settings, {
+              release: true,
+              click: false,
+              capturedOn: container,
+            }),
+          );
+        },
+        /**
+         * The same gesture, but the browser withholds the `click` without any
+         * handler on this page having cancelled the press.
+         *
+         * That is the shape a press on a node has after the reader has been
+         * elsewhere: the focus is moved onto the link by the browser itself, no
+         * `preventDefault` is involved, and `d3-drag` never gets to announce a
+         * click either.
+         */
+        silentNodeClick: function (target, settings) {
+          return dispatchMouse(
+            target,
+            Object.assign({}, settings, {
+              release: true,
+              suppressClick: true,
+              capturedOn: container,
+            }),
+          );
+        },
+      });
     });
   } finally {
     INSTALLED.forEach(function (key) {
@@ -713,6 +724,8 @@ test("a click on the node of the open document does nothing", () => {
   // local view would have redrawn the neighbourhood around the new document.
   withGraph(
     function (page) {
+      page.graph.refresh();
+
       // Read back from the page: a global view keeps its markup, but the
       // assertion may not depend on that.
       function readme() {
@@ -721,7 +734,9 @@ test("a click on the node of the open document does nothing", () => {
 
       // The reader arrives somewhere else first, so the node has a document to
       // stand for that is not the open one.
-      page.nodeClick(nodeFor(page.nodes, "guide/intro.md"));
+      page.nodeClick(
+        nodeFor(page.container.findAll("graph-node"), "guide/intro.md"),
+      );
       page.graph.setActive("README.md");
 
       page.nodeClick(readme());
@@ -732,7 +747,7 @@ test("a click on the node of the open document does nothing", () => {
 
       assert.deepEqual(page.selected, ["guide/intro.md"]);
     },
-    { mode: "global" },
+    { kind: "global" },
   );
 });
 
@@ -788,7 +803,11 @@ test("a click on the circle or on the label opens the document", () => {
 test("every node opens its own document", () => {
   withGraph(
     function (page) {
-      page.nodes.forEach(function (node) {
+      page.graph.refresh();
+
+      // A global view keeps its markup across the clicks, so one read of the
+      // nodes covers every document.
+      page.container.findAll("graph-node").forEach(function (node) {
         page.click(node);
       });
 
@@ -797,7 +816,7 @@ test("every node opens its own document", () => {
         DOCS.map((doc) => doc.id),
       );
     },
-    { mode: "global" },
+    { kind: "global" },
   );
 });
 
@@ -920,7 +939,14 @@ test("the press that ends a drag does not open the document", () => {
 test("highlighting follows the pointer", () => {
   withGraph(
     function (page) {
-      const intro = nodeFor(page.nodes, "guide/intro.md");
+      page.graph.refresh();
+
+      // The picture exists only after the refresh above, so the nodes are
+      // read back from the container rather than the cached list.
+      const nodes = function () {
+        return page.container.findAll("graph-node");
+      };
+      const intro = nodeFor(nodes(), "guide/intro.md");
 
       intro.listeners.mouseenter.forEach(function (handler) {
         handler.call(intro, { type: "mouseenter" });
@@ -928,7 +954,7 @@ test("highlighting follows the pointer", () => {
 
       assert.ok(intro.getAttribute("class").split(" ").includes("is-hot"));
       assert.ok(
-        nodeFor(page.nodes, "notes.md")
+        nodeFor(nodes(), "notes.md")
           .getAttribute("class")
           .split(" ")
           .includes("is-dim"),
@@ -941,19 +967,21 @@ test("highlighting follows the pointer", () => {
 
       assert.ok(!intro.getAttribute("class").split(" ").includes("is-hot"));
       assert.ok(
-        !nodeFor(page.nodes, "notes.md")
+        !nodeFor(nodes(), "notes.md")
           .getAttribute("class")
           .split(" ")
           .includes("is-dim"),
       );
     },
-    { mode: "global" },
+    { kind: "global" },
   );
 });
 
 test("setActive marks the open document and leaves the rest alone", () => {
   withGraph(
     function (page) {
+      page.graph.refresh();
+
       // Read the nodes back from the page each time: a global view keeps its
       // markup, but nothing here may depend on that.
       const nodes = function () {
@@ -983,36 +1011,39 @@ test("setActive marks the open document and leaves the rest alone", () => {
           .includes("is-active"),
       );
     },
-    { mode: "global" },
+    { kind: "global" },
   );
 });
 
 test("fit resets the viewport without opening anything", () => {
   withGraph(
     function (page) {
+      page.graph.refresh();
       assert.doesNotThrow(function () {
         page.graph.fit();
       });
       assert.deepEqual(page.selected, []);
     },
-    { mode: "global" },
+    { kind: "global" },
   );
 });
 
 test("a missing container yields a no-op graph", () => {
-  const graph = createGraph({ docs: DOCS, edges: EDGES, onSelect() {} });
+  const local = createLocalGraph({ docs: DOCS, edges: EDGES, onSelect() {} });
+  const global = createGlobalGraph({ docs: DOCS, edges: EDGES, onSelect() {} });
 
-  assert.deepEqual(Object.keys(graph).sort(), [
-    "fit",
-    "getMode",
-    "setActive",
-    "setMode",
-  ]);
-  assert.doesNotThrow(function () {
-    graph.setActive("README.md");
-    graph.fit();
-    graph.setMode("global");
-  });
+  for (const graph of [local, global]) {
+    assert.deepEqual(Object.keys(graph).sort(), [
+      "fit",
+      "refresh",
+      "setActive",
+    ]);
+    assert.doesNotThrow(function () {
+      graph.setActive("README.md");
+      graph.fit();
+      graph.refresh();
+    });
+  }
 });
 
 test("a site without documents shows a hint and never navigates", () => {
@@ -1044,11 +1075,10 @@ function drawnIds(container) {
     .sort();
 }
 
-test("a graph opens on the local view of the document it is given", () => {
+test("the local view opens on the neighbourhood of the document it is given", () => {
   withGraph(function (page) {
     page.graph.setActive("guide/intro.md");
 
-    assert.equal(page.graph.getMode(), "local");
     assert.equal(page.container.getAttribute("data-mode"), "local");
     assert.deepEqual(drawnIds(page.container), [
       "README.md",
@@ -1087,11 +1117,6 @@ test("the local view follows the document the reader opens", () => {
       "a document with no links stands alone",
     );
     assert.equal(page.container.getAttribute("data-links"), "0");
-    assert.equal(
-      page.graph.getMode(),
-      "local",
-      "the mode belongs to the panel, not to the document",
-    );
   });
 });
 
@@ -1114,49 +1139,38 @@ test("a local view of a lone document is a readable single node", () => {
   });
 });
 
-test("switching to the global view draws the whole site", () => {
-  withGraph(function (page) {
-    page.graph.setActive("guide/setup.md");
-    assert.equal(drawnIds(page.container).length, 2);
-
-    page.graph.setMode("global");
-
-    assert.equal(page.graph.getMode(), "global");
-    assert.equal(page.container.getAttribute("data-mode"), "global");
-    assert.deepEqual(
-      drawnIds(page.container),
-      DOCS.map((doc) => doc.id).sort(),
-    );
-    assert.equal(
-      page.container.getAttribute("data-links"),
-      String(EDGES.length),
-    );
-    assert.equal(
-      nodeFor(
-        page.container.findAll("graph-node"),
-        "guide/setup.md",
-      ).getAttribute("aria-current"),
-      "true",
-      "the document being read stays marked after the switch",
-    );
-  });
-});
-
-test("switching back to the local view narrows the picture again", () => {
+test("the global view waits for its panel and then draws the whole site", () => {
   withGraph(
     function (page) {
+      // Navigations that happen while the panel is still hidden are only
+      // remembered: the site-wide layout is not spent on a picture nobody
+      // looks at.
       page.graph.setActive("guide/setup.md");
-      assert.equal(drawnIds(page.container).length, DOCS.length);
+      assert.equal(page.container.getAttribute("data-mode"), null);
+      assert.equal(page.container.findAll("graph-node").length, 0);
 
-      page.graph.setMode("local");
+      // The panel's first showing is the `refresh` the controller calls.
+      page.graph.refresh();
 
-      assert.equal(page.graph.getMode(), "local");
-      assert.deepEqual(drawnIds(page.container), [
-        "guide/intro.md",
-        "guide/setup.md",
-      ]);
+      assert.equal(page.container.getAttribute("data-mode"), "global");
+      assert.deepEqual(
+        drawnIds(page.container),
+        DOCS.map((doc) => doc.id).sort(),
+      );
+      assert.equal(
+        page.container.getAttribute("data-links"),
+        String(EDGES.length),
+      );
+      assert.equal(
+        nodeFor(
+          page.container.findAll("graph-node"),
+          "guide/setup.md",
+        ).getAttribute("aria-current"),
+        "true",
+        "the document navigated to while hidden is the one marked",
+      );
     },
-    { mode: "global" },
+    { kind: "global" },
   );
 });
 
@@ -1182,6 +1196,7 @@ test("a local view is redrawn only when the neighbourhood really changes", () =>
 test("a global view is not rebuilt when the document changes", () => {
   withGraph(
     function (page) {
+      page.graph.refresh();
       const before = page.container.findAll("graph-node");
 
       page.graph.setActive("guide/setup.md");
@@ -1192,22 +1207,31 @@ test("a global view is not rebuilt when the document changes", () => {
         assert.equal(node, before[index], "the markup is the same objects");
       });
     },
-    { mode: "global" },
+    { kind: "global" },
   );
 });
 
-test("a mode the graph does not know is ignored", () => {
-  withGraph(function (page) {
-    page.graph.setActive("guide/intro.md");
-    const before = drawnIds(page.container);
+test("a global view dims what the pointer is not near", () => {
+  withGraph(
+    function (page) {
+      page.graph.refresh();
+      const intro = nodeFor(
+        page.container.findAll("graph-node"),
+        "guide/intro.md",
+      );
 
-    page.graph.setMode("everything");
-    page.graph.setMode(null);
-    page.graph.setMode(undefined);
+      intro.listeners.mouseenter.forEach(function (handler) {
+        handler.call(intro, { type: "mouseenter" });
+      });
 
-    assert.equal(page.graph.getMode(), "local");
-    assert.deepEqual(drawnIds(page.container), before);
-  });
+      assert.ok(intro.getAttribute("class").split(" ").includes("is-hot"));
+      assert.ok(
+        page.container.findAll("is-dim").length > 0,
+        "a document outside the hovered neighbourhood is greyed out",
+      );
+    },
+    { kind: "global" },
+  );
 });
 
 test("a local view emphasises the pointer without dimming its neighbours", () => {
@@ -1246,8 +1270,8 @@ test("a document the site does not have leaves the graph without a picture", () 
 });
 
 test("the first local view before any document is known shows the whole site", () => {
-  // `createGraph` runs before the first render names a document; drawing only
-  // its neighbourhood would draw nothing at all for that moment.
+  // `createLocalGraph` runs before the first render names a document; drawing
+  // only its neighbourhood would draw nothing at all for that moment.
   withGraph(function (page) {
     assert.deepEqual(
       drawnIds(page.container),
@@ -1256,24 +1280,6 @@ test("the first local view before any document is known shows the whole site", (
 
     page.graph.setActive("notes.md");
     assert.deepEqual(drawnIds(page.container), ["notes.md"]);
-  });
-});
-
-test("the mode survives a switch of document and a switch of mode", () => {
-  withGraph(function (page) {
-    page.graph.setMode("global");
-    page.graph.setActive("notes.md");
-    assert.equal(page.graph.getMode(), "global");
-    assert.equal(drawnIds(page.container).length, DOCS.length);
-
-    page.graph.setMode("local");
-    page.graph.setActive("guide/intro.md");
-    assert.equal(page.graph.getMode(), "local");
-    assert.deepEqual(drawnIds(page.container), [
-      "README.md",
-      "guide/intro.md",
-      "guide/setup.md",
-    ]);
   });
 });
 
