@@ -33,6 +33,7 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crate::config;
+use crate::encrypt;
 use crate::env;
 use crate::error::{Error, Result};
 use crate::favicon;
@@ -136,6 +137,12 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     // (deduplicated by content); the rendered head addresses it by the
     // placeholder the registration returns.
     let favicon_href = build.register_favicon(&favicon.name, &favicon.bytes);
+
+    // Documents whose front matter declares encryption are sealed here, after
+    // assembly and before anything is reported or written: a missing password
+    // or a broken directive is a hard error that leaves no output behind,
+    // whatever `--strict` says.
+    encrypt::seal_bundle(&mut build, options.password.as_deref())?;
 
     // Diagnostics always reach stderr; `--quiet` only silences the summary
     // line. Scan messages come first, then the configuration problems, then

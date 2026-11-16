@@ -117,6 +117,13 @@ pub struct Settings {
     /// Favicon file relative to the input folder; overrides `.wikicc.json` [default: the wikicc logo]
     #[arg(long, value_name = "FILE")]
     pub favicon: Option<String>,
+
+    /// Global password for documents whose front matter declares encryption;
+    /// overrides `.wikicc.json`. Prefer the `WIKICC_PASSWORD` environment
+    /// variable: a command line value stays in the shell history and the
+    /// process list.
+    #[arg(long, value_name = "PASSWORD")]
+    pub password: Option<String>,
 }
 
 /// The raw build intent: what the command line said, before any default.
@@ -166,6 +173,10 @@ pub struct Options {
     /// `./` and a trailing `/` dropped) to a file path relative to the input
     /// folder; `None` uses the embedded default logo.
     pub favicon: Option<String>,
+    /// The global sealing password, exactly as the winning source wrote it;
+    /// `None` when no source named one. Blank values are rejected: a password
+    /// that is empty after trimming cannot be expressed through any source.
+    pub password: Option<String>,
 }
 
 impl Options {
@@ -178,8 +189,9 @@ impl Options {
     /// `out` was already resolved against the input folder when the file was
     /// read, so all sources carry the same kind of value here. A `home` that
     /// is empty after normalization, an `exclude` entry that escapes the
-    /// input folder and a `favicon` that is empty after normalization or
-    /// escapes the input folder are hard errors, whatever the source.
+    /// input folder, a `favicon` that is empty after normalization or escapes
+    /// the input folder, and a `password` that is empty after trimming are
+    /// hard errors, whatever the source.
     pub fn resolve(request: &Request, env: &Settings, file: &Settings) -> Result<Self> {
         let cli = &request.settings;
         let input = &request.input;
@@ -213,6 +225,19 @@ impl Options {
             None => None,
         };
 
+        let password = cli
+            .password
+            .clone()
+            .or_else(|| env.password.clone())
+            .or_else(|| file.password.clone());
+        if let Some(raw) = &password
+            && raw.trim().is_empty()
+        {
+            return Err(Error::InvalidInput(
+                "'password' must be a non-empty string".to_string(),
+            ));
+        }
+
         Ok(Self {
             input: input.clone(),
             out: cli
@@ -238,6 +263,7 @@ impl Options {
             home,
             exclude: normalize_excludes(&exclude)?,
             favicon,
+            password,
         })
     }
 
@@ -618,6 +644,7 @@ mod tests {
             home: Some("intro".to_string()),
             exclude: Some(vec!["drafts".to_string()]),
             favicon: Some("assets/icon.png".to_string()),
+            password: Some("cli secret".to_string()),
         };
 
         let options = resolve_cli(dir.path(), settings).expect("valid settings");
@@ -629,6 +656,7 @@ mod tests {
         assert_eq!(options.home.as_deref(), Some("intro"));
         assert_eq!(options.exclude, ["drafts"]);
         assert_eq!(options.favicon.as_deref(), Some("assets/icon.png"));
+        assert_eq!(options.password.as_deref(), Some("cli secret"));
     }
 
     #[test]
@@ -642,6 +670,7 @@ mod tests {
             home: Some("intro.md".to_string()),
             exclude: Some(vec!["drafts".to_string()]),
             favicon: Some("assets/file.png".to_string()),
+            password: Some("file secret".to_string()),
         };
 
         let options = resolve_file(dir.path(), file).expect("valid settings");
@@ -653,6 +682,7 @@ mod tests {
         assert_eq!(options.home.as_deref(), Some("intro.md"));
         assert_eq!(options.exclude, ["drafts"]);
         assert_eq!(options.favicon.as_deref(), Some("assets/file.png"));
+        assert_eq!(options.password.as_deref(), Some("file secret"));
     }
 
     #[test]
@@ -668,6 +698,7 @@ mod tests {
                 home: Some("cli.md".to_string()),
                 exclude: Some(vec!["cli-drafts".to_string()]),
                 favicon: Some("cli.png".to_string()),
+                password: Some("cli secret".to_string()),
             },
             force: false,
             quiet: false,
@@ -680,6 +711,7 @@ mod tests {
             home: Some("file.md".to_string()),
             exclude: Some(vec!["file-drafts".to_string()]),
             favicon: Some("file.png".to_string()),
+            password: Some("file secret".to_string()),
         };
 
         let options =
@@ -692,6 +724,7 @@ mod tests {
         assert_eq!(options.home.as_deref(), Some("cli.md"));
         assert_eq!(options.exclude, ["cli-drafts"]);
         assert_eq!(options.favicon.as_deref(), Some("cli.png"));
+        assert_eq!(options.password.as_deref(), Some("cli secret"));
     }
 
     #[test]
@@ -826,6 +859,31 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_password_is_a_hard_error_whatever_the_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cli = Settings {
+            password: Some("   ".to_string()),
+            ..Settings::default()
+        };
+        let file = Settings {
+            password: Some(String::new()),
+            ..Settings::default()
+        };
+
+        let cli_error = resolve_cli(dir.path(), cli).expect_err("an empty password is rejected");
+        let file_error = resolve_file(dir.path(), file).expect_err("an empty password is rejected");
+
+        assert_eq!(
+            cli_error.to_string(),
+            "'password' must be a non-empty string"
+        );
+        assert_eq!(
+            file_error.to_string(),
+            "'password' must be a non-empty string"
+        );
+    }
+
+    #[test]
     fn an_empty_favicon_is_a_hard_error_whatever_the_source() {
         let dir = tempfile::tempdir().expect("temp dir");
         let cli = Settings {
@@ -891,6 +949,7 @@ mod tests {
             home: Some("env.md".to_string()),
             exclude: Some(vec!["env-drafts".to_string()]),
             favicon: Some("env.png".to_string()),
+            password: Some("env secret".to_string()),
         };
 
         let options = resolve_env(dir.path(), env, Settings::default()).expect("valid settings");
@@ -902,6 +961,7 @@ mod tests {
         assert_eq!(options.home.as_deref(), Some("env.md"));
         assert_eq!(options.exclude, ["env-drafts"]);
         assert_eq!(options.favicon.as_deref(), Some("env.png"));
+        assert_eq!(options.password.as_deref(), Some("env secret"));
     }
 
     #[test]
@@ -935,6 +995,7 @@ mod tests {
             home: Some("cli.md".to_string()),
             exclude: Some(vec!["cli-drafts".to_string()]),
             favicon: Some("cli.png".to_string()),
+            password: Some("cli secret".to_string()),
         };
         let env = Settings {
             out: Some(PathBuf::from("from-env")),
@@ -944,6 +1005,7 @@ mod tests {
             home: Some("env.md".to_string()),
             exclude: Some(vec!["env-drafts".to_string()]),
             favicon: Some("env.png".to_string()),
+            password: Some("env secret".to_string()),
         };
         let file = Settings {
             out: Some(dir.path().join("from-file")),
@@ -953,6 +1015,7 @@ mod tests {
             home: Some("file.md".to_string()),
             exclude: Some(vec!["file-drafts".to_string()]),
             favicon: Some("file.png".to_string()),
+            password: Some("file secret".to_string()),
         };
 
         let options = Options::resolve(
@@ -977,6 +1040,7 @@ mod tests {
         assert_eq!(options.home.as_deref(), Some("cli.md"));
         assert_eq!(options.exclude, ["cli-drafts"]);
         assert_eq!(options.favicon.as_deref(), Some("cli.png"));
+        assert_eq!(options.password.as_deref(), Some("cli secret"));
     }
 
     #[test]

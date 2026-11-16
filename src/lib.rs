@@ -14,14 +14,18 @@
 //! deterministic, serialisable [`SiteBundle`], the render stage that turns that
 //! bundle into the reader page (template, styles, scripts and payload) — or,
 //! for the pages format, into the shell page plus one JSON chunk per
-//! document and the search corpus file — the three writers that address the
-//! referenced resources in their own way (one page with `data:` URIs, one page
-//! next to an `assets/` folder, one shell next to lazily fetched chunks), and
+//! document and the search corpus file — the article-level encryption stage
+//! that seals the documents whose front matter declares it (AES-256-GCM over
+//! PBKDF2-HMAC-SHA256), the three writers that address the referenced
+//! resources in their own way (one page with `data:` URIs, one page next to
+//! an `assets/` folder, one shell next to lazily fetched chunks), and
 //! [`pipeline`], which runs the stages in order and owns the summary.
 
 pub mod assets;
 pub mod cli;
 pub mod config;
+pub mod crypto;
+pub mod encrypt;
 pub mod env;
 pub mod error;
 pub mod favicon;
@@ -34,6 +38,7 @@ pub mod site;
 pub mod writers;
 
 pub use assets::{ASSET_PLACEHOLDER_PREFIX, Asset, AssetTable, asset_hash, mime_for};
+pub use encrypt::EncryptDirective;
 pub use error::{Error, Result};
 pub use favicon::{DEFAULT_FAVICON, DEFAULT_FAVICON_NAME, Favicon};
 pub use markdown::highlight::{
@@ -53,7 +58,8 @@ pub use render::{
 };
 pub use scan::{Diagnostic, ScanReport, Severity, SourceDoc};
 pub use site::{
-    DocModel, Edge, SiteBuild, SiteBundle, Stats, build_edges, build_site, flatten_headings,
+    DocModel, Edge, EncryptedBlob, SiteBuild, SiteBundle, Stats, build_edges, build_site,
+    flatten_headings,
 };
 pub use writers::html_dir::HtmlDirWriter;
 pub use writers::pages::PagesWriter;

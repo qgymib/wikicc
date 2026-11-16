@@ -25,6 +25,10 @@
   --rail-width: 44px;
   --sidebar-width: 260px;
   --inspector-width: 320px;
+  /* The reading column's own breathing room. The lock page hands it back to
+     center on the viewport, so the paddings live in tokens both sides read. */
+  --content-pad-top: 44px;
+  --content-pad-bottom: 120px;
   /* The panel column is one surface painted from two stops, and its left rule
      has a token of its own. */
   --shell-top: rgba(17, 23, 31, 0.55);
@@ -397,6 +401,80 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font-size: 13px;
 }
 
+/* ---------- sealed documents ---------- */
+
+/* A sealed document has no body to show: the page keeps the path and the
+   title where every document's are — full measure, left-aligned — and hands
+   the space below them to the lock. The hint ends the upper half and the
+   password field owns the middle of what the title leaves, so the field the
+   reader types into sits centered between the title and the bottom of the
+   screen, with the hint hanging right over it.
+
+   The exactness is bought the same way as before: the margins hand the
+   container's paddings back, so the box spans the viewport exactly, and the
+   box's own paddings are symmetric (the top's, not the container's deeper
+   bottom comfort), so the space the 1fr rows split is centered on the
+   viewport itself — with nothing left over to scroll. */
+.doc-locked-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /* Five rows: the path, the title, the upper half, the form, the lower
+     half — the two halves equal, so the form row lands on the middle of
+     the space the title leaves. */
+  grid-template-rows: auto auto 1fr auto 1fr;
+  justify-items: center;
+  min-height: 100vh;
+  margin: calc(-1 * var(--content-pad-top)) 0 calc(-1 * var(--content-pad-bottom));
+  padding: var(--content-pad-top) 0 var(--content-pad-top);
+}
+
+/* The headline reads as it does on any page: full measure, left-aligned,
+   the path's rule under it. */
+.doc-locked-page > .doc-path,
+.doc-locked-page > .doc-locked-title {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: stretch;
+  text-align: left;
+}
+
+.doc-locked-page > .doc-locked-title {
+  grid-row: 2;
+}
+
+/* The hint ends the upper half, so it hangs right over the field. */
+.doc-locked-page > .doc-locked {
+  grid-column: 1;
+  grid-row: 3;
+  align-self: end;
+}
+
+.doc-locked-page > .doc-locked-form {
+  grid-column: 1;
+  grid-row: 4;
+}
+
+.doc-locked-title {
+  margin: 0 0 14px;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+/* The lock's one sentence is a badge, not a paragraph lost in the column: a
+   pill raised a step above the paper, rounded to say "notice", and as wide
+   as its own line. */
+.doc-locked {
+  margin: 0 0 20px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
 .sidebar-footer {
   padding: 10px 4px 2px;
   border-top: 1px solid var(--border);
@@ -411,7 +489,7 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   position: relative;
   width: 100%;
   min-width: 0;
-  padding: 44px 34px 120px;
+  padding: var(--content-pad-top) 34px var(--content-pad-bottom);
   outline: none;
 }
 
@@ -1659,13 +1737,16 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   height: auto;
 }
 
-/* A broken block reference has no chapter to preview, and a document whose
-   chunk failed to arrive has no preview either, so the same panel turns into
-   a notice or an error instead: narrower, because it holds a sentence rather
-   than an article, and tinted with the colour the link itself already wears,
-   so the panel and the word under the pointer read as one thing. */
+/* A broken block reference has no chapter to preview, a document whose chunk
+   failed to arrive has no preview either, and a sealed document's chapter is
+   ciphertext until a password opens it, so the same panel turns into a notice,
+   an error or the locked state instead: narrower, because it holds a sentence
+   and a form rather than an article, and tinted with the colour the link
+   itself already wears, so the panel and the word under the pointer read as
+   one thing. */
 .preview-popover[data-missing],
-.preview-popover[data-error] {
+.preview-popover[data-error],
+.preview-popover[data-locked] {
   width: max-content;
   max-width: min(380px, calc(100vw - 20px));
   max-height: none;
@@ -1680,16 +1761,19 @@ body[data-side-view="outline"] .sidebar .toc-panel {
    that hold no chapter to resize hold no grip either. */
 .preview-popover:not([data-missing]) .preview-missing,
 .preview-popover:not([data-loading]) .preview-loading,
-.preview-popover:not([data-error]) .preview-error {
+.preview-popover:not([data-error]) .preview-error,
+.preview-popover:not([data-locked]) .preview-locked {
   display: none;
 }
 
 .preview-popover[data-missing] .preview-scroll,
 .preview-popover[data-loading] .preview-scroll,
 .preview-popover[data-error] .preview-scroll,
+.preview-popover[data-locked] .preview-scroll,
 .preview-popover[data-missing] .preview-resize,
 .preview-popover[data-loading] .preview-resize,
-.preview-popover[data-error] .preview-resize {
+.preview-popover[data-error] .preview-resize,
+.preview-popover[data-locked] .preview-resize {
   display: none;
 }
 
@@ -1698,19 +1782,22 @@ body[data-side-view="outline"] .sidebar .toc-panel {
 }
 
 .preview-popover[data-missing] .preview-head,
-.preview-popover[data-error] .preview-head {
+.preview-popover[data-error] .preview-head,
+.preview-popover[data-locked] .preview-head {
   border-bottom-color: rgba(240, 160, 64, 0.28);
 }
 
 .preview-popover[data-missing] .preview-title,
-.preview-popover[data-error] .preview-title {
+.preview-popover[data-error] .preview-title,
+.preview-popover[data-locked] .preview-title {
   color: rgba(240, 160, 64, 0.95);
 }
 
 /* A pinned warning keeps its frame: holding the panel in place does not
    change what the panel is saying. */
 .preview-popover[data-missing][data-pinned="true"],
-.preview-popover[data-error][data-pinned="true"] {
+.preview-popover[data-error][data-pinned="true"],
+.preview-popover[data-locked][data-pinned="true"] {
   border-color: rgba(240, 160, 64, 0.45);
   border-left: 3px solid rgba(240, 160, 64, 0.85);
 }
@@ -1797,6 +1884,91 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   color: var(--text-dim);
   font-size: 12.5px;
   line-height: 1.6;
+}
+
+/* The locked state keeps the notice's frame — the amber already says "not a
+   preview" — and adds the one thing a notice never had: the form the reader
+   answers to open the chapter where the panel stands. The field and the
+   button are the lock page's shapes in the panel's measure, so unlocking
+   here feels like unlocking anywhere else the reader is asked for a
+   password. */
+.preview-locked {
+  padding: 10px 14px 12px;
+}
+
+.preview-locked-title {
+  margin: 0 0 4px;
+  color: rgba(240, 160, 64, 0.95);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.preview-locked-text {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.preview-unlock {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.preview-unlock-input {
+  flex: 1;
+  width: 170px;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.preview-unlock-input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.preview-unlock-input:disabled {
+  opacity: 0.6;
+}
+
+.preview-unlock-submit {
+  flex: none;
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.preview-unlock-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.preview-unlock-submit:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.preview-unlock-error {
+  margin: 8px 0 0;
+  color: rgba(240, 160, 64, 0.95);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* ---------- missing-chapter banner ---------- */
@@ -1935,8 +2107,117 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   }
 }
 
+/* ---------- lock page form ---------- */
+
+/* The form the lock page answers in: the same shapes the hover preview's
+   locked panel carries, in the article's measure — the reader who lands on
+   a sealed page types where they stand, and a wrong password is retried in
+   the field it was typed in. The centered page sizes it, so the form only
+   promises a width of its own. */
+.doc-locked-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  width: min(420px, 100%);
+}
+
+.doc-locked-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+/* The label names the field for the reader who cannot see it; the page's
+   note already says in the open what the field is for. */
+.doc-locked-label-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.doc-locked-input {
+  flex: 1;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.doc-locked-input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.doc-locked-input:disabled {
+  opacity: 0.6;
+}
+
+.doc-locked-submit {
+  flex: none;
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.doc-locked-submit:hover {
+  background: #6ba1ff;
+}
+
+.doc-locked-submit:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.doc-locked-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.doc-locked-error {
+  flex: 1 1 100%;
+  margin: 0;
+  color: rgba(240, 160, 64, 0.95);
+  font-size: 12.5px;
+  text-align: center;
+}
+
 @media print {
   .doc-alert {
+    display: none;
+  }
+
+  /* A printed lock page has no password to type, and the form has no
+     business on paper: the title and the note are the only things worth
+     ink. The page reads as a plain note, too — there is no screen to find
+     a middle of. */
+  .doc-locked-page {
+    display: block;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+  }
+
+  .doc-locked-form {
     display: none;
   }
 
@@ -2333,6 +2614,20 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   overflow: hidden;
 }
 
+/* The marker a sealed document's row carries: the cell the passage would fill
+   says why it holds none. A quiet bordered label, set off from the passage
+   type by its smaller size, because it is a state and not a finding. */
+.search-result-locked {
+  align-self: center;
+  justify-self: start;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
 /* The file column: the path, which already ends in the file's name. It is one
    line, dimmer than the passage beside it, because it says where the row leads
    rather than what the row found. No rule divides it from the passage: the
@@ -2419,6 +2714,17 @@ body[data-side-view="outline"] .sidebar .toc-panel {
 
 /* The excerpt, for a shell that cannot hand over the whole document. */
 .search-passage {
+  margin: 0;
+  padding: 14px 18px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* The preview's notice for a sealed document: where the body would read, the
+   lock speaks instead — the same measure the passage beside it keeps, so the
+   half reads as a deliberate answer rather than an empty box. */
+.search-locked {
   margin: 0;
   padding: 14px 18px;
   color: var(--text-dim);
@@ -2839,8 +3145,15 @@ body[data-side-view="outline"] .sidebar .toc-panel {
     background: rgba(4, 7, 10, 0.62);
   }
 
+  /* The reading column's paddings are the phone's, so the centered lock
+     page follows without its own numbers. */
+  :root {
+    --content-pad-top: 26px;
+    --content-pad-bottom: 90px;
+  }
+
   .content {
-    padding: 26px 18px 90px;
+    padding: var(--content-pad-top) 18px var(--content-pad-bottom);
   }
 
   .inspector {

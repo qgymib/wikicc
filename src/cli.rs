@@ -116,6 +116,8 @@ mod tests {
             "drafts",
             "--favicon",
             "assets/icon.png",
+            "--password",
+            "global secret",
             "--force",
             "--quiet",
         ]);
@@ -128,6 +130,7 @@ mod tests {
         assert_eq!(cli.settings.home.as_deref(), Some("intro"));
         assert_eq!(cli.settings.exclude, Some(vec!["drafts".to_string()]));
         assert_eq!(cli.settings.favicon.as_deref(), Some("assets/icon.png"));
+        assert_eq!(cli.settings.password.as_deref(), Some("global secret"));
         assert!(cli.force);
         assert!(cli.quiet);
     }
@@ -250,6 +253,7 @@ mod tests {
             "--home",
             "--exclude",
             "--favicon",
+            "--password",
             "--force",
             "--quiet",
             "--init-config",

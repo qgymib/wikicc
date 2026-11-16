@@ -38,6 +38,7 @@ fn help_lists_documented_options() {
         "--home",
         "--exclude",
         "--favicon",
+        "--password",
         "--force",
         "--quiet",
     ] {

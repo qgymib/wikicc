@@ -32,6 +32,8 @@ import * as DiagramView from "./diagram-view.js";
 import * as PreviewView from "./preview-view.js";
 import * as Anchor from "./anchor.js";
 import * as Banner from "./banner.js";
+import * as Lock from "./lock.js";
+import * as LockView from "./lock-view.js";
 
 /** `localStorage` key holding the explicit theme choice. */
 var THEME_KEY = "wikicc.theme";
@@ -61,6 +63,12 @@ export var ALERT_CLASS = Banner.BANNER_CLASS;
 
 /** Class of the paragraph shown while a document is being fetched. */
 export var LOADING_CLASS = "doc-loading";
+
+/** Class of the paragraph shown for a document whose body is sealed. */
+export var LOCKED_CLASS = "doc-locked";
+
+/** Class the article wears while it shows a sealed document's lock page. */
+var LOCKED_PAGE_CLASS = "doc-locked-page";
 
 /** Read and parse the embedded payload. */
 function readPayload() {
@@ -227,6 +235,51 @@ export function start() {
   var home = typeof bundle.home === "string" ? bundle.home : null;
   var store = DocStore.createDocStore(bundle);
 
+  /**
+   * The passwords this session has seen, and the answer the lock page's
+   * form asks for. Both live here rather than in the view: the table is
+   * the session's memory — page-lifetime, memory-only, never written to
+   * any storage — and the answer only reports what a password did.
+   */
+  var unlockPasswords = Lock.createSessionPasswords();
+
+  /**
+   * Try `password` on the sealed document `sealed`.
+   *
+   * The attempt belongs to the store: `decrypt` is the one door, and a
+   * password that opened a document is remembered for the session, so
+   * the next sealed page — or this one again — never asks twice.
+   */
+  function tryPassword(password, sealed) {
+    if (!sealed || !sealed.id) {
+      return Promise.resolve(false);
+    }
+    return store.decrypt(sealed.id, password).then(function (unlocked) {
+      if (!unlocked) {
+        return false;
+      }
+      unlockPasswords.remember(sealed.id, password);
+      return true;
+    });
+  }
+
+  // An unlock anywhere in the reader re-renders the document the reader is
+  // looking at: the sealed placeholder they saw is the full body now. The
+  // route still names the document, so the address bar keeps its say — an
+  // arrival that carried a chapter finally reaches it here. A navigation
+  // away leaves the other document untouched, and the unlock still stands:
+  // its password is in the session, so coming back is a quiet success.
+  store.onDecrypted(function (unlocked) {
+    if (!currentId || currentId !== unlocked.id) {
+      return;
+    }
+    // The route has not moved, so a plain render would see no change;
+    // dropping the id makes the next render rebuild the article from the
+    // model the password just opened.
+    currentId = null;
+    render();
+  });
+
   var content = document.getElementById("doc-content");
   var article = document.getElementById("doc-article");
   var stats = document.getElementById("stats");
@@ -247,8 +300,22 @@ export function start() {
    * nothing to find.
    */
   var index = store.isLazy() ? null : Search.createSearch(docs);
-  var corpusDocs = store.isLazy() ? null : docs;
+  // The records `occurrences` cuts its passages from are the controller's own
+  // copy: a decryption swaps its document's record for the full model, and
+  // the list and the graph hold the payload's array untouched.
+  var corpusDocs = store.isLazy() ? null : docs.slice();
   var globalIndexPromise = null;
+
+  /**
+   * The documents a password has opened this session, by id.
+   *
+   * A decryption is the one event that changes what search knows, and it can
+   * land before or after the corpus that names the document was fetched: the
+   * listener below writes here and updates an index that already exists, and
+   * the corpus build merges from here when the file arrives after the
+   * password did.
+   */
+  var decryptedDocs = new Map();
 
   /** The whole-site index, fetching the corpus first when it is separate. */
   function ensureGlobalIndex() {
@@ -261,8 +328,13 @@ export function start() {
 
     globalIndexPromise = store.corpus().then(function (records) {
       if (records && records.length) {
-        corpusDocs = records;
-        index = Search.createSearch(records);
+        // A document decrypted before its corpus arrived still sits in the
+        // file as its public title alone; the model the password opened
+        // stands in for it here.
+        corpusDocs = records.map(function (record) {
+          return decryptedDocs.get(record.id) || record;
+        });
+        index = Search.createSearch(corpusDocs);
       }
       return index;
     });
@@ -321,6 +393,25 @@ export function start() {
     onMissingChapter: function (message) {
       pendingMissing = { docId: message.docId, anchor: message.anchor };
       showMissingChapter(message);
+    },
+    // The locked panel's password form answers through the same door the
+    // lock page's form does: the store decrypts, and a password that
+    // opened its document is remembered for the session by the same hand,
+    // so the next sealed page — or this one again — never asks twice.
+    onUnlock: function (docId, password) {
+      return store.decrypt(docId, password).then(function (unlocked) {
+        if (!unlocked) {
+          return false;
+        }
+        unlockPasswords.remember(docId, password);
+        return true;
+      });
+    },
+    // The quiet attempt reads the same session table, so a site whose
+    // articles share one password asks for it once, wherever the reader
+    // first typed it.
+    passwordCandidates: function (docId) {
+      return unlockPasswords.candidates(docId);
     },
   });
 
@@ -765,6 +856,9 @@ export function start() {
     content.appendChild(banner.element());
     content.appendChild(article);
     article.textContent = "";
+    // Whatever the last render wore — the lock page's centered layout, for
+    // one — comes off with its children.
+    article.className = "doc-article";
   }
 
   /** Name the wait where the document will appear. */
@@ -795,6 +889,98 @@ export function start() {
         route.id +
         " \u2014 the file is missing, or the site is not being served over HTTP.",
     );
+  }
+
+  /** Whether the document's body is sealed and only its title is public. */
+  function isLocked(doc) {
+    return !!doc && !!doc.enc;
+  }
+
+  /**
+   * The passwords this session holds, tried quietly, one attempt at a time.
+   *
+   * A sealed document whose password the reader already entered — for this
+   * document, or for any other the site seals under the same one — opens
+   * without the reader typing a word: the attempt starts as soon as the
+   * lock page paints, and the answer re-renders through the store's
+   * notification. One attempt per document runs at a time; a navigation
+   * away abandons the rest of the queue, and nothing here ever writes the
+   * passwords anywhere but memory.
+   */
+  var silentUnlocks = new Map();
+
+  function attemptSilentUnlock(doc) {
+    if (silentUnlocks.has(doc.id)) {
+      return;
+    }
+    var passwords = unlockPasswords.candidates(doc.id);
+    if (!passwords.length) {
+      return;
+    }
+
+    var attempt = passwords.reduce(function (chain, password) {
+      return chain.then(function (opened) {
+        if (opened || currentId !== doc.id) {
+          return opened;
+        }
+        return store.decrypt(doc.id, password).then(function (result) {
+          if (result) {
+            unlockPasswords.remember(doc.id, password);
+          }
+          return result;
+        });
+      });
+    }, Promise.resolve(null));
+
+    silentUnlocks.set(doc.id, attempt);
+    var forget = function () {
+      silentUnlocks.delete(doc.id);
+    };
+    attempt.then(forget, forget);
+  }
+
+  /**
+   * Show the title of a sealed document and the one field its page answers
+   * in.
+   *
+   * A sealed document has no markup to render: its html, outline, blocks
+   * and text are emptied by the build, and the ciphertext they became is
+   * what a password opens, not what this page shows. The page therefore
+   * holds four facts — the path and the title exactly where every
+   * document's are, one line that says the contents are hidden, and the
+   * password field itself, so the door needs no opening: the reader types
+   * where they stand, and a password that opens the document re-renders it
+   * through the store's notification. No diagrams, no formulas, no preview
+   * tagging: there is no markup to enhance, and a placeholder that
+   * pretended otherwise would be a blank page in disguise.
+   */
+  function renderLocked(doc) {
+    var path = document.createElement("p");
+    path.className = "doc-path";
+    path.textContent = doc.id;
+
+    var title = document.createElement("h1");
+    title.className = "doc-locked-title";
+    title.textContent = doc.title;
+
+    var note = document.createElement("p");
+    note.className = LOCKED_CLASS;
+    note.textContent =
+      "This document is encrypted. Its contents stay hidden until it is unlocked.";
+
+    mountArticle();
+    // The lock page is a centered composition, not a column of prose: the
+    // class lets the stylesheet place the field at the middle of the
+    // reading column, left to right and top to bottom.
+    article.className = "doc-article " + LOCKED_PAGE_CLASS;
+    article.appendChild(path);
+    article.appendChild(title);
+    article.appendChild(note);
+    LockView.createUnlockForm({
+      host: article,
+      doc: doc,
+      onSubmit: tryPassword,
+    });
   }
 
   function renderDocument(doc) {
@@ -863,8 +1049,16 @@ export function start() {
    * sorts and its fold states.
    */
   function place(route, doc, wanted, changed, jump) {
+    var locked = isLocked(doc);
     if (changed) {
-      renderDocument(doc);
+      if (locked) {
+        renderLocked(doc);
+        // A password the session already holds is tried before the reader
+        // has to ask: one that fits re-renders through the notification.
+        attemptSilentUnlock(doc);
+      } else {
+        renderDocument(doc);
+      }
       toc.render(doc.toc, doc.id);
       document.title = doc.title
         ? doc.title + " · " + bundle.title
@@ -875,13 +1069,16 @@ export function start() {
     // the document, at the top, and says what was asked for. A click on such a
     // reference leaves no anchor in the route — the build cannot address a
     // chapter that has no element — so the queued message stands in for it.
-    var found = findAnchor(doc, route.anchor);
+    // A sealed document resolves no anchor either, but the lock is the
+    // reason its outline is empty, so the missing-chapter message would be a
+    // lie about why nothing was reached.
+    var found = locked ? null : findAnchor(doc, route.anchor);
     if (found) {
       scrollToAnchor(found);
       // Fresh markup changes height while it settles — that is what diagrams
       // and images do — so the chapter is walked to again once it has.
       settleAtAnchor(doc, route.anchor);
-    } else if (wanted && wanted.anchor) {
+    } else if (!locked && wanted && wanted.anchor) {
       showMissingChapter(wanted);
       // The document is opened from its top: there is no chapter to scroll to.
       if (typeof globalThis.scrollTo === "function") {
@@ -1049,6 +1246,46 @@ export function start() {
   var localIndex = null;
   var localIndexId = null;
 
+  /**
+   * A password that opened a document puts its full text where search reads.
+   *
+   * The global index and the corpus were built with the sealed shape — a
+   * title, and nothing else — so the model the password returned is written
+   * over its record in both, and the local index is dropped outright: it is
+   * cached by id, and the id did not change, so the empty body it indexed
+   * would keep answering after the unlock. The map the corpus build merges
+   * from keeps the two orders honest when the file arrives after the
+   * password did. Nothing here touches storage: the passwords and the
+   * plaintext live in memory alone.
+   */
+  store.onDecrypted(function (unlocked) {
+    decryptedDocs.set(unlocked.id, unlocked);
+
+    if (corpusDocs) {
+      var at = -1;
+      for (var i = 0; i < corpusDocs.length; i += 1) {
+        if (corpusDocs[i].id === unlocked.id) {
+          at = i;
+          break;
+        }
+      }
+      if (at === -1) {
+        corpusDocs.push(unlocked);
+      } else {
+        corpusDocs[at] = unlocked;
+      }
+    }
+
+    if (index) {
+      // `replace` is the engine's one idempotent write: the sealed record is
+      // already in the index, so re-adding through it can never duplicate.
+      index.replace(Search.recordOf(unlocked));
+    }
+
+    localIndex = null;
+    localIndexId = null;
+  });
+
   function localSearch() {
     var doc = currentId ? store.peek(currentId) : null;
     if (!doc || typeof doc.text !== "string") {
@@ -1120,6 +1357,23 @@ export function start() {
     return units > 0 ? units : null;
   }
 
+  /**
+   * Name the entries whose document is still sealed.
+   *
+   * A sealed document reaches the list through its title alone: the row has
+   * no passage to quote and the preview no body to show, and the lock is the
+   * reason. The flag rides the entry, which is what the view draws — it
+   * never asks the store itself — and it is read when the answer is built,
+   * so the same query after an unlock comes back without it.
+   */
+  function markLocked(entries) {
+    return entries.map(function (entry) {
+      return store.isEncrypted(entry.id)
+        ? Object.assign({}, entry, { locked: true })
+        : entry;
+    });
+  }
+
   function searchResults(query, mode) {
     // The tail is cut to the line the list actually renders: the budget is
     // read off the panel on every query, so a resize or a typeface change
@@ -1137,7 +1391,9 @@ export function start() {
         return [];
       }
 
-      return Search.occurrences(corpusDocs || docs, everywhere, query, cuts);
+      return markLocked(
+        Search.occurrences(corpusDocs || docs, everywhere, query, cuts),
+      );
     }
 
     var local = localSearch();
@@ -1150,7 +1406,9 @@ export function start() {
       return [];
     }
 
-    return Search.occurrences([store.peek(currentId)], here, query, cuts);
+    return markLocked(
+      Search.occurrences([store.peek(currentId)], here, query, cuts),
+    );
   }
 
   /* ---------- layout controls ---------- */

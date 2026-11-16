@@ -162,16 +162,7 @@ export function createSearch(docs) {
     },
   });
 
-  index.addAll(
-    (docs || []).map(function (doc) {
-      return {
-        id: doc.id,
-        title: doc.title || "",
-        headings: headingsText(doc.toc),
-        text: doc.text || "",
-      };
-    }),
-  );
+  index.addAll((docs || []).map(recordOf));
 
   return index;
 }
@@ -680,6 +671,29 @@ export function headingsOf(doc) {
     return doc.headings;
   }
   return headingsText(doc && doc.toc);
+}
+
+/**
+ * The one record the engine indexes for any document it is handed.
+ *
+ * A payload document, a corpus record of the pages format and a model a
+ * password just opened all carry their title, outline and text differently:
+ * the payload holds the outline structure, the corpus a pre-flattened string,
+ * and the decrypted model the structure again. Indexing every one through
+ * this single mapping is what keeps the fields the same shape wherever they
+ * came from — `headingsOf` reads the pre-flattened string where it is present
+ * and flattens the outline where it is not, so a hit in a heading ranks the
+ * same way in both formats. The dynamic index updates of a decryption use it
+ * too: a record that replaces a sealed one describes the document exactly as
+ * the initial build indexed it.
+ */
+export function recordOf(doc) {
+  return {
+    id: doc.id,
+    title: doc.title || "",
+    headings: headingsOf(doc),
+    text: doc.text || "",
+  };
 }
 
 /**

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use wikicc::scan::scan;
 use wikicc::site::{Edge, Stats, build_site};
-use wikicc::{SiteBuild, SourceDoc};
+use wikicc::{EncryptedBlob, SiteBuild, SourceDoc};
 
 /// The committed site fixture, which is `--strict` clean.
 fn fixture_root() -> PathBuf {
@@ -321,4 +321,59 @@ fn payload_assembly_does_not_touch_the_source_tree() {
 
     let after: Vec<SourceDoc> = scan(&root, &root.join("dist")).expect("scan").docs;
     assert_eq!(before, after);
+}
+
+/// A sealed blob standing in for what the sealing pass writes.
+fn stub_blob() -> EncryptedBlob {
+    EncryptedBlob {
+        v: 1,
+        kdf: "pbkdf2-sha256".to_string(),
+        iters: 600_000,
+        salt: "c2FsdA==".to_string(),
+        nonce: "bm9uY2U=".to_string(),
+        ct: "Y2lwaGVydGV4dA==".to_string(),
+    }
+}
+
+#[test]
+fn a_sealed_document_keeps_its_payload_neighbours_untouched() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write(dir.path(), "a.md", "# A\n\nsecret body\n");
+    write(dir.path(), "b.md", "# B\n\nopen body\n");
+    let report = scan(dir.path(), dir.path().join("dist").as_path()).expect("scan");
+    let mut build = build_site("Fixture", dir.path(), &report.docs);
+
+    let sealed = &mut build.bundle.docs[0];
+    sealed.html = String::new();
+    sealed.toc = Vec::new();
+    sealed.blocks = Vec::new();
+    sealed.text = String::new();
+    sealed.enc = Some(stub_blob());
+
+    let value: serde_json::Value =
+        serde_json::from_str(&build.bundle.to_json()).expect("payload JSON");
+    assert_eq!(
+        value["docs"][0]
+            .as_object()
+            .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+        Some(vec![
+            "blocks", "enc", "html", "id", "path", "text", "title", "toc"
+        ]),
+        "the sealed document carries the enc block beside its emptied body"
+    );
+    assert_eq!(
+        value["docs"][1]
+            .as_object()
+            .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+        Some(vec!["blocks", "html", "id", "path", "text", "title", "toc"]),
+        "the public document is exactly what it always was"
+    );
+    assert!(
+        !build.bundle.to_json().contains("secret body"),
+        "the sealed plaintext never reaches the payload"
+    );
+    assert!(
+        build.bundle.to_json().contains("open body"),
+        "the public body is still searchable"
+    );
 }

@@ -28,6 +28,16 @@
  * document without the hovered chapter says so the way a reference the build
  * marked as broken does.
  *
+ * One more state answers the encrypted site: a reference into a document the
+ * build sealed opens the panel with a password form instead of a preview or a
+ * notice. The head still names the document — the one thing the payload says
+ * in public — and the body is the form the reader answers in place. A
+ * password the session already holds is tried quietly before anything is
+ * typed; one that fits fills the panel with the chapter, and one that does
+ * not says so where the typing was. The chapter that follows is the ordinary
+ * preview, built from the model the password opened, so unlocking here shows
+ * what a hover on a public reference would have shown.
+ *
  * A preview can also be *pinned*. Every delay above is a guess at what the
  * pointer meant; a click on the panel is not a guess, it is the reader saying
  * they want the chapter at hand while they read something else. So a click
@@ -265,6 +275,47 @@ export var FAILED_LABEL = "Preview failed";
 /** Attribute marking the popover as showing the error state. */
 export var ERROR_ATTRIBUTE = "data-error";
 
+/** Class of the locked state shown for a reference into a sealed document. */
+export var LOCKED_CLASS = "preview-locked";
+
+/** Heading of the locked state: what the reference points at. */
+export var LOCKED_TITLE = "Chapter locked";
+
+/** Text of the locked state: what the reader can do about it. */
+export var LOCKED_TEXT =
+  "This chapter is in an encrypted document. Enter its password to read it here.";
+
+/** Accessible name of the popover while it shows the locked state. */
+export var LOCKED_LABEL = "Locked chapter";
+
+/** Attribute marking the popover as showing the locked state. */
+export var LOCKED_ATTRIBUTE = "data-locked";
+
+/** Class of the password form the locked state answers in place. */
+export var UNLOCK_FORM_CLASS = "preview-unlock";
+
+/** Class of the password field of that form. */
+export var UNLOCK_INPUT_CLASS = "preview-unlock-input";
+
+/** Accessible name of the password field. */
+export var UNLOCK_INPUT_LABEL = "Document password";
+
+/** Class of the button that submits the password. */
+export var UNLOCK_SUBMIT_CLASS = "preview-unlock-submit";
+
+/** Text of the unlock button while the panel is idle. */
+export var UNLOCK_SUBMIT_TEXT = "Unlock";
+
+/** Text of the unlock button while an attempt is running. */
+export var UNLOCK_BUSY_TEXT = "Unlocking\u2026";
+
+/** Class of the line that reports a password that did not open the document. */
+export var UNLOCK_ERROR_CLASS = "preview-unlock-error";
+
+/** Text of that line, offered again whatever the next try answers. */
+export var UNLOCK_ERROR_TEXT =
+  "That password did not unlock this document. Try again.";
+
 /**
  * Create the preview controller for one reader instance.
  *
@@ -291,6 +342,14 @@ export function createPreviewView(options) {
   // chapter does not exist. Injected rather than imported so this module stays
   // a view over the preview model and never reaches for the banner itself.
   var onMissingChapter = options.onMissingChapter || null;
+  // The attempt a password makes belongs to the controller: the store
+  // decrypts and the session's memory keeps what opened a document, which is
+  // the same door the lock page's dialog answers through. The panel only
+  // reports what a password did. `passwordCandidates` reads the same
+  // session's table, so a password the reader typed anywhere is tried
+  // quietly here before the panel asks for one.
+  var onUnlock = options.onUnlock || null;
+  var passwordCandidates = options.passwordCandidates || null;
 
   var panel = null;
   var head = null;
@@ -310,6 +369,21 @@ export function createPreviewView(options) {
   // through must not grow or reflow the panel as they replace one another.
   var loading = null;
   var error = null;
+  // The locked state and its form are part of the panel from the start too,
+  // on the same terms as the notice: a reference into a sealed document
+  // opens the panel with its password form, and the states the panel turns
+  // through must not grow or reflow it as they replace one another.
+  var locked = null;
+  var unlockForm = null;
+  var unlockInput = null;
+  var unlockSubmit = null;
+  var unlockError = null;
+  // Whether an unlock attempt is running: the form is busy — no second
+  // submit, no retype — until the answer arrives.
+  var unlocking = false;
+  // The quiet attempts in flight, by document id: one per document at a
+  // time, so a panel that reopens mid-attempt never stacks a second one.
+  var quietUnlocks = new Map();
   // The head's two buttons, so their state can follow the pin without a query.
   var pinButton = null;
   var closeButton = null;
@@ -478,6 +552,50 @@ export function createPreviewView(options) {
     error.appendChild(errorTitle);
     error.appendChild(errorText);
 
+    // The locked state: a heading, one sentence and the form the reader
+    // answers in place. The error line is hidden until an attempt fails and
+    // clears itself the moment the reader types again.
+    locked = document.createElement("div");
+    locked.className = LOCKED_CLASS;
+
+    var lockedTitle = document.createElement("p");
+    lockedTitle.className = "preview-locked-title";
+    lockedTitle.textContent = LOCKED_TITLE;
+
+    var lockedText = document.createElement("p");
+    lockedText.className = "preview-locked-text";
+    lockedText.textContent = LOCKED_TEXT;
+
+    unlockForm = document.createElement("form");
+    unlockForm.className = UNLOCK_FORM_CLASS;
+    unlockForm.addEventListener("submit", onUnlockSubmit);
+
+    unlockInput = document.createElement("input");
+    unlockInput.className = UNLOCK_INPUT_CLASS;
+    unlockInput.setAttribute("type", "password");
+    unlockInput.setAttribute("aria-label", UNLOCK_INPUT_LABEL);
+    unlockInput.setAttribute("autocomplete", "off");
+    unlockInput.addEventListener("input", onUnlockInput);
+
+    unlockSubmit = document.createElement("button");
+    unlockSubmit.className = UNLOCK_SUBMIT_CLASS;
+    unlockSubmit.setAttribute("type", "submit");
+    unlockSubmit.textContent = UNLOCK_SUBMIT_TEXT;
+
+    unlockForm.appendChild(unlockInput);
+    unlockForm.appendChild(unlockSubmit);
+
+    unlockError = document.createElement("p");
+    unlockError.className = UNLOCK_ERROR_CLASS;
+    unlockError.setAttribute("role", "alert");
+    unlockError.textContent = UNLOCK_ERROR_TEXT;
+    unlockError.hidden = true;
+
+    locked.appendChild(lockedTitle);
+    locked.appendChild(lockedText);
+    locked.appendChild(unlockForm);
+    locked.appendChild(unlockError);
+
     body = document.createElement("div");
     body.className = BODY_CLASS;
 
@@ -485,6 +603,7 @@ export function createPreviewView(options) {
     panel.appendChild(notice);
     panel.appendChild(loading);
     panel.appendChild(error);
+    panel.appendChild(locked);
     panel.appendChild(body);
     // The handles go on last: they are absolutely positioned strips over the
     // panel's own edges and must paint above the body's content, or the edge
@@ -1112,6 +1231,20 @@ export function createPreviewView(options) {
       return;
     }
 
+    // A reference into a sealed document has no markup to preview yet: the
+    // panel opens in its locked state and the password form decides what it
+    // becomes. The store knows the seal from the payload alone — the
+    // embedded entry carries the blob, the pages manifest carries the mark —
+    // so the answer needs no fetch first, whatever the format.
+    if (
+      documents &&
+      typeof documents.isEncrypted === "function" &&
+      documents.isEncrypted(destination.id)
+    ) {
+      openLocked(destination, link);
+      return;
+    }
+
     if (!destination.anchor) {
       // A reference without a chapter names the whole document, and the panel
       // shows it whole: the same window a chapter reference opens, opened
@@ -1149,6 +1282,14 @@ export function createPreviewView(options) {
     var doc = documents ? documents.peek(destination.id) : null;
     var preview = build(doc);
     if (preview) {
+      // A sealed model answers a locked shape instead of markup: the panel
+      // asks for the password rather than pretending the chapter is missing.
+      // The entry the store holds is the payload's own word, so this stays
+      // the answer even where the manifest said nothing.
+      if (preview.locked) {
+        openLocked(destination, link);
+        return;
+      }
       showPreview(preview, link);
       return;
     }
@@ -1181,6 +1322,10 @@ export function createPreviewView(options) {
 
       var arrived = loaded ? build(loaded) : null;
       if (arrived) {
+        if (arrived.locked) {
+          openLocked(destination, link);
+          return;
+        }
         showPreview(arrived, link);
         return;
       }
@@ -1259,6 +1404,217 @@ export function createPreviewView(options) {
     show(link);
   }
 
+  /**
+   * Show the panel beside `link` in its locked state, for a document the
+   * build sealed.
+   *
+   * The head names the document the reference points at — the one thing the
+   * payload still says in public — and the body is the password form. A
+   * password the session already holds is tried quietly before the reader
+   * has to type: one that fits replaces this state with the chapter itself.
+   */
+  function openLocked(destination, link) {
+    ensurePanel();
+    setRole("locked");
+    // Nothing of a previous preview, notice, loading mark or error may
+    // survive: the locked state owns the panel.
+    body.textContent = "";
+    title.textContent = titleOf(destination.id);
+    path.textContent = destination.id;
+    resetUnlockForm();
+
+    show(link);
+    attemptQuietUnlock(destination, link);
+  }
+
+  /** Clear the locked state's form: no text, no error, no running attempt. */
+  function resetUnlockForm() {
+    unlocking = false;
+    if (!unlockInput || !unlockSubmit || !unlockError) {
+      return;
+    }
+
+    unlockInput.value = "";
+    unlockInput.disabled = false;
+    unlockSubmit.disabled = false;
+    unlockSubmit.textContent = UNLOCK_SUBMIT_TEXT;
+    unlockError.hidden = true;
+  }
+
+  /** Turn the form's busy state on and off: no retype while an attempt runs. */
+  function setUnlocking(value) {
+    unlocking = !!value;
+    if (!unlockInput || !unlockSubmit) {
+      return;
+    }
+
+    unlockInput.disabled = unlocking;
+    unlockSubmit.disabled = unlocking;
+    unlockSubmit.textContent = unlocking
+      ? UNLOCK_BUSY_TEXT
+      : UNLOCK_SUBMIT_TEXT;
+  }
+
+  /** The reader is retyping: a failed attempt's answer stops applying. */
+  function onUnlockInput() {
+    if (unlockError) {
+      unlockError.hidden = true;
+    }
+  }
+
+  /**
+   * The password form's answer: unlock the document where the panel stands.
+   *
+   * The attempt belongs to the controller's `onUnlock`, the same door the
+   * lock page's dialog answers through, so a password that opened its
+   * document is remembered for the session by the same hand. The answer is
+   * one of two: the chapter takes the panel, or the error line asks for
+   * another password. A "no" from a document that is no longer sealed is the
+   * race a quiet attempt won while the reader was still typing — the
+   * document opened elsewhere, and no error may claim the password failed.
+   */
+  function onUnlockSubmit(event) {
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+
+    if (
+      !panel ||
+      panel.hidden ||
+      !anchor ||
+      unlocking ||
+      typeof onUnlock !== "function" ||
+      !unlockInput
+    ) {
+      return;
+    }
+
+    var password = unlockInput.value;
+    var destination = destinationOf(anchor);
+    if (!destination || !password) {
+      return;
+    }
+
+    // An answered form is a claimed panel: the attempt runs where the reader
+    // left it, and the delays stop applying while it does.
+    setPinned(true);
+    var link = anchor;
+    setUnlocking(true);
+    Promise.resolve()
+      .then(function () {
+        return onUnlock(destination.id, password);
+      })
+      .then(function (unlocked) {
+        setUnlocking(false);
+        if (
+          !unlocked &&
+          (!documents ||
+            typeof documents.isEncrypted !== "function" ||
+            documents.isEncrypted(destination.id))
+        ) {
+          // Still sealed, and the password did not open it: the reader's to
+          // retype, and the line names the failure while they do.
+          if (unlockError) {
+            unlockError.hidden = false;
+          }
+          return;
+        }
+
+        resetUnlockForm();
+        showUnlockedChapter(destination, link);
+      })
+      .catch(function (_error) {
+        // A failed attempt is a retryable one: the panel does not close for
+        // an answer the store could not give.
+        setUnlocking(false);
+        if (unlockError) {
+          unlockError.hidden = false;
+        }
+      });
+  }
+
+  /**
+   * Try the passwords the session already holds, quietly, in order.
+   *
+   * A site whose articles share one password asks for it once — on whatever
+   * document the reader unlocked first — so the attempt starts as soon as
+   * the locked panel paints and answers into the panel it belongs to: a
+   * pointer that has moved on cancels the answer, the way a travelling
+   * document's does. One attempt per document runs at a time; nothing here
+   * writes the passwords anywhere but the session's own memory.
+   */
+  function attemptQuietUnlock(destination, link) {
+    var id = destination.id;
+    if (
+      typeof onUnlock !== "function" ||
+      typeof passwordCandidates !== "function"
+    ) {
+      return;
+    }
+
+    if (quietUnlocks.has(id)) {
+      return;
+    }
+
+    var passwords = passwordCandidates(id);
+    if (!passwords || !passwords.length) {
+      return;
+    }
+
+    var attempt = passwords.reduce(function (chain, password) {
+      return chain.then(function (opened) {
+        if (opened) {
+          return true;
+        }
+        return Promise.resolve()
+          .then(function () {
+            return onUnlock(id, password);
+          })
+          .then(function (unlocked) {
+            return !!unlocked;
+          });
+      });
+    }, Promise.resolve(false));
+
+    quietUnlocks.set(id, attempt);
+    var forget = function () {
+      quietUnlocks.delete(id);
+    };
+    attempt.then(forget, forget);
+
+    attempt.then(function (opened) {
+      if (opened && (pending === link || anchor === link)) {
+        showUnlockedChapter(destination, link);
+      }
+    });
+  }
+
+  /**
+   * Replace the locked state with the chapter the password opened.
+   *
+   * The document is the full model now, so the same selection the hover
+   * asked for at first answers with real markup: a chapter reference shows
+   * its chapter, a document reference shows the document whole. A pointer
+   * that has moved on cancels the answer, and a model that still fails to
+   * build leaves the locked state up rather than flashing an empty panel.
+   */
+  function showUnlockedChapter(destination, link) {
+    if (pending !== link && anchor !== link) {
+      return;
+    }
+
+    var doc =
+      documents && typeof documents.peek === "function"
+        ? documents.peek(destination.id)
+        : null;
+    var preview = destination.anchor
+      ? Preview.createPreview(doc, destination.anchor)
+      : Preview.createDocumentPreview(doc);
+    if (preview && !preview.locked) {
+      showPreview(preview, link);
+    }
+  }
+
   /** The name the payload gives `id`, or the id itself when it does not. */
   function titleOf(id) {
     if (documents && typeof documents.title === "function") {
@@ -1303,6 +1659,12 @@ export function createPreviewView(options) {
       panel.removeAttribute(ERROR_ATTRIBUTE);
     }
 
+    if (role === "locked") {
+      panel.setAttribute(LOCKED_ATTRIBUTE, "true");
+    } else {
+      panel.removeAttribute(LOCKED_ATTRIBUTE);
+    }
+
     var label = PREVIEW_LABEL;
     if (role === "missing") {
       label = MISSING_LABEL;
@@ -1310,6 +1672,8 @@ export function createPreviewView(options) {
       label = LOADING_LABEL;
     } else if (role === "error") {
       label = FAILED_LABEL;
+    } else if (role === "locked") {
+      label = LOCKED_LABEL;
     }
     panel.setAttribute("aria-label", label);
   }
@@ -1466,6 +1830,10 @@ export function createPreviewView(options) {
     path.textContent = "";
     noticeChapter.textContent = "";
     noticeDoc.textContent = "";
+    // The locked state's form is a closed panel's business too: a password
+    // half-typed belongs to the showing it was typed for, and no field of
+    // this one survives into the next.
+    resetUnlockForm();
     // The size a resize gave the panel belongs to that showing, as the place
     // a drag gave it does: the next hover opens at the stylesheet's size.
     panel.style.width = "";
@@ -1777,6 +2145,13 @@ export function createPreviewView(options) {
     noticeChapter = null;
     loading = null;
     error = null;
+    locked = null;
+    unlockForm = null;
+    unlockInput = null;
+    unlockSubmit = null;
+    unlockError = null;
+    unlocking = false;
+    quietUnlocks.clear();
     pinButton = null;
     closeButton = null;
   }

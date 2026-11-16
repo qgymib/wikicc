@@ -21,6 +21,7 @@
 
 use std::path::Path;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use wikicc::scan::scan;
 use wikicc::site::{SiteBuild, build_site};
 use wikicc::{DEFAULT_FAVICON, DEFAULT_FAVICON_NAME, asset_hash};
@@ -280,4 +281,131 @@ fn the_page_carries_the_preview_machinery_the_reader_needs() {
     ] {
         assert!(page.contains(marker), "the page is missing {marker}");
     }
+}
+
+/* ---------- sealed references: the hover preview's locked state ---------- */
+
+/// The password the sealed scenario is built under.
+const SEALED_PASSWORD: &str = "global secret";
+
+/// The same scenario with the target document sealed, built and sealed the
+/// way the pipeline does: the reference is resolved against the outline the
+/// build had before the seal, then the seal empties the target's body.
+fn sealed_reported_site() -> (tempfile::TempDir, SiteBuild) {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    write(
+        dir.path(),
+        SOURCE_ID,
+        "# 书架\n\n\
+         | 书名 | 备注 |\n\
+         | --- | --- |\n\
+         | 旅行清单 | 还没读完 |\n\n\
+         [测试](<./笔记/旅行清单.md#1.4 配色与字体>)\n",
+    );
+    write(
+        dir.path(),
+        TARGET_ID,
+        &format!(
+            "---\nencrypt: true\n---\n\n\
+             # 旅行清单\n\n\
+             ## 1. 出行准备\n\n\
+             {PARENT_BODY}\n\n\
+             ### {AUTHORED_CHAPTER}\n\n\
+             {CHAPTER_BODY}\n\n\
+             #### 1.4.1 字体大小\n\n\
+             {NESTED_BODY}\n"
+        ),
+    );
+
+    let report = scan(dir.path(), &dir.path().join("dist")).expect("scan");
+    let mut build = build_site(SITE_TITLE, dir.path(), &report.docs);
+    build.register_favicon(DEFAULT_FAVICON_NAME, DEFAULT_FAVICON);
+    wikicc::encrypt::seal_bundle(&mut build, Some(SEALED_PASSWORD)).expect("seals");
+
+    (dir, build)
+}
+
+#[test]
+fn a_reference_to_a_sealed_chapter_is_not_marked_broken() {
+    let (_dir, build) = sealed_reported_site();
+    let source = build.bundle.doc(SOURCE_ID).expect("the source is compiled");
+
+    assert!(
+        !source.html.contains("data-wikicc-missing-anchor"),
+        "the seal cannot break a reference the build resolved: {}",
+        source.html
+    );
+    assert!(
+        !source.html.contains("doc-link-missing"),
+        "no broken-reference class either: {}",
+        source.html
+    );
+    assert!(
+        build.diagnostics.is_empty(),
+        "the sealed site is clean: {:?}",
+        build.diagnostics
+    );
+}
+
+#[test]
+fn a_reference_to_a_sealed_chapter_still_routes_to_the_anchor_its_document_emits() {
+    let (_dir, build) = sealed_reported_site();
+    let reference = block_reference(&build);
+    let href = href_of(&reference);
+
+    let body = href.strip_prefix("#/doc/").expect("a document route");
+    let mut parts = body.split('#');
+    let id = wikicc::markdown::links::percent_decode(parts.next().expect("a document id"));
+    let anchor = wikicc::markdown::links::percent_decode(parts.next().expect("a chapter anchor"));
+
+    assert_eq!(
+        id, TARGET_ID,
+        "the sealed reference addresses the sealed document"
+    );
+    assert_eq!(
+        anchor, EMITTED_ANCHOR,
+        "the route keeps the anchor the reader's hover needs: {reference}"
+    );
+}
+
+#[test]
+fn the_sealed_target_opens_to_the_block_the_preview_reads() {
+    let (_dir, build) = sealed_reported_site();
+    let target = build.bundle.doc(TARGET_ID).expect("the target is compiled");
+
+    assert!(
+        target.html.is_empty() && target.toc.is_empty() && target.blocks.is_empty(),
+        "the seal empties the body the payload must not carry"
+    );
+
+    let blob = target.enc.as_ref().expect("the target is sealed");
+    let plain = wikicc::crypto::open(
+        wikicc::crypto::SealedRef {
+            salt: &BASE64.decode(&blob.salt).expect("the salt decodes"),
+            nonce: &BASE64.decode(&blob.nonce).expect("the nonce decodes"),
+            ct: &BASE64.decode(&blob.ct).expect("the ct decodes"),
+        },
+        SEALED_PASSWORD,
+        TARGET_ID.as_bytes(),
+    )
+    .expect("the documented password opens the target");
+
+    let plain = String::from_utf8(plain).expect("the plaintext is utf-8");
+    assert!(
+        plain.contains(&format!("\"id\":\"{EMITTED_ANCHOR}\"")),
+        "the opened body carries the chapter block the preview builds from: {plain}"
+    );
+    assert!(
+        plain.contains(CHAPTER_BODY),
+        "the opened body carries the chapter's own text: {plain}"
+    );
+    // The whole document is what the password opens — the seal takes the body
+    // as one piece, so no chapter structure leaks ahead of it — and the
+    // parent chapter travels with it. The chapter a preview shows is cut on
+    // the reader's side, from the block's own subtree.
+    assert!(
+        plain.contains(PARENT_BODY),
+        "the seal is the document's, not a chapter's: {plain}"
+    );
 }

@@ -21,6 +21,15 @@
  * first heading to its end. The reader recombines what the build wrote;
  * nothing new travels in the payload.
  *
+ * A document the build sealed answers a different shape. `enc` on the model
+ * says the body is the ciphertext a password opens, so there is nothing to
+ * preview yet — but the reference itself is still public, and the title and
+ * the path are what the payload still says about it. The locked shape carries
+ * exactly that under a `locked` mark, which is what the panel turns into its
+ * password form; once a password opens the document, the store swaps the full
+ * model in place of the sealed one and these same functions answer the normal
+ * shapes, indistinguishable from a document that was never sealed.
+ *
  * Pure: no DOM, so `node --test` covers the selection rules directly.
  */
 
@@ -194,15 +203,38 @@ export function previewTitle(doc, anchor) {
 }
 
 /**
+ * What a reference shows while its document is still sealed.
+ *
+ * A sealed document has no markup to preview — its body, outline and blocks
+ * are the ciphertext a password opens — but the reference is not lost: the
+ * title and the path are the one thing the build left readable, and the
+ * `locked` mark is what turns the panel into the password form instead of a
+ * silence or a "missing" notice.
+ */
+function lockedPreview(doc) {
+  return {
+    locked: true,
+    title: doc.title || doc.id || doc.path || "",
+    path: doc.id || doc.path || "",
+  };
+}
+
+/**
  * Everything the popover needs about one reference, or `null` when there is
  * nothing to show.
  *
  * `doc` may be missing when the reference points at a document the payload does
- * not carry, which is how a stale artifact degrades instead of throwing.
+ * not carry, which is how a stale artifact degrades instead of throwing. A
+ * document that is still sealed answers the locked shape: there is no chapter
+ * to show, and the panel asks for the password instead.
  */
 export function createPreview(doc, anchor) {
   if (!doc || !anchor) {
     return null;
+  }
+
+  if (doc.enc) {
+    return lockedPreview(doc);
   }
 
   var html = buildPreviewHtml(doc, anchor);
@@ -228,9 +260,15 @@ export function createPreview(doc, anchor) {
  * the file stem), falling back to the path, because a document without a
  * title still has a name. A document without a body — a stale artifact, or a
  * payload that predates the field — answers `null`, which the reader reads as
- * silence rather than as a failure.
+ * silence rather than as a failure. A sealed document answers the locked
+ * shape before the body check runs: its body is empty by design, and the
+ * panel owes the reader the password form, not a silence.
  */
 export function createDocumentPreview(doc) {
+  if (doc && doc.enc) {
+    return lockedPreview(doc);
+  }
+
   if (!doc || typeof doc.html !== "string" || !doc.html) {
     return null;
   }

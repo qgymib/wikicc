@@ -23,6 +23,10 @@ import {
   HIT_ACTIVE_CLASS,
   HIT_CLASS,
   LOCAL_MODE,
+  LOCKED_CLASS,
+  LOCKED_LABEL,
+  LOCKED_NOTICE,
+  LOCKED_TITLE,
   MODE_CLASS,
   MODE_GLOBAL_LABEL,
   MODE_LOCAL_LABEL,
@@ -31,6 +35,7 @@ import {
   PREVIEW_IDLE_LABEL,
   RESULT_CLASS,
   RESULTS_IDLE_LABEL,
+  SEARCH_LOCKED_CLASS,
   createSearchView,
   isSearchShortcut,
 } from "../../src/web/js/search-view.js";
@@ -595,6 +600,18 @@ function entry(id, title, hit, ordinal) {
     row.hit = ordinal;
   }
   return row;
+}
+
+/** One entry for a sealed document: a title-only match the controller marked. */
+function lockedEntry(id, title) {
+  return {
+    id: id,
+    title: title,
+    path: id,
+    snippet: null,
+    hit: -1,
+    locked: true,
+  };
 }
 
 /** The preview area, which is the panel's last child. */
@@ -2289,6 +2306,87 @@ test("a document matched on its title alone has no passage to preview", () => {
       PREVIEW_IDLE_LABEL,
     );
     assert.equal(page.container.findAll("mark").length, 0);
+  });
+});
+
+test("a sealed document's row names the lock where the passage would read", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [lockedEntry("a.md", "Alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var markers = page.container.findAll(LOCKED_CLASS);
+    assert.equal(markers.length, 1, "the row carries one lock marker");
+    assert.equal(markers[0].textContent, LOCKED_LABEL);
+    assert.equal(
+      markers[0].getAttribute("title"),
+      LOCKED_TITLE,
+      "hover says what the lock means",
+    );
+    assert.equal(
+      page.container.findAll("search-result-context")[0].children[0],
+      markers[0],
+      "the marker sits in the cell the passage would fill",
+    );
+    assert.equal(
+      page.container.findAllByTag("mark").length,
+      0,
+      "a sealed body holds nothing to highlight",
+    );
+  });
+});
+
+test("the preview of a sealed document says the lock is the reason", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      documents: { "a.md": documentModel("a.md", "Alpha", "") },
+      answer() {
+        return [lockedEntry("a.md", "Alpha")];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    var notices = page.container.findAll(SEARCH_LOCKED_CLASS);
+    assert.equal(notices.length, 1, "the preview speaks instead of idling");
+    assert.equal(textOf(notices[0]), LOCKED_NOTICE);
+    assert.equal(
+      documentOf(page),
+      null,
+      "no body is drawn for a document the page cannot show",
+    );
+    assert.equal(page.container.findAll(EMPTY_CLASS).length, 0);
+  });
+});
+
+test("an unlocked title-only match still leaves its passage cell empty", () => {
+  withPage(function (page) {
+    var built = build({
+      container: page.container,
+      answer() {
+        return [entry("a.md", "Alpha", null)];
+      },
+    });
+    built.view.open();
+    type(built.view, page, "alpha");
+
+    assert.equal(
+      page.container.findAll(LOCKED_CLASS).length,
+      0,
+      "a public document's rows carry no lock marker",
+    );
+    assert.equal(page.container.findAll(SEARCH_LOCKED_CLASS).length, 0);
+    assert.equal(
+      page.container.findAll(EMPTY_CLASS)[0].textContent,
+      PREVIEW_IDLE_LABEL,
+      "the preview idles as it always did",
+    );
   });
 });
 

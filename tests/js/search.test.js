@@ -62,6 +62,83 @@ test("the heading text of a corpus record is the pre-flattened field", () => {
   assert.equal(search.headingsOf({}), "");
 });
 
+test("every document the index sees maps through one record shape", () => {
+  assert.deepEqual(
+    search.recordOf({
+      id: "a.md",
+      title: "Intro",
+      toc: [{ text: "One", children: [{ text: "Two", children: [] }] }],
+      text: "body",
+    }),
+    { id: "a.md", title: "Intro", headings: "One Two", text: "body" },
+    "an embedded document flattens its outline",
+  );
+  assert.deepEqual(
+    search.recordOf({
+      id: "a.md",
+      title: "Intro",
+      headings: "One Two",
+      text: "body",
+    }),
+    { id: "a.md", title: "Intro", headings: "One Two", text: "body" },
+    "a corpus record keeps its pre-flattened headings",
+  );
+  assert.deepEqual(
+    search.recordOf({ id: "a.md" }),
+    { id: "a.md", title: "", headings: "", text: "" },
+    "a sealed document's record carries its title alone",
+  );
+});
+
+test("a corpus record's pre-flattened headings are indexed", () => {
+  const corpus = search.createSearch([
+    {
+      id: "a.md",
+      title: "A",
+      headings: "Getting started",
+      text: "plain words",
+    },
+  ]);
+
+  assert.deepEqual(search.search(corpus, "getting started"), ["a.md"]);
+});
+
+test("a decrypted record replaces the sealed one without duplicating it", () => {
+  const sealed = search.createSearch([
+    { id: "a.md", title: "Intro", headings: "", text: "" },
+  ]);
+
+  assert.deepEqual(
+    search.search(sealed, "bodyword"),
+    [],
+    "the sealed record answers a body word with nothing",
+  );
+
+  const opened = {
+    id: "a.md",
+    title: "Intro",
+    toc: [{ text: "Deployment", children: [] }],
+    text: "the bodyword lives here",
+  };
+
+  sealed.replace(search.recordOf(opened));
+
+  assert.deepEqual(search.search(sealed, "bodyword"), ["a.md"]);
+  assert.deepEqual(
+    search.search(sealed, "deployment"),
+    ["a.md"],
+    "the outline the password opened is searchable too",
+  );
+
+  sealed.replace(search.recordOf(opened));
+
+  assert.deepEqual(
+    search.search(sealed, "bodyword"),
+    ["a.md"],
+    "replacing the same record twice keeps one entry",
+  );
+});
+
 test("an empty query means no filter", () => {
   assert.equal(search.search(index, ""), null);
   assert.equal(search.search(index, "   "), null);

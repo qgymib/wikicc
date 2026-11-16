@@ -112,6 +112,22 @@ export var EMPTY_CLASS = "search-empty";
 /** Class of the whole-document body inside the preview. */
 export var DOCUMENT_CLASS = "search-document";
 
+/** Class of the marker naming a result whose document is sealed. */
+export var LOCKED_CLASS = "search-result-locked";
+
+/** Text of that marker. */
+export var LOCKED_LABEL = "Locked";
+
+/** Hover description the marker carries. */
+export var LOCKED_TITLE = "This document is encrypted";
+
+/** Class of the preview's notice for a result whose document is sealed. */
+export var SEARCH_LOCKED_CLASS = "search-locked";
+
+/** Text of that notice. */
+export var LOCKED_NOTICE =
+  "This document is encrypted. Open it to unlock its contents.";
+
 /** Attribute marking the panel as open, which is what the stylesheet animates. */
 export var OPEN_ATTRIBUTE = "data-open";
 
@@ -794,6 +810,11 @@ export function createSearchView(options) {
       context.appendChild(
         document.createTextNode(cut.after + (cut.trimmedEnd ? ELLIPSIS : "")),
       );
+    } else if (entry.locked) {
+      // A sealed document is a title-only match by construction — its body
+      // is the ciphertext — so the cell the passage would fill names the
+      // lock instead of sitting empty.
+      context.appendChild(lockedMarker());
     }
     row.appendChild(context);
 
@@ -839,6 +860,15 @@ export function createSearchView(options) {
     var mark = document.createElement("mark");
     mark.textContent = String(text === null || text === undefined ? "" : text);
     return mark;
+  }
+
+  /** The marker that names a sealed document in the row its title was found by. */
+  function lockedMarker() {
+    var marker = document.createElement("span");
+    marker.className = LOCKED_CLASS;
+    marker.setAttribute("title", LOCKED_TITLE);
+    marker.textContent = LOCKED_LABEL;
+    return marker;
   }
 
   /**
@@ -894,6 +924,11 @@ export function createSearchView(options) {
 
     preview.textContent = "";
     preview.scrollTop = 0;
+
+    if (entry.locked) {
+      renderLockedNotice();
+      return;
+    }
 
     var doc = documentFor(entry.id);
     if (doc && typeof doc.then === "function") {
@@ -958,6 +993,22 @@ export function createSearchView(options) {
     idle.className = EMPTY_CLASS;
     idle.textContent = PREVIEW_IDLE_LABEL;
     preview.appendChild(idle);
+  }
+
+  /**
+   * Say why the preview of a sealed document holds nothing.
+   *
+   * A sealed document's body is the ciphertext: there is no markup to show,
+   * and a blank half would read as a broken panel rather than a lock. The
+   * notice names the lock and points at the one action a row carries —
+   * opening the document, which lands on the lock page where the password
+   * goes.
+   */
+  function renderLockedNotice() {
+    var notice = document.createElement("p");
+    notice.className = SEARCH_LOCKED_CLASS;
+    notice.textContent = LOCKED_NOTICE;
+    preview.appendChild(notice);
   }
 
   /** The fallback: the passage `search.js` cut for the list. */

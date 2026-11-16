@@ -33,6 +33,8 @@ import {
   LOADING_ATTRIBUTE,
   LOADING_CLASS,
   LOADING_LABEL,
+  LOCKED_ATTRIBUTE,
+  LOCKED_LABEL,
   MISSING_ATTRIBUTE,
   MISSING_LABEL,
   MIN_HEIGHT_PX,
@@ -45,6 +47,12 @@ import {
   RESIZE_ATTRIBUTE,
   RESIZE_CLASS,
   RESIZE_DIRECTION_ATTRIBUTE,
+  UNLOCK_BUSY_TEXT,
+  UNLOCK_ERROR_CLASS,
+  UNLOCK_FORM_CLASS,
+  UNLOCK_INPUT_CLASS,
+  UNLOCK_SUBMIT_CLASS,
+  UNLOCK_SUBMIT_TEXT,
   UNPIN_LABEL,
   createPreviewView,
 } from "../../src/web/js/preview-view.js";
@@ -322,8 +330,19 @@ function withFakeWindow(run) {
     }
   };
 
+  const restore = function () {
+    globalThis.setTimeout = previous.setTimeout;
+    globalThis.clearTimeout = previous.clearTimeout;
+    globalThis.innerWidth = previous.innerWidth;
+    globalThis.innerHeight = previous.innerHeight;
+    globalThis.addEventListener = previous.addEventListener;
+    globalThis.removeEventListener = previous.removeEventListener;
+    delete globalThis.__previewListeners;
+  };
+
+  let outcome;
   try {
-    run({
+    outcome = run({
       /** Delays of the timers still pending, in scheduling order. */
       delays() {
         return Array.from(timers.values()).map((timer) => timer.delay);
@@ -341,15 +360,19 @@ function withFakeWindow(run) {
       },
       fire,
     });
-  } finally {
-    globalThis.setTimeout = previous.setTimeout;
-    globalThis.clearTimeout = previous.clearTimeout;
-    globalThis.innerWidth = previous.innerWidth;
-    globalThis.innerHeight = previous.innerHeight;
-    globalThis.addEventListener = previous.addEventListener;
-    globalThis.removeEventListener = previous.removeEventListener;
-    delete globalThis.__previewListeners;
+  } catch (error) {
+    restore();
+    throw error;
   }
+
+  // A body that awaits promise answers keeps the fakes until it settles: the
+  // unlock attempts resolve in microtasks, not in the timers these tests own.
+  if (outcome && typeof outcome.then === "function") {
+    return outcome.finally(restore);
+  }
+
+  restore();
+  return outcome;
 }
 
 /** A link as the build writes it for a chapter that exists. */
@@ -534,27 +557,37 @@ function textOf(root) {
 
 /** Run `body` with a view whose content is `content` and record every message. */
 function setup(body, options) {
-  withFakeWindow(function (window) {
+  return withFakeWindow(function (window) {
     const doc = fakeDocument();
     const previousDocument = globalThis.document;
     globalThis.document = doc;
 
-    try {
-      const content = fakeElement("main");
-      const messages = [];
-      const navigations = [];
-      const view = createPreviewView({
-        content,
-        documents: (options && options.documents) || asStore(payload()),
-        onNavigate(id, anchor) {
-          navigations.push({ id, anchor });
-        },
-        onMissingChapter(message) {
-          messages.push(message);
-        },
-      });
+    const content = fakeElement("main");
+    const messages = [];
+    const navigations = [];
+    const view = createPreviewView({
+      content,
+      documents: (options && options.documents) || asStore(payload()),
+      onNavigate(id, anchor) {
+        navigations.push({ id, anchor });
+      },
+      onMissingChapter(message) {
+        messages.push(message);
+      },
+      // The unlock wiring is the controller's; tests that need it pass their
+      // own through `options`, the way they pass a store.
+      onUnlock: options && options.onUnlock,
+      passwordCandidates: options && options.passwordCandidates,
+    });
 
-      body({
+    const finish = function () {
+      view.dispose();
+      globalThis.document = previousDocument;
+    };
+
+    let result;
+    try {
+      result = body({
         view,
         content,
         doc,
@@ -563,10 +596,22 @@ function setup(body, options) {
         navigations,
         fire: window.fire,
       });
-      view.dispose();
-    } finally {
-      globalThis.document = previousDocument;
+    } catch (error) {
+      finish();
+      throw error;
     }
+
+    // An awaited body keeps the fakes and the view until it settles, the way
+    // the window fakes do for the promise answers the unlock attempts are.
+    if (result && typeof result.then === "function") {
+      return result.then(finish, function (error) {
+        finish();
+        throw error;
+      });
+    }
+
+    finish();
+    return result;
   });
 }
 
@@ -1379,6 +1424,683 @@ test("a broken reference still reports its chapter and keeps the route in the re
     ]);
     assert.deepEqual(navigations, [{ id: "guide/intro.md", anchor: null }]);
   });
+});
+
+/* ---------- sealed documents: the locked state and its password form ---------- */
+
+/** A document as the build writes it when `encrypt` sealed it. */
+function sealedDoc() {
+  return {
+    id: "guide/intro.md",
+    path: "guide/intro.md",
+    title: "Guide Introduction",
+    html: "",
+    toc: [],
+    blocks: [],
+    text: "",
+    enc: {
+      v: 1,
+      kdf: "pbkdf2-sha256",
+      iters: 600000,
+      salt: "AAECAwQFBgcICQ==",
+      nonce: "AAAAAAAAAAAA",
+      ct: "AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    },
+  };
+}
+
+/** The document the password opens: the shape the store swaps in. */
+function unlockedDoc() {
+  return {
+    id: "guide/intro.md",
+    path: "guide/intro.md",
+    title: "Guide Introduction",
+    html: "<h2>Getting Started</h2><p>intro body</p>",
+    toc: [
+      {
+        id: "getting-started",
+        text: "Getting Started",
+        level: 2,
+        children: [],
+      },
+    ],
+    blocks: [
+      {
+        id: "getting-started",
+        level: 2,
+        parent: null,
+        html: "<p>intro body</p>",
+        subtree: [0],
+      },
+    ],
+    text: "getting started intro body",
+  };
+}
+
+/** A public document beside the sealed one, for a pointer that moves on. */
+function openDoc() {
+  return {
+    id: "guide/open.md",
+    path: "guide/open.md",
+    title: "Open",
+    html: "<h2>Open Chapter</h2><p>open body</p>",
+    toc: [{ id: "open-chapter", text: "Open Chapter", level: 2, children: [] }],
+    blocks: [
+      {
+        id: "open-chapter",
+        level: 2,
+        parent: null,
+        html: "<p>open body</p>",
+        subtree: [0],
+      },
+    ],
+    text: "open chapter open body",
+  };
+}
+
+/** A store over `byId` that knows which documents are sealed, as the reader's does. */
+function asLockingStore(byId) {
+  return {
+    peek(id) {
+      return byId.get(id) || null;
+    },
+    get(id) {
+      return Promise.resolve(byId.get(id) || null);
+    },
+    title(id) {
+      const doc = byId.get(id);
+      return doc && doc.title ? doc.title : null;
+    },
+    isEncrypted(id) {
+      const doc = byId.get(id);
+      return !!doc && !!doc.enc;
+    },
+    isLazy() {
+      return false;
+    },
+  };
+}
+
+/** Let every microtask the unlock answers queued run to completion. */
+async function settle() {
+  for (let i = 0; i < 10; i += 1) {
+    await null;
+  }
+}
+
+test("a reference into a sealed document opens the locked panel, not a preview", () => {
+  const store = asLockingStore(new Map([["guide/intro.md", sealedDoc()]]));
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      assert.equal(view.isOpen(), true, "the panel opens for a sealed target");
+      const panel = panelOf(doc);
+      assert.equal(panel.getAttribute(LOCKED_ATTRIBUTE), "true");
+      assert.equal(
+        panel.getAttribute(MISSING_ATTRIBUTE),
+        null,
+        "a sealed chapter is not a missing one",
+      );
+      assert.equal(panel.getAttribute(LOADING_ATTRIBUTE), null);
+      assert.equal(panel.getAttribute(ERROR_ATTRIBUTE), null);
+      assert.equal(panel.getAttribute("aria-label"), LOCKED_LABEL);
+      assert.match(textOf(panel), /Chapter locked/);
+      assert.match(
+        textOf(panel),
+        /Guide Introduction/,
+        "the head names the document the payload still says in public",
+      );
+      assert.match(textOf(panel), /guide\/intro\.md/);
+
+      assert.equal(byClass(panel, UNLOCK_FORM_CLASS).length, 1);
+      const input = byClass(panel, UNLOCK_INPUT_CLASS)[0];
+      assert.equal(input.getAttribute("type"), "password");
+      assert.equal(
+        byClass(panel, UNLOCK_SUBMIT_CLASS)[0].textContent,
+        UNLOCK_SUBMIT_TEXT,
+      );
+      assert.equal(
+        byClass(panel, UNLOCK_ERROR_CLASS)[0].hidden,
+        true,
+        "no error before any try",
+      );
+      assert.equal(
+        byClass(panel, BODY_CLASS)[0].innerHTML,
+        "",
+        "no plaintext, whatever the form holds",
+      );
+    },
+    { documents: store },
+  );
+});
+
+test("the locked panel opens without fetching a document the manifest already marked", () => {
+  const calls = [];
+  const store = {
+    peek() {
+      return null;
+    },
+    get(id) {
+      calls.push(id);
+      return Promise.resolve(null);
+    },
+    title(id) {
+      return id === "guide/intro.md" ? "Guide Introduction" : null;
+    },
+    isEncrypted(id) {
+      return id === "guide/intro.md";
+    },
+    isLazy() {
+      return true;
+    },
+  };
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      const panel = panelOf(doc);
+      assert.equal(panel.getAttribute(LOCKED_ATTRIBUTE), "true");
+      assert.deepEqual(
+        calls,
+        [],
+        "the manifest's mark is enough: no chunk travels before a password",
+      );
+      assert.match(textOf(panel), /Guide Introduction/);
+    },
+    { documents: store },
+  );
+});
+
+test("a password the session holds opens the chapter without asking", async () => {
+  const byId = new Map([["guide/intro.md", sealedDoc()]]);
+  const store = asLockingStore(byId);
+  const tries = [];
+
+  await setup(
+    async function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      assert.equal(
+        panelOf(doc).getAttribute(LOCKED_ATTRIBUTE),
+        "true",
+        "the form is up first, whatever the session holds",
+      );
+
+      await settle();
+
+      const panel = panelOf(doc);
+      assert.equal(
+        panel.getAttribute(LOCKED_ATTRIBUTE),
+        null,
+        "the quiet answer replaced the locked state",
+      );
+      assert.equal(panel.getAttribute("aria-label"), PREVIEW_LABEL);
+      assert.match(
+        byClass(panel, BODY_CLASS)[0].innerHTML,
+        /intro body/,
+        "the chapter the password opened is the ordinary preview",
+      );
+      assert.deepEqual(
+        tries,
+        ["密码 secret"],
+        "the attempt went through the one door",
+      );
+    },
+    {
+      documents: store,
+      passwordCandidates(id) {
+        return id === "guide/intro.md" ? ["密码 secret"] : [];
+      },
+      onUnlock(id, password) {
+        tries.push(password);
+        byId.set(id, unlockedDoc());
+        return Promise.resolve(true);
+      },
+    },
+  );
+});
+
+test("quiet passwords that all fail leave the locked panel without an error", async () => {
+  const store = asLockingStore(new Map([["guide/intro.md", sealedDoc()]]));
+  const tries = [];
+
+  await setup(
+    async function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      await settle();
+
+      const panel = panelOf(doc);
+      assert.equal(
+        panel.getAttribute(LOCKED_ATTRIBUTE),
+        "true",
+        "still asking, quietly",
+      );
+      assert.equal(
+        byClass(panel, UNLOCK_ERROR_CLASS)[0].hidden,
+        true,
+        "a quiet failure is not an error the reader caused",
+      );
+      assert.deepEqual(tries, ["first", "second"], "every candidate, in order");
+    },
+    {
+      documents: store,
+      passwordCandidates() {
+        return ["first", "second"];
+      },
+      onUnlock(_id, password) {
+        tries.push(password);
+        return Promise.resolve(false);
+      },
+    },
+  );
+});
+
+test("a quiet answer for a hover the reader left behind opens nothing", async () => {
+  const byId = new Map([
+    ["guide/intro.md", sealedDoc()],
+    ["guide/open.md", openDoc()],
+  ]);
+  const store = asLockingStore(byId);
+  let release = null;
+
+  await setup(
+    async function ({ view, content, clock, doc }) {
+      const sealed = link("#/doc/guide/intro.md#getting-started");
+      const open = link("#/doc/guide/open.md#open-chapter");
+      content.appendChild(sealed);
+      content.appendChild(open);
+      view.tag(content);
+
+      content.fire("pointerover", { target: sealed, relatedTarget: null });
+      clock.runAll();
+      assert.equal(panelOf(doc).getAttribute(LOCKED_ATTRIBUTE), "true");
+
+      content.fire("pointerout", { target: sealed, relatedTarget: null });
+      content.fire("pointerover", { target: open, relatedTarget: null });
+      clock.runAll();
+      assert.match(
+        byClass(panelOf(doc), BODY_CLASS)[0].innerHTML,
+        /open body/,
+        "the pointer moved on to a sound reference",
+      );
+
+      // Let the quiet attempt reach its first try, then hold the answer
+      // until the pointer has chosen the sound reference for good.
+      await settle();
+      release();
+      await settle();
+
+      assert.equal(
+        byClass(panelOf(doc), BODY_CLASS)[0].innerHTML.indexOf("open body") !==
+          -1,
+        true,
+        "the panel shows what the pointer chose",
+      );
+      assert.equal(
+        byClass(panelOf(doc), BODY_CLASS)[0].innerHTML.indexOf("intro body"),
+        -1,
+        "the abandoned answer opens nothing",
+      );
+    },
+    {
+      documents: store,
+      passwordCandidates() {
+        return ["密码 secret"];
+      },
+      onUnlock(id) {
+        return new Promise(function (resolve) {
+          release = function () {
+            byId.set(id, unlockedDoc());
+            resolve(true);
+          };
+        });
+      },
+    },
+  );
+});
+
+test("submitting the form unlocks the document in place", async () => {
+  const byId = new Map([["guide/intro.md", sealedDoc()]]);
+  const store = asLockingStore(byId);
+  const submits = [];
+
+  await setup(
+    async function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      const panel = panelOf(doc);
+      const form = byClass(panel, UNLOCK_FORM_CLASS)[0];
+      const input = byClass(panel, UNLOCK_INPUT_CLASS)[0];
+      const button = byClass(panel, UNLOCK_SUBMIT_CLASS)[0];
+
+      input.value = "密码 secret";
+      form.fire("submit", { preventDefault() {} });
+
+      assert.equal(
+        input.disabled,
+        true,
+        "the form is busy while the attempt runs",
+      );
+      assert.equal(
+        button.textContent,
+        UNLOCK_BUSY_TEXT,
+        "the button says what is happening",
+      );
+
+      await settle();
+
+      const shown = panelOf(doc);
+      assert.equal(
+        shown.getAttribute(LOCKED_ATTRIBUTE),
+        null,
+        "the chapter took the panel",
+      );
+      assert.equal(shown.getAttribute("aria-label"), PREVIEW_LABEL);
+      assert.match(
+        byClass(shown, BODY_CLASS)[0].innerHTML,
+        /intro body/,
+        "the chapter the password opened is the ordinary preview",
+      );
+      assert.deepEqual(submits, ["密码 secret"]);
+      assert.equal(
+        input.value,
+        "",
+        "the password is cleared once it has opened the document",
+      );
+      assert.equal(
+        input.disabled,
+        false,
+        "the busy state went with the attempt",
+      );
+    },
+    {
+      documents: store,
+      onUnlock(id, password) {
+        submits.push(password);
+        byId.set(id, unlockedDoc());
+        return Promise.resolve(true);
+      },
+    },
+  );
+});
+
+test("a password that does not open the document reports itself and allows a retry", async () => {
+  const byId = new Map([["guide/intro.md", sealedDoc()]]);
+  const store = asLockingStore(byId);
+  const attempts = [];
+
+  await setup(
+    async function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      const panel = panelOf(doc);
+      const form = byClass(panel, UNLOCK_FORM_CLASS)[0];
+      const input = byClass(panel, UNLOCK_INPUT_CLASS)[0];
+      const error = byClass(panel, UNLOCK_ERROR_CLASS)[0];
+
+      input.value = "not the password";
+      form.fire("submit", { preventDefault() {} });
+      await settle();
+
+      assert.equal(
+        panel.getAttribute(LOCKED_ATTRIBUTE),
+        "true",
+        "the panel stays with the form",
+      );
+      assert.equal(
+        error.hidden,
+        false,
+        "the failure is named where the typing was",
+      );
+      assert.match(error.textContent, /did not unlock/);
+      assert.equal(input.disabled, false, "the field is back for a retype");
+      assert.equal(
+        input.value,
+        "not the password",
+        "what the reader typed is kept for correcting",
+      );
+
+      input.fire("input", {});
+      assert.equal(
+        error.hidden,
+        true,
+        "typing clears the failed attempt's answer",
+      );
+
+      input.value = "密码 secret";
+      form.fire("submit", { preventDefault() {} });
+      await settle();
+
+      assert.equal(
+        panelOf(doc).getAttribute(LOCKED_ATTRIBUTE),
+        null,
+        "the second try opened it",
+      );
+      assert.match(
+        byClass(panelOf(doc), BODY_CLASS)[0].innerHTML,
+        /intro body/,
+      );
+      assert.deepEqual(attempts, ["not the password", "密码 secret"]);
+    },
+    {
+      documents: store,
+      onUnlock(id, password) {
+        attempts.push(password);
+        if (password === "密码 secret") {
+          byId.set(id, unlockedDoc());
+          return Promise.resolve(true);
+        }
+        return Promise.resolve(false);
+      },
+    },
+  );
+});
+
+test("a no that arrives after the document opened elsewhere is no failure", async () => {
+  const byId = new Map([["guide/intro.md", sealedDoc()]]);
+  const store = asLockingStore(byId);
+
+  await setup(
+    async function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      const panel = panelOf(doc);
+      const form = byClass(panel, UNLOCK_FORM_CLASS)[0];
+      const input = byClass(panel, UNLOCK_INPUT_CLASS)[0];
+
+      input.value = "密码 secret";
+      form.fire("submit", { preventDefault() {} });
+      await settle();
+
+      assert.equal(
+        panel.getAttribute(LOCKED_ATTRIBUTE),
+        null,
+        "the document is open, whatever the answer said",
+      );
+      assert.match(byClass(panel, BODY_CLASS)[0].innerHTML, /intro body/);
+      assert.equal(
+        byClass(panel, UNLOCK_ERROR_CLASS)[0].hidden,
+        true,
+        "no error claims the password failed",
+      );
+    },
+    {
+      documents: store,
+      // The quiet attempt won the race while the reader was still typing:
+      // the document is the full model now, and the store's decrypt — the
+      // door this answer came from — replies "no" to a document that is no
+      // longer sealed.
+      onUnlock(id) {
+        byId.set(id, unlockedDoc());
+        return Promise.resolve(false);
+      },
+    },
+  );
+});
+
+test("an empty password asks for nothing", async () => {
+  const store = asLockingStore(new Map([["guide/intro.md", sealedDoc()]]));
+  const attempts = [];
+
+  await setup(
+    async function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      const panel = panelOf(doc);
+      const form = byClass(panel, UNLOCK_FORM_CLASS)[0];
+      const input = byClass(panel, UNLOCK_INPUT_CLASS)[0];
+
+      form.fire("submit", { preventDefault() {} });
+      await settle();
+
+      assert.deepEqual(attempts, [], "nothing to try, nothing tried");
+      assert.equal(panel.getAttribute(LOCKED_ATTRIBUTE), "true");
+      assert.equal(
+        byClass(panel, UNLOCK_ERROR_CLASS)[0].hidden,
+        true,
+        "an empty field is not a failure",
+      );
+      assert.equal(input.disabled, false);
+    },
+    {
+      documents: store,
+      onUnlock(_id, password) {
+        attempts.push(password);
+        return Promise.resolve(true);
+      },
+    },
+  );
+});
+
+test("closing the panel clears the locked state's form", async () => {
+  const store = asLockingStore(new Map([["guide/intro.md", sealedDoc()]]));
+
+  await setup(
+    async function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      const panel = panelOf(doc);
+      const form = byClass(panel, UNLOCK_FORM_CLASS)[0];
+      const input = byClass(panel, UNLOCK_INPUT_CLASS)[0];
+      const error = byClass(panel, UNLOCK_ERROR_CLASS)[0];
+
+      input.value = "half typed";
+      form.fire("submit", { preventDefault() {} });
+      await settle();
+      assert.equal(error.hidden, false, "the try failed, the line is up");
+
+      view.close();
+      assert.equal(view.isOpen(), false);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      assert.equal(view.isOpen(), true, "the next hover starts clean");
+      assert.equal(input.value, "", "no password survives the close");
+      assert.equal(error.hidden, true, "no failed answer survives the close");
+      assert.equal(input.disabled, false, "no busy state survives the close");
+    },
+    {
+      documents: store,
+      onUnlock() {
+        return Promise.resolve(false);
+      },
+    },
+  );
+});
+
+test("escape closes the locked panel like any other", () => {
+  const store = asLockingStore(new Map([["guide/intro.md", sealedDoc()]]));
+
+  setup(
+    function ({ view, content, clock, fire }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+      assert.equal(view.isOpen(), true);
+
+      fire("keydown", { key: "Escape" });
+      assert.equal(view.isOpen(), false, "the panel is closed on purpose");
+    },
+    { documents: store },
+  );
+});
+
+test("reaching for the password field claims the panel", () => {
+  const store = asLockingStore(new Map([["guide/intro.md", sealedDoc()]]));
+
+  setup(
+    function ({ view, content, clock, doc }) {
+      const anchor = link("#/doc/guide/intro.md#getting-started");
+      content.appendChild(anchor);
+      view.tag(content);
+
+      content.fire("pointerover", { target: anchor, relatedTarget: null });
+      clock.runAll();
+
+      const panel = panelOf(doc);
+      const input = byClass(panel, UNLOCK_INPUT_CLASS)[0];
+
+      assert.equal(view.isPinned(), false, "a hover is not a claim");
+      clickInside(panel, input);
+      assert.equal(
+        view.isPinned(),
+        true,
+        "typing into the panel is the reader holding it",
+      );
+    },
+    { documents: store },
+  );
 });
 
 test("the preview closes once the pointer leaves it", () => {

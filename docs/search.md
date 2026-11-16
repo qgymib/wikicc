@@ -80,6 +80,27 @@ The rules behind the table:
   of characters break the phrase the same way a space does: `gear.ratio` is
   the two-word query `gear ratio`.
 
+## Encrypted documents
+
+A document whose front matter asks for encryption is sealed in the artifact,
+and the search respects that seal:
+
+- **Before the unlock, only the title is searchable.** The title is public —
+  the lock page shows it — so a query that matches it produces a row marked
+  **Locked**, and the preview below the list explains that the document is
+  encrypted instead of showing a passage. Opening the row navigates to the
+  document, which arrives on its lock page, and entering the password there
+  renders the article. A word from the body finds nothing until the unlock.
+- **After the unlock, the document is ordinary.** The same query now reaches
+  the chapter headings and the body: rows carry their passages, the preview
+  marks the hits, and Enter lands on the passage as always. The unlocked
+  state lasts for the page session only — reloading the page relocks the
+  document, and search falls back to titles alone.
+
+The build keeps the body out of the corpus entirely: in the `pages` format
+the fetched `search.json` names a sealed document by its title alone, so no
+body text reaches the browser before an unlock.
+
 ## What the panel never does
 
 - It does not rank by position or count only: a hit in a title always leads,

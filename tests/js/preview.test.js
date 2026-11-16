@@ -308,3 +308,81 @@ test("a document without a body degrades to no preview", () => {
   assert.equal(createDocumentPreview({ id: "a.md", title: "A" }), null);
   assert.equal(createDocumentPreview(null), null);
 });
+
+/* ---------- sealed documents: a locked shape instead of contents ---------- */
+
+/** A document as the build writes it when `encrypt` sealed it. */
+function sealedDoc() {
+  return {
+    id: "guide/intro.md",
+    path: "guide/intro.md",
+    title: "Guide Introduction",
+    html: "",
+    toc: [],
+    blocks: [],
+    text: "",
+    enc: {
+      v: 1,
+      kdf: "pbkdf2-sha256",
+      iters: 600000,
+      salt: "AAECAwQFBgcICQ==",
+      nonce: "AAAAAAAAAAAA",
+      ct: "AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    },
+  };
+}
+
+test("a chapter reference to a sealed document answers the locked shape", () => {
+  assert.deepEqual(createPreview(sealedDoc(), "getting-started"), {
+    locked: true,
+    title: "Guide Introduction",
+    path: "guide/intro.md",
+  });
+});
+
+test("a document reference to a sealed document answers the locked shape too", () => {
+  assert.deepEqual(createDocumentPreview(sealedDoc()), {
+    locked: true,
+    title: "Guide Introduction",
+    path: "guide/intro.md",
+  });
+});
+
+test("the locked shape falls back through title, id and path", () => {
+  const sealed = sealedDoc();
+  delete sealed.title;
+
+  assert.deepEqual(createPreview(sealed, "getting-started"), {
+    locked: true,
+    title: "guide/intro.md",
+    path: "guide/intro.md",
+  });
+
+  const bare = { path: "notes/plan.md", html: "", enc: { v: 1 } };
+  assert.deepEqual(createDocumentPreview(bare), {
+    locked: true,
+    title: "notes/plan.md",
+    path: "notes/plan.md",
+  });
+});
+
+test("a sealed document answers locked until a password replaces it", () => {
+  const source = sealedDoc();
+
+  assert.equal(createPreview(source, "getting-started").locked, true);
+
+  // The store swaps the sealed entry for the model the password opened: no
+  // `enc` remains on it, so the same functions answer the normal shapes, the
+  // same way they answer a document that was never sealed.
+  delete source.enc;
+  source.html = "<h2>Getting Started</h2><p>intro body</p>";
+  source.toc = doc().toc;
+  source.blocks = doc().blocks;
+
+  assert.deepEqual(createPreview(source, "a1"), {
+    html: "<p>a1</p><p>a1a</p><p>a1b</p>",
+    title: "A1",
+    path: "guide/intro.md",
+  });
+  assert.equal("locked" in createPreview(source, "a1"), false);
+});

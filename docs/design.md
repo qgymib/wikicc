@@ -75,6 +75,8 @@ src/favicon.rs              the site favicon: the configured file, else the
 src/markdown/               render orchestration, heading text, slugs, TOC, chapter blocks,
                             highlighting, link resolution, reference definitions
 src/assets.rs               read, MIME, hashing, dedupe
+src/crypto.rs               the seal/open primitives: PBKDF2 key derivation and AES-GCM encryption
+src/encrypt.rs              the front-matter encrypt directive, password resolution, the sealing pass
 src/site.rs                 payload types and assembly
 src/render.rs               shell assembly (template, CSS, script, payload), size guard
 src/writers/                one writer per format plus the shared placeholder expansion
@@ -174,11 +176,11 @@ These are the boundaries where an internal change becomes observable, so each
 one is stated as a contract rather than left to the implementation.
 
 - **The configuration file.** `.wikicc.json` sits in the input folder root and
-  is optional. It carries seven keys — `home`, `exclude`, `out`, `format`,
-  `title`, `favicon`, `strict` — exactly the `Settings` shape the command line
-  and the `WIKICC_*` environment variables also express, and every value it
-  names is a default: a set variable overrides it, an explicit flag overrides
-  the variable. A relative `out` is resolved against the input folder (the
+  is optional. It carries eight keys — `home`, `exclude`, `out`, `format`,
+  `title`, `favicon`, `password`, `strict` — exactly the `Settings` shape the
+  command line and the `WIKICC_*` environment variables also express, and
+  every value it names is a default: a set variable overrides it, an explicit
+  flag overrides the variable. A relative `out` is resolved against the input folder (the
   folder the file sits in), so the build lands in the same place whatever the
   working directory. The file is read once, before the scan (the `exclude`
   entries must be in effect while the tree is walked; resolving `home` still
@@ -216,8 +218,12 @@ one is stated as a contract rather than left to the implementation.
   needs `--force`, and the output directory may not be the input root, its
   ancestor or the working directory). Three combinations are rejected before
   anything is written. `--home` and a repeatable `--exclude` replace the
-  configured values, and `--strict` is three-state: a bare flag turns the
-  gate on, `--strict=false` turns it off.
+  configured values, `--strict` is three-state — a bare flag turns the gate
+  on, `--strict=false` turns it off — and `--password` carries the global
+  sealing password: a value on the command line stays in the shell history
+  and the process list, so the `WIKICC_PASSWORD` variable is the recommended
+  source (its value is trimmed; the configuration file reads its own
+  verbatim).
 - **Exit codes.** `error` maps every failure to `0` (success, possibly with
   warnings), `1` (runtime failure, including `--strict` with warnings) or `2`
   (usage error, reported by `clap`). The mapping is centralised so a new stage
@@ -312,7 +318,11 @@ one is stated as a contract rather than left to the implementation.
   take the store, answer synchronously from `peek`, and fall back to `get`.
   The search corpus of the split format is fetched once, on the first global
   search; the local scope reads the document in view, which is already in
-  hand, so the default scope costs nothing.
+  hand, so the default scope costs nothing. A sealed document is one more
+  shape the store holds: `decrypt` is the single unlock entry, and a success
+  replaces the cached blob with the full model and notifies the listeners —
+  where the lock page, the search index and the preview panel all pick the
+  article up.
 - **The hover preview never covers its link.** `preview-view.js` places the
   panel below the link when the window holds it, above it when only the space
   over the link does, and shrunk onto the roomier side when neither side
@@ -331,11 +341,11 @@ one is stated as a contract rather than left to the implementation.
   decides what an empty or unknown address opens.
 - **Layering rule.** Pure logic and DOM access live in separate modules
   (`router.js`, `links.js`, `asset-links.js`, `search.js`, `doc-store.js`,
-  `table.js`, `graph.js`, `preview.js`, `toc.js`, `anchor.js`, `diagrams.js`,
-  `math.js` versus `table-view.js`, `graph-view.js`, `diagram-view.js`,
-  `math-view.js`, `preview-view.js`, `search-view.js`, `search-highlight.js`,
-  `banner.js`, `doc-list.js`), because the
-  JS test suite runs under `node --test` with no DOM. Anything that touches
+  `lock.js`, `table.js`, `graph.js`, `preview.js`, `toc.js`, `anchor.js`,
+  `diagrams.js`, `math.js` versus `table-view.js`, `graph-view.js`,
+  `diagram-view.js`, `math-view.js`, `preview-view.js`, `search-view.js`,
+  `search-highlight.js`, `lock-view.js`, `banner.js`, `doc-list.js`), because
+  the JS test suite runs under `node --test` with no DOM. Anything that touches
   `document` belongs to a view module; a view is a projection of the pure
   functions beneath it, and the controller (`app.js`) is the only module that
   wires views to the payload and the router.
@@ -353,13 +363,111 @@ one is stated as a contract rather than left to the implementation.
 - **One CSS custom-property set per theme.** Light and dark are one declaration
   block switched by a root attribute; the toggle changes no other state.
 
-## 8. Testing
+## 8. Article encryption
+
+A folder can mark individual articles as encrypted. The build seals every
+declared article into authenticated ciphertext, so an artifact that falls
+into the wrong hands — a copied `single-html` file, a published `pages`
+folder, an `html-dir` archive — shows no body, no chapter structure and no
+password, even opened in a text editor. The reader locks the article behind
+a lock page that carries the password field itself, and unlocks it in place
+once the password answers. What stays public is exactly what the lock page
+shows anyway: the id and the title, the same metadata the sidebar, the link
+graph and search use.
+
+### Threat model
+
+The scheme protects artifacts at rest. It does not protect the source folder
+— the Markdown files and the password a build was handed live in the clear on
+the machine that builds — and it does not protect anything against a reader
+who holds the password. Passwords are as strong as their entropy: the salt,
+the nonce and the iteration count are public parameters that weaken nothing.
+There is no plaintext fallback — a build asked to seal a document without any
+password fails hard — and the reader holds unlocked passwords in memory
+alone: nothing is written to `localStorage`, `sessionStorage` or a cookie, so
+reloading the page relocks every document.
+
+### Algorithm and parameters
+
+- **AES-256-GCM** seals the body. The cipher is authenticated, so a wrong
+  password, a wrong document binding and a tampered byte are one and the same
+  failure, and the ciphertext layout is `ciphertext || 16-byte tag` — what
+  both the RustCrypto crate and the Web Crypto API emit.
+- **PBKDF2-HMAC-SHA256** derives the 256-bit key from the password and the
+  salt, at 600,000 iterations (the OWASP recommendation).
+- **Per-document parameters.** Every sealed document gets a fresh random
+  16-byte salt and 12-byte nonce at build time, so the derivation input never
+  repeats across documents or builds.
+- **AAD binding.** The document id travels as the AES-GCM `additionalData`, so
+  a ciphertext cannot be transplanted into another document's blob.
+- **Plaintext shape.** The sealed plaintext is the whole document model —
+  canonical JSON `{html, toc, blocks, text}` — so a sealed article leaks
+  neither body nor chapter structure; the title stays public metadata.
+
+The two ends interoperate over one parameter set, pinned by fixed interop
+vectors committed to both test suites (`src/crypto.rs` and
+`tests/js/lock.test.js`): either side drifting fails both at once.
+
+### Build side
+
+`encrypt.rs` reads the `encrypt` field out of the raw front-matter text the
+markdown AST carries — extracted during the one markdown parse, no second
+pass — against a strict matrix: `encrypt: true` seals with the global
+password, a non-empty string seals with that document's own password, a
+missing key, `false` or null builds the document as usual, and every other
+value — an empty string, a number, a list, unparseable YAML — is a hard error
+naming the document. The global password comes from the same three sources as
+every setting — `--password`, `WIKICC_PASSWORD`, the configuration file's
+`password` key — merged CLI over environment over file; a variable value is
+trimmed, so a password with leading or trailing whitespace must travel
+through the configuration file, whose values are read verbatim.
+
+The sealing pass runs on the assembled bundle, after the favicon registration
+and before the diagnostics are reported. It empties the four content fields
+of a sealed `DocModel`, writes the blob into its `enc` field, and leaves
+`edges`, `stats` and every public metadata alone. A document that declares
+encryption and finds no password anywhere is a hard error — exit code 1, the
+message on stderr names the document, and no artifact is written — whatever
+`--strict` says.
+
+The payload shapes stay optional: `DocModel.enc`, `ManifestDoc.enc` and
+`ChunkPayload.enc` are skipped when unset, so a site without encryption
+serialises byte-identically to a build that never heard of the feature, and
+the `search.json` entry of a sealed document carries `{id, title}` alone, so
+no body text reaches the browser before an unlock.
+
+### Reader side
+
+`lock.js` holds the pure Web Crypto logic — `deriveKey` caches a derivation
+per `password + iters + salt`, `unlock` authenticates and decrypts — and the
+session password table, a plain in-memory `Map`; `lock-view.js` renders the
+lock page's password form with focus management and a retryable error. The
+lock page shows the path, the title and the field itself — the reader types
+where they stand — but the form answers only after the reader has silently
+tried the passwords the session already holds, so documents sealed with one
+password never ask twice within a session.
+`doc-store.js` owns the single unlock entry: a successful `decrypt` replaces
+the sealed model with the full one and notifies the listeners — where the
+search index picks the article up (its corpus entry carried the title alone
+until then) and where the hover preview's panel offers the same in-place
+unlock for a reference to a sealed chapter. `file://` pages are a trustworthy
+context in Chrome, Edge and Firefox, so `crypto.subtle` is available and the
+scheme needs no JavaScript fallback — verified headless against a real
+`single-html` artifact.
+
+### Known boundary
+
+Local assets a sealed document references are sealed with it: the
+`wikicc-asset:` placeholders travel inside the ciphertext, so an image the
+article shows becomes visible only after the document is unlocked.
+
+## 9. Testing
 
 | Layer | Location | Tooling | Covers |
 | --- | --- | --- | --- |
 | Rust unit | `#[cfg(test)]` in each module | `cargo test --lib` | slugs, TOC, links, assets, highlighting, render, writers, options, pipeline, config, error mapping |
-| Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, config, markdown, writers, end to end, the esbuild launcher `build.rs` picks |
-| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search, table model, graph layout, outline, preview, banner, inlined links, math policy |
+| Rust integration | `tests/*.rs` | `assert_cmd`, `tempfile`, `predicates` | CLI, scan, config, encryption, markdown, writers, end to end, the esbuild launcher `build.rs` picks |
+| Front-end unit | `tests/js/*.test.js` | `node --test`, `node:assert` | router, search, lock, table model, graph layout, outline, preview, banner, inlined links, math policy |
 | Bridge | `tests/js_suite.rs` | `Command::new("node")` | runs the JS suite inside `cargo test` |
 
 Fixtures under `tests/fixtures` are committed sites, each pinned to one class of
@@ -370,7 +478,7 @@ Quality gates for any change: `cargo fmt --check`,
 `cargo clippy --all-targets -- -D warnings`, `npm run check` and `cargo test`
 must all pass.
 
-## 9. Constraints and risks
+## 10. Constraints and risks
 
 | Constraint | Impact | Mitigation |
 | --- | --- | --- |
@@ -383,3 +491,4 @@ must all pass.
 | No incremental build | full rebuild on every run | acceptable at folder scale; the artifacts are deterministic |
 | The Windows icon is a derived asset | `docs/logo.svg` and `docs/logo.ico` can drift apart | the icon is rendered from the source and committed, and `tools/make-icon.mjs` packs it deterministically; regenerating it after a design change is a documented manual step |
 | The default favicon is the embedded `docs/logo.svg` | a changed logo changes the favicon hash of every build | the staged copy is LF-normalized, so the bytes — and the hash — depend only on the committed source, never on the checkout |
+| 600k-iteration PBKDF2 per sealed document | seconds per derivation under an unoptimized profile | `sha2` and `pbkdf2` compile at opt-level 3 in the dev and test profiles; a release build derives in milliseconds |

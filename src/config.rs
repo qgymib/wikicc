@@ -1,6 +1,6 @@
 //! Site configuration file: `.wikicc.json` in the input folder root.
 //!
-//! The file is optional and carries seven keys, exactly the settings the
+//! The file is optional and carries eight keys, exactly the settings the
 //! command line can also express ([`Settings`]):
 //!
 //! - `home`: the document the reader shows when it is opened at an empty or
@@ -21,6 +21,11 @@
 //!   (an absolute path is taken as it is). Without the key the reader carries
 //!   the wikicc logo, embedded into the executable at build time; a file that
 //!   cannot be read is a hard error.
+//! - `password`: the global password sealing documents whose front matter
+//!   declares encryption. This is the recommended way to hand the build a
+//!   password: unlike the `--password` flag the value leaves no trace in the
+//!   shell history or the process list, and it is read verbatim — leading
+//!   and trailing whitespace belong to the password.
 //! - `strict`: whether warnings fail the build, spelled as a JSON boolean.
 //!
 //! Every value the file names is a default: a set `WIKICC_*` environment
@@ -140,7 +145,7 @@ pub fn load(input: &Path) -> Result<SiteConfig> {
 /// through [`parse`], so the default content can never drift away from what
 /// the loader accepts.
 pub fn template() -> &'static str {
-    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"favicon\": null,\n  \"strict\": null\n}\n"
+    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"favicon\": null,\n  \"password\": null,\n  \"strict\": null\n}\n"
 }
 
 /// Write the default configuration file into `dir` and report it.
@@ -274,6 +279,20 @@ fn parse(bytes: &[u8], path: &Path, base: &Path) -> Result<SiteConfig> {
             ("favicon", _) => {
                 return Err(Error::InvalidInput(
                     "'favicon' must be a string".to_string(),
+                ));
+            }
+            ("password", Value::Null) => {}
+            ("password", Value::String(text)) => {
+                if text.trim().is_empty() {
+                    return Err(Error::InvalidInput(
+                        "'password' must be a non-empty string".to_string(),
+                    ));
+                }
+                config.settings.password = Some(text);
+            }
+            ("password", _) => {
+                return Err(Error::InvalidInput(
+                    "'password' must be a string".to_string(),
                 ));
             }
             ("strict", Value::Null) => {}
@@ -557,6 +576,38 @@ mod tests {
         let error = parse_text(r#"{"favicon": 5}"#).expect_err("a number is not a favicon");
 
         assert_eq!(error.to_string(), "'favicon' must be a string");
+    }
+
+    #[test]
+    fn password_is_read_verbatim() {
+        let config = parse_text(r#"{"password": " global secret "}"#).expect("valid config");
+
+        assert_eq!(config.settings.password.as_deref(), Some(" global secret "));
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_null_password_is_unset() {
+        let config = parse_text(r#"{"password": null}"#).expect("valid config");
+
+        assert_eq!(config.settings.password, None);
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn an_empty_password_is_a_hard_error() {
+        for text in [r#"{"password": ""}"#, r#"{"password": "   "}"#] {
+            let error = parse_text(text).expect_err("an empty password is rejected");
+
+            assert_eq!(error.to_string(), "'password' must be a non-empty string");
+        }
+    }
+
+    #[test]
+    fn a_non_string_password_is_a_hard_error() {
+        let error = parse_text(r#"{"password": 5}"#).expect_err("a number is not a password");
+
+        assert_eq!(error.to_string(), "'password' must be a string");
     }
 
     #[test]

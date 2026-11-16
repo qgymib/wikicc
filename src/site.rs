@@ -65,6 +65,14 @@ pub struct DocModel {
     pub blocks: Vec<Block>,
     /// Plain text of the document, for the search index.
     pub text: String,
+    /// Sealed body when the document's front matter declared encryption.
+    ///
+    /// Present only for locked documents, whose `html`, `toc`, `blocks` and
+    /// `text` are emptied: the payload never carries their plaintext, and the
+    /// reader detects the lock through this field. Absent from the JSON
+    /// otherwise, so an unencrypted site serialises exactly as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enc: Option<EncryptedBlob>,
 }
 
 /// Directed link from one document to another.
@@ -74,6 +82,29 @@ pub struct Edge {
     pub from: String,
     /// Document id the link points at.
     pub to: String,
+}
+
+/// The sealed body of one encrypted document, as the artifact carries it.
+///
+/// Everything except the format version is base64. The reader derives the key
+/// from the password with the named KDF and opens the ciphertext with the
+/// document id as the AES-GCM additional data. The parameters are public by
+/// nature; the security of a sealed document rests on its password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EncryptedBlob {
+    /// Artifact format version, always 1.
+    pub v: u8,
+    /// Key-derivation function identifier: `"pbkdf2-sha256"`.
+    pub kdf: String,
+    /// PBKDF2 iteration count.
+    pub iters: u32,
+    /// Base64 of the 16-byte random salt the key was derived with.
+    pub salt: String,
+    /// Base64 of the 12-byte random nonce the body was encrypted with.
+    pub nonce: String,
+    /// Base64 of `ciphertext || tag`, with the document id as the AES-GCM
+    /// additional data.
+    pub ct: String,
 }
 
 /// Site-wide counters shown in the reader and in the build summary.
@@ -134,6 +165,13 @@ impl SiteBundle {
 pub struct SiteBuild {
     /// Payload embedded into the shell.
     pub bundle: SiteBundle,
+    /// Raw front matter of every document, in the order `bundle.docs` lists
+    /// them.
+    ///
+    /// Build-side input — the `encrypt` directives are read from here — and
+    /// never part of the payload: it rides beside the bundle so the sealing
+    /// pass can resolve the directives without a second parse.
+    pub front_matters: Vec<Option<String>>,
     /// Assets referenced by the documents, deduplicated by content.
     pub assets: AssetTable,
     /// Link and asset problems found while resolving, in document order.
@@ -240,6 +278,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
     }
 
     let mut models: Vec<DocModel> = Vec::with_capacity(docs.len());
+    let mut front_matters: Vec<Option<String>> = Vec::with_capacity(docs.len());
     let mut links: Vec<(String, String)> = Vec::new();
 
     for doc in docs {
@@ -249,6 +288,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
         drop(resolver);
 
         links.extend(targets.into_iter().map(|target| (doc.id.clone(), target)));
+        front_matters.push(rendered.front_matter);
 
         models.push(DocModel {
             id: doc.id.clone(),
@@ -258,6 +298,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
             toc: rendered.toc,
             blocks: rendered.blocks,
             text: rendered.text,
+            enc: None,
         });
     }
 
@@ -279,6 +320,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
             edges,
             stats,
         },
+        front_matters,
         assets,
         diagnostics,
     }
@@ -628,6 +670,80 @@ mod tests {
             value["stats"].as_object().map(keys),
             Some(vec!["asset_bytes", "assets", "documents"])
         );
+        assert!(
+            value["docs"][0]
+                .as_object()
+                .map(keys)
+                .unwrap()
+                .iter()
+                .all(|key| *key != "enc"),
+            "an unsealed document carries no enc key"
+        );
+    }
+
+    #[test]
+    fn a_sealed_document_carries_the_enc_block_beside_its_emptied_body() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source("a.md", "A", "# A\n\nsecret body\n")];
+        let mut build = build_site("Site", dir.path(), &docs);
+
+        let doc = &mut build.bundle.docs[0];
+        doc.html = String::new();
+        doc.toc = Vec::new();
+        doc.blocks = Vec::new();
+        doc.text = String::new();
+        doc.enc = Some(EncryptedBlob {
+            v: 1,
+            kdf: "pbkdf2-sha256".to_string(),
+            iters: 600_000,
+            salt: "c2FsdA==".to_string(),
+            nonce: "bm9uY2U=".to_string(),
+            ct: "Y2lwaGVydGV4dA==".to_string(),
+        });
+
+        let value: serde_json::Value =
+            serde_json::from_str(&build.bundle.to_json()).expect("valid JSON");
+        assert_eq!(
+            value["docs"][0].as_object().map(keys),
+            Some(vec![
+                "blocks", "enc", "html", "id", "path", "text", "title", "toc"
+            ]),
+            "the enc block rides beside the emptied body fields"
+        );
+        assert_eq!(
+            value["docs"][0]["enc"].as_object().map(keys),
+            Some(vec!["ct", "iters", "kdf", "nonce", "salt", "v"])
+        );
+        assert_eq!(value["docs"][0]["enc"]["v"], 1);
+        assert_eq!(value["docs"][0]["enc"]["kdf"], "pbkdf2-sha256");
+        assert_eq!(value["docs"][0]["enc"]["iters"], 600_000);
+        assert_eq!(value["docs"][0]["html"], "");
+        assert_eq!(value["docs"][0]["toc"], serde_json::json!([]));
+        assert_eq!(value["docs"][0]["blocks"], serde_json::json!([]));
+        assert_eq!(value["docs"][0]["text"], "");
+        assert!(
+            !build.bundle.to_json().contains("secret body"),
+            "the plaintext is emptied before serialisation"
+        );
+    }
+
+    #[test]
+    fn the_enc_block_round_trips_through_the_payload_shape() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source("a.md", "A", "# A\n")];
+        let mut build = build_site("Site", dir.path(), &docs);
+        build.bundle.docs[0].enc = Some(EncryptedBlob {
+            v: 1,
+            kdf: "pbkdf2-sha256".to_string(),
+            iters: 600_000,
+            salt: "c2FsdA==".to_string(),
+            nonce: "bm9uY2U=".to_string(),
+            ct: "Y2lwaGVydGV4dA==".to_string(),
+        });
+
+        let json = build.bundle.to_json();
+        let parsed: SiteBundle = serde_json::from_str(&json).expect("the payload parses back");
+        assert_eq!(parsed, build.bundle, "the enc block survives a round trip");
     }
 
     #[test]

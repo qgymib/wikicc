@@ -48,6 +48,17 @@ their chapter outline.
 - Raw HTML inside Markdown, passed through unchanged. **The input is trusted:
   there is no sanitizer, so do not compile untrusted documents.**
 
+### Encrypted documents
+
+A document whose front matter declares `encrypt` is sealed into the artifact:
+AES-256-GCM ciphertext under PBKDF2 key derivation, so a copied artifact or a
+text editor shows no body, no chapter structure and no password. The reader
+shows the title and a password field on a lock page, and the password typed
+there renders the document in place; a reference to a sealed chapter offers
+the same field inside its hover preview, and search finds the title before
+the unlock and the body after it. Unlocked passwords live in the session's
+memory alone — reloading the page relocks every document.
+
 ### Output formats
 
 | Format | Artifact | Assets |
@@ -119,7 +130,7 @@ The compiled binary and the generated HTML have no external dependencies.
 
 #### Prebuilt binaries
 
-The [releases page](../../releases) carries the binaries CI builds for each
+The [releases page](https://github.com/qgymib/wikicc/releases) carries the binaries CI builds for each
 tagged version, one archive per build system and architecture:
 
 | Build system | Architecture | Archive | Binary inside |
@@ -147,6 +158,12 @@ wikicc [OPTIONS] [INPUT_DIR]
       --exclude <DIR>    Directory to keep out of the site; repeatable, overrides .wikicc.json
       --favicon <FILE>   Favicon file relative to the input folder; overrides
                          .wikicc.json [default: the wikicc logo]
+      --password <PASSWORD>
+                         Global password for documents whose front matter
+                         declares encryption; overrides .wikicc.json. Prefer
+                         the WIKICC_PASSWORD environment variable: a command
+                         line value stays in the shell history and the process
+                         list
       --force            Overwrite the output directory without confirmation
   -q, --quiet            Suppress the summary line
       --init-config [DIR]
@@ -165,6 +182,8 @@ wikicc path/to/docs --strict              # broken links fail the build
 wikicc path/to/docs --home guide/intro.md # override the configured opening document
 wikicc path/to/docs --exclude drafts      # override the configured exclusions
 wikicc path/to/docs --favicon assets/icon.png
+WIKICC_PASSWORD="opensesame" wikicc path/to/docs # seal documents marked encrypt: true
+wikicc path/to/docs --password "opensesame"      # the same seal, but the password lands in the shell history
 wikicc --init-config path/to/docs         # writes path/to/docs/.wikicc.json
 ```
 
@@ -186,11 +205,12 @@ upper case. The command line overrides the variables; the variables override
 | `WIKICC_HOME` | Document the reader opens first |
 | `WIKICC_EXCLUDE` | Comma-separated directories kept out of the site |
 | `WIKICC_FAVICON` | Favicon file relative to the input folder |
+| `WIKICC_PASSWORD` | Global password for documents whose front matter declares encryption |
 
 A variable that is not set, or whose value is blank, did not speak: the next
 source down decides. A value that cannot be understood — an unknown format, an
 unparseable boolean, an empty exclusion entry — fails the build with an error
-naming the variable. Only the seven names above count; any other `WIKICC_*`
+naming the variable. Only the eight names above count; any other `WIKICC_*`
 variable in the environment is ignored, because that namespace belongs to
 other programs too. `--force`, `--quiet`, `--init-config` and the input
 directory exist only on the command line, never as variables.
@@ -220,6 +240,7 @@ by a flag or a set variable:
 | `format` | `single-html`, `html-dir` or `pages` [default: `single-html`] |
 | `title` | Site title [default: the input folder name] |
 | `favicon` | Favicon file relative to the input folder [default: the wikicc logo] |
+| `password` | Global password for documents whose front matter declares encryption; read verbatim |
 | `strict` | Fail the build on warnings [default: `false`] |
 
 `home` is a document id — the path relative to the input folder, `/`
@@ -258,6 +279,7 @@ the executable at build time.
   "format": "pages",
   "title": "Handbook",
   "favicon": "assets/icon.png",
+  "password": "opensesame",
   "strict": false
 }
 ```
@@ -266,13 +288,14 @@ the executable at build time.
 over it, and an explicit flag wins over the variable.**
 
 - `WIKICC_OUT`, `WIKICC_FORMAT`, `WIKICC_TITLE`, `WIKICC_STRICT`, `WIKICC_HOME`,
-  `WIKICC_EXCLUDE` and `WIKICC_FAVICON` override their configured counterparts;
-  the command line flags below override the variables again.
+  `WIKICC_EXCLUDE`, `WIKICC_FAVICON` and `WIKICC_PASSWORD` override their
+  configured counterparts; the command line flags below override the variables
+  again.
 - `--home` replaces the configured `home`.
 - `--exclude` **replaces** the configured list entirely; repeat the flag for
   several directories.
-- `--out`, `--format`, `--title` and `--favicon` override their configured
-  counterparts.
+- `--out`, `--format`, `--title`, `--favicon` and `--password` override their
+  configured counterparts.
 - A bare `--strict` turns the gate on and `--strict=false` turns it off,
   whatever the file says.
 - `--force` and `--quiet` exist only on the command line; the file never
@@ -306,6 +329,7 @@ key unset:
   "format": null,
   "title": null,
   "favicon": null,
+  "password": null,
   "strict": null
 }
 ```
@@ -314,6 +338,54 @@ key unset:
   not created.
 - An existing `.wikicc.json` is never overwritten — delete it first.
 - `--init-config` cannot be combined with an input directory.
+
+### Encrypted documents
+
+A document's front matter can ask the build to seal it. The key is `encrypt`:
+
+| Front matter | Meaning |
+| --- | --- |
+| *(no key)*, `encrypt: false`, `encrypt:` | Build the document as usual |
+| `encrypt: true` | Seal it with the global password |
+| `encrypt: "secret"` | Seal it with this document's own password |
+| anything else (`encrypt: ""`, a number, a list, invalid YAML) | Fail the build with an error naming the document |
+
+```markdown
+---
+title: Private notes
+encrypt: true
+---
+
+Nobody reads this without the password.
+```
+
+The global password takes the same three sources as every setting, in the
+same order — `--password` over `WIKICC_PASSWORD` over the configuration
+file's `password` key. A document that asks for encryption and finds no
+password anywhere fails the build: exit code 1, the error names the document
+on stderr, and nothing is written, whatever `--strict` says.
+
+```sh
+WIKICC_PASSWORD="opensesame" wikicc path/to/docs
+wikicc path/to/docs --password "opensesame" # works, but the password lands in the shell history
+```
+
+Two boundaries are worth knowing:
+
+- **The password is the security.** The salt, the nonce and the iteration
+  count are public parameters that weaken nothing; a short password does.
+  A command line `--password` stays in the shell history and the process
+  list, so prefer `WIKICC_PASSWORD` — whose value is trimmed, which makes
+  the configuration file the only source that can carry a password with
+  leading or trailing whitespace (its values are read verbatim).
+- **The title stays public.** The lock page, the sidebar, the link graph and
+  search all show the title; search reaches the body only after the reader
+  unlocks the document, and local assets a sealed document references become
+  visible with that unlock too.
+
+The reader keeps unlocked passwords in the session's memory alone — nothing
+is written to `localStorage`, `sessionStorage` or a cookie — so reloading
+the page relocks every document, and a fresh session asks again.
 
 ### Warnings and `--strict`
 
@@ -330,7 +402,7 @@ one.
 | Code | Meaning |
 | --- | --- |
 | 0 | Success (possibly with warnings) |
-| 1 | Runtime failure: missing input, I/O error, `--strict` with warnings |
+| 1 | Runtime failure: missing input, I/O error, `--strict` with warnings, a sealed document without a password |
 | 2 | Usage error: invalid arguments |
 
 ## Documentation

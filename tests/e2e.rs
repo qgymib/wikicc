@@ -2214,6 +2214,164 @@ fn usage_errors_exit_with_two_and_runtime_errors_with_one() {
     wikicc().arg(out.path().join("missing")).assert().code(1);
 }
 
+/// A sealed page carries the unlock machinery.
+///
+/// The lock page and its password form are reader markup, so the artifact
+/// cannot be asserted the way a Rust stage is; what the artifact can promise
+/// is that everything the `file://` reader needs to open a seal shipped with
+/// it: the payload marks the document, and the bundle carries the class
+/// names, the field, the actions and the sentences the lock page and its
+/// form show. esbuild keeps string literals through minification, so these
+/// survive into the artifact as written.
+#[test]
+fn a_sealed_page_carries_the_unlock_machinery() {
+    let site = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        site.path().join("sealed.md"),
+        "---\nencrypt: true\n---\n\n# Sealed\n\nhidden body\n",
+    )
+    .expect("writes the source");
+
+    let out = tempfile::tempdir().expect("temp dir");
+    let output = wikicc()
+        .arg(site.path())
+        .args(["--format", "single-html", "--password"])
+        .arg("reader unlock")
+        .arg("--out")
+        .arg(out.path())
+        .output()
+        .expect("run wikicc");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+
+    let files = tree(out.path());
+    assert_eq!(files.len(), 1, "single-html writes exactly one file");
+    let page = String::from_utf8(files[0].1.clone()).expect("the page is utf-8");
+
+    assert!(
+        page.contains("\"enc\":{"),
+        "the payload carries the seal: no other part of the page may"
+    );
+    for literal in [
+        // The lock page: the centered page, the plain title, the note and
+        // the form it points at.
+        "doc-locked-page",
+        "doc-locked-title",
+        "doc-locked",
+        "doc-locked-form",
+        "doc-locked-input",
+        "doc-locked-submit",
+        "doc-locked-error",
+        "Its contents stay hidden until it is unlocked",
+        // The form: label, action, the word the attempt wears, and the
+        // answer a wrong password gets.
+        "Password",
+        "Unlock",
+        "Unlocking",
+        "That password did not unlock this document",
+    ] {
+        assert!(page.contains(literal), "missing unlock literal: {literal}");
+    }
+}
+
+/// The search of a sealed site reads its title alone: the result row carries
+/// the marker that names the lock, and the preview says what the lock means
+/// instead of idling over a body the page cannot show. esbuild keeps string
+/// literals through minification, so these survive into the artifact as
+/// written.
+#[test]
+fn a_sealed_page_carries_the_search_lock_machinery() {
+    let site = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        site.path().join("sealed.md"),
+        "---\nencrypt: true\n---\n\n# Sealed\n\nhidden body\n",
+    )
+    .expect("writes the source");
+
+    let out = tempfile::tempdir().expect("temp dir");
+    let output = wikicc()
+        .arg(site.path())
+        .args(["--format", "single-html", "--password"])
+        .arg("reader unlock")
+        .arg("--out")
+        .arg(out.path())
+        .output()
+        .expect("run wikicc");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+
+    let files = tree(out.path());
+    assert_eq!(files.len(), 1, "single-html writes exactly one file");
+    let page = String::from_utf8(files[0].1.clone()).expect("the page is utf-8");
+
+    assert!(
+        page.contains("\"enc\":{"),
+        "the payload carries the seal: no other part of the page may"
+    );
+    for literal in [
+        // The result row's marker.
+        "search-result-locked",
+        // The preview's notice, with the sentence it shows.
+        "search-locked",
+        "This document is encrypted. Open it to unlock its contents.",
+    ] {
+        assert!(
+            page.contains(literal),
+            "missing search lock literal: {literal}"
+        );
+    }
+}
+
+/// The hover preview of a sealed reference carries the locked state and the
+/// form the reader answers in place: the panel's class names, the sentence it
+/// shows, the busy word the attempt wears and the answer a wrong password
+/// gets. esbuild keeps string literals through minification, so these survive
+/// into the artifact as written.
+#[test]
+fn a_sealed_page_carries_the_preview_unlock_machinery() {
+    let site = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        site.path().join("sealed.md"),
+        "---\nencrypt: true\n---\n\n# Sealed\n\nhidden body\n",
+    )
+    .expect("writes the source");
+
+    let out = tempfile::tempdir().expect("temp dir");
+    let output = wikicc()
+        .arg(site.path())
+        .args(["--format", "single-html", "--password"])
+        .arg("reader unlock")
+        .arg("--out")
+        .arg(out.path())
+        .output()
+        .expect("run wikicc");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+
+    let files = tree(out.path());
+    assert_eq!(files.len(), 1, "single-html writes exactly one file");
+    let page = String::from_utf8(files[0].1.clone()).expect("the page is utf-8");
+
+    assert!(
+        page.contains("\"enc\":{"),
+        "the payload carries the seal: no other part of the page may"
+    );
+    for literal in [
+        // The locked state's frame, heading and sentence.
+        "preview-locked",
+        "Chapter locked",
+        "Enter its password to read it here",
+        // The form: field, button and the word the attempt wears.
+        "preview-unlock-input",
+        "preview-unlock-submit",
+        "Unlocking",
+        // The answer a wrong password gets, in the panel as in the dialog.
+        "That password did not unlock this document",
+    ] {
+        assert!(
+            page.contains(literal),
+            "missing preview lock literal: {literal}"
+        );
+    }
+}
+
 #[test]
 fn a_clean_build_prints_no_note() {
     for format in OutputFormat::ALL {
