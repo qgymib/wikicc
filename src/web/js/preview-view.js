@@ -1,96 +1,21 @@
 /**
- * The hover preview for a reference to a chapter or a whole document.
+ * The hover preview for a reference to a chapter or a whole document: the
+ * composer that wires the frame, the gestures and the content states into one
+ * controller.
  *
- * `preview.js` decides *what* to show; this module owns the popover: when it
- * appears, where it sits and when it goes away.
+ * `preview-panel.js` owns the frame — one popover, built once, placed beside
+ * the link it describes and kept inside the viewport. `preview-gestures.js`
+ * owns the pointer and timer state — when the panel opens, when it goes away,
+ * and what a reader's hand can do to it while it is up. `preview-roles.js`
+ * owns the content states — which of the five a link deserves and what each
+ * fills in. This module is the wiring and the click; it holds no state of its
+ * own except the showing, the pair of links both other sides gate on.
  *
- * The same popover serves three moments. A reference whose chapter exists
- * shows the chapter's content; one without a chapter shows the document it
- * names whole; a reference the build already marked as broken shows a notice
- * naming the chapter that is missing instead. The notice is a hint about the
- * link under the pointer, so it is shaped like a tooltip and never like the
- * banner: that one explains a navigation, and is raised on click.
- *
- * Timing is deliberately split in two. Opening waits `HOVER_DELAY_MS`, so
- * moving the pointer across a paragraph never flashes a panel. Closing waits
- * `CLOSE_DELAY_MS` and is cancelled as soon as the pointer enters the popover,
- * because the gap between the link and the panel is a place the pointer has to
- * cross — without the grace period the panel would close under the hand that is
- * about to scroll it.
- *
- * In the split format the document a reference names may not be on the page
- * yet, and waiting for its file before showing anything would put the network
- * between the pointer and the panel. So the panel opens at once with a loading
- * state — a spinner and the document's name, which the manifest carries before
- * any chunk travels — and the answer fills it when it arrives. An answer that
- * is not a preview is not silence either: a fetch that failed turns the panel
- * into an error notice that invites another hover, which retries, and a
- * document without the hovered chapter says so the way a reference the build
- * marked as broken does.
- *
- * One more state answers the encrypted site: a reference into a document the
- * build sealed opens the panel with a password form instead of a preview or a
- * notice. The head still names the document — the one thing the payload says
- * in public — and the body is the form the reader answers in place. A
- * password the session already holds is tried quietly before anything is
- * typed; one that fits fills the panel with the chapter, and one that does
- * not says so where the typing was. The chapter that follows is the ordinary
- * preview, built from the model the password opened, so unlocking here shows
- * what a hover on a public reference would have shown.
- *
- * A preview can also be *pinned*. Every delay above is a guess at what the
- * pointer meant; a click on the panel is not a guess, it is the reader saying
- * they want the chapter at hand while they read something else. So a click
- * inside the panel, or on its pin button, turns every automatic dismissal off:
- * the pointer may leave, the reader may click elsewhere, follow another
- * reference, or land in another document, and the panel keeps the chapter it
- * opened with. Only an explicit act ends it — the close button, the pin button
- * again, a second click on the reference it describes, or Escape.
- *
- * Pinned means *held in place*, not *following*: the panel is positioned once,
- * against the link it describes, and `position: fixed` does not move with the
- * document. Re-anchoring it on scroll or on a navigation would either drag it
- * away from the chapter it shows or park it at a paragraph the reader is no
- * longer looking at, so the panel stays where the reader put it instead.
- *
- * And the reader can put it somewhere else: the head is a handle. Pressing it
- * claims the panel — the same bit a click sets, only earlier, because a drag
- * crosses the empty page between the link and the panel and a delayed close
- * would take the panel away mid-gesture. A press is not yet a drag: the panel
- * only starts to follow once the pointer has travelled `DRAG_THRESHOLD_PX`,
- * which is what keeps a quick click on the head from nudging the panel by the
- * pixel or two a hand always adds. A press on one of the head's buttons is
- * never a drag, since those two clicks already mean something else.
- *
- * The moves are watched on the page rather than on the head: the panel is small
- * and fixed, so the pointer leaves it constantly during a gesture, and a
- * listener on the element would lose the drag the moment it did. The place the
- * reader leaves the panel in holds for as long as that panel is open — closing
- * it forgets both the pin and the place, so the next hover is anchored to its
- * own link again.
- *
- * The size can be taken in hand too: the right edge, the bottom edge and the
- * bottom-right corner of the frame are handles, each answering one axis — east
- * the width, south the height, the corner both. A press on one claims the
- * panel the way a press on the head does, and past the same threshold the
- * frame follows the hand, bounded by a floor on each dimension and by the edge
- * of the viewport. The size a resize leaves behind holds until the panel is
- * closed, because a size the reader chose belongs to the showing they chose it
- * for. A notice wears no handles: it is a hint about a link, not a window.
- *
- * The panel is appended to `document.body` and positioned with `position:
- * fixed`, the same way the table filter panel works: the document body clips
- * overflow in places, and a panel nested inside it would be cut off. Only one
- * panel exists at a time, so every document the reader opens shares it: a
- * document change does not dispose of it, and a pinned panel therefore survives
- * one untouched.
- *
- * Building the panel must never fail: it is built lazily inside the open
- * timer, so an exception here does not surface as an error a reader can see —
- * it surfaces as *nothing happening*, which is the hardest failure to diagnose.
- * Every node the panel owns is therefore created the way the DOM requires:
- * an SVG child comes from `document.createElementNS` and is appended to its
- * parent, because an `SVGElement` carries no `createElementNS` of its own.
+ * The listeners live here because they are the seams. Pointer and focus
+ * events on the article feed the gesture scheduler, which opens the panel
+ * after the hover delay and closes it after the grace period; a scroll or an
+ * Escape dismisses an unpinned panel at once; and a click is where the
+ * preview hands over.
  *
  * A click is where this module hands over. A sound block reference is already a
  * hash route, so the browser follows it: it writes the history entry, fires
@@ -98,223 +23,77 @@
  * scroll. Only a reference the build marked as broken is routed from here,
  * because its route carries no anchor to scroll to and its message has to be
  * queued for the render the click causes.
+ *
+ * The constants each module defines are re-exported here, so the module's
+ * public surface — the factory and every vocabulary word the stylesheet and
+ * the tests spell — stays exactly what it was.
  */
 import * as Links from "./links.js";
-import * as Preview from "./preview.js";
-import * as DocBody from "./doc-body.js";
 import * as DiagramView from "./diagram-view.js";
+import { createPreviewGestures } from "./preview-gestures.js";
+import { createPreviewPanel } from "./preview-panel.js";
+import { createPreviewRoles } from "./preview-roles.js";
 
-/** How long the pointer must rest on a link before the preview opens. */
-export var HOVER_DELAY_MS = 300;
+export {
+  ACTIONS_CLASS,
+  BODY_CLASS,
+  CLOSE_CLASS,
+  CLOSE_LABEL,
+  DRAG_LABEL,
+  ERROR_CLASS,
+  ERROR_TEXT,
+  ERROR_TITLE,
+  GAP_PX,
+  HEAD_CLASS,
+  HEAD_TEXT_CLASS,
+  LOCKED_CLASS,
+  LOCKED_TEXT,
+  LOCKED_TITLE,
+  MISSING_SEPARATOR,
+  MISSING_TAIL,
+  MISSING_TITLE,
+  OPEN_ATTRIBUTE,
+  PIN_CLASS,
+  PIN_LABEL,
+  POPOVER_CLASS,
+  PREVIEW_LABEL,
+  RESIZE_CLASS,
+  RESIZE_DIRECTION_ATTRIBUTE,
+  UNLOCK_ERROR_CLASS,
+  UNLOCK_ERROR_TEXT,
+  UNLOCK_FORM_CLASS,
+  UNLOCK_INPUT_CLASS,
+  UNLOCK_INPUT_LABEL,
+  UNLOCK_SUBMIT_CLASS,
+  UNLOCK_SUBMIT_TEXT,
+  UNPIN_LABEL,
+  LOADING_CLASS,
+  LOADING_TEXT,
+  LOADING_TEXT_CLASS,
+} from "./preview-panel.js";
 
-/** How long the preview survives after the pointer leaves the link. */
-export var CLOSE_DELAY_MS = 140;
+export {
+  CLOSE_DELAY_MS,
+  DRAG_THRESHOLD_PX,
+  DRAGGING_ATTRIBUTE,
+  HOVER_DELAY_MS,
+  MIN_HEIGHT_PX,
+  MIN_WIDTH_PX,
+  PIN_ATTRIBUTE,
+  RESIZE_ATTRIBUTE,
+} from "./preview-gestures.js";
 
-/** Gap between the link and the panel, in pixels. */
-export var GAP_PX = 8;
-
-/**
- * Namespace of the inline icons in the panel's head.
- *
- * An SVG child must be created in this namespace by `document`; the icons are
- * drawn inline so the page loads no asset and no icon font.
- */
-var SVG_NAMESPACE = "http://www.w3.org/2000/svg";
-
-/** Smallest distance from the viewport edge the panel keeps. */
-var MARGIN_PX = 10;
-
-/**
- * Shortest height the panel keeps when no side of the viewport can hold it.
- *
- * A link near the middle of a short window leaves the panel no side tall
- * enough for its whole self; the panel then lays itself on the roomier side
- * and shrinks to the space there. Below this floor a shrink would produce a
- * sliver no reader could use, so the panel keeps this height instead — a
- * window that cramped is the one case where covering the link is accepted,
- * because a panel too small to read helps nobody.
- */
-var MIN_SHRUNK_HEIGHT_PX = 120;
-
-/**
- * How far the pointer must travel before a press on the head is a drag.
- *
- * A hand on a mouse button is never perfectly still, so a zero threshold would
- * turn every click on the head into a one-pixel move; a browser's sub-pixel
- * noise never reaches three.
- */
-export var DRAG_THRESHOLD_PX = 3;
-
-/** Class of the popover root. */
-export var POPOVER_CLASS = "preview-popover";
-
-/** Class of the head, which is the handle the panel is dragged by. */
-export var HEAD_CLASS = "preview-head";
-
-/** Class of the scrolling body inside the popover. */
-export var BODY_CLASS = "preview-scroll";
-
-/** Attribute marking the popover as open, used by the stylesheet. */
-export var OPEN_ATTRIBUTE = "data-open";
-
-/**
- * Attribute marking the popover as a notice rather than a preview.
- *
- * The element is the same one in both roles — one popover, built once — so the
- * stylesheet needs one bit to know which of the two it is drawing. The reader
- * sets it before showing a notice and removes it before showing a preview, so
- * a reference followed by a sound one never leaves a warning frame behind.
- */
-export var MISSING_ATTRIBUTE = "data-missing";
-
-/** Accessible name of the popover while it shows a preview. */
-export var PREVIEW_LABEL = "Chapter preview";
-
-/** Accessible name of the popover while it shows a notice. */
-export var MISSING_LABEL = "Broken reference";
-
-/**
- * Attribute marking the popover as pinned, used by the stylesheet.
- *
- * The panel is the same element pinned or not; this bit is what lets the frame
- * say "held in place" without a second class on the root.
- */
-export var PIN_ATTRIBUTE = "data-pinned";
-
-/** Class of the pin button in the head. */
-export var PIN_CLASS = "preview-pin";
-
-/** Class of the close button in the head. */
-export var CLOSE_CLASS = "preview-close";
-
-/** Class of the group holding the head's buttons, kept apart from the title. */
-export var ACTIONS_CLASS = "preview-actions";
-
-/** Accessible name of the head, which is what the reader grabs. */
-export var DRAG_LABEL = "Drag to move";
-
-/**
- * Attribute marking the popover as being dragged.
- *
- * The stylesheet reads it for the cursor and to stop a heading from being
- * selected along the way; nothing in the module reads it back.
- */
-export var DRAGGING_ATTRIBUTE = "data-dragging";
-
-/** Class of the three strips the panel is resized by. */
-export var RESIZE_CLASS = "preview-resize";
-
-/** Attribute naming the axis one strip resizes: `e`, `s` or `se`. */
-export var RESIZE_DIRECTION_ATTRIBUTE = "data-dir";
-
-/**
- * Attribute marking the popover as being resized.
- *
- * The stylesheet reads it for the text-selection suppression a drag gets; as
- * with the dragging mark, nothing in the module reads it back.
- */
-export var RESIZE_ATTRIBUTE = "data-resizing";
-
-/** Narrowest the panel may become, on the east edge or at the corner. */
-export var MIN_WIDTH_PX = 240;
-
-/** Shortest the panel may become, on the south edge or at the corner. */
-export var MIN_HEIGHT_PX = 120;
-
-/** The directions the handles resize, in the order the panel builds them. */
-var RESIZE_DIRECTIONS = ["e", "s", "se"];
-
-/** Class of the column holding the title and the path. */
-export var HEAD_TEXT_CLASS = "preview-head-text";
-
-/** Accessible name of the pin button while the panel is not pinned. */
-export var PIN_LABEL = "Pin preview";
-
-/** Accessible name of the pin button while the panel is pinned. */
-export var UNPIN_LABEL = "Unpin preview";
-
-/** Accessible name of the close button. */
-export var CLOSE_LABEL = "Close preview";
-
-/** Heading of a notice: what went wrong, in three words. */
-export var MISSING_TITLE = "Chapter not found";
-
-/** Text between the document and the chapter of a notice. */
-export var MISSING_SEPARATOR = "No chapter named ";
-/** Text after the chapter of a notice, once the document is named. */
-export var MISSING_TAIL = " exists in this document.";
-
-/** Class of the loading state shown while a document is on its way. */
-export var LOADING_CLASS = "preview-loading";
-
-/** Class of the loading state's one line of text. */
-export var LOADING_TEXT_CLASS = "preview-loading-text";
-
-/** Text of the loading state. */
-export var LOADING_TEXT = "Loading…";
-
-/** Accessible name of the popover while it loads a document. */
-export var LOADING_LABEL = "Loading preview";
-
-/** Attribute marking the popover as loading, used by the stylesheet. */
-export var LOADING_ATTRIBUTE = "data-loading";
-
-/** Class of the error state shown when a document fails to arrive. */
-export var ERROR_CLASS = "preview-error";
-
-/** Heading of the error state: what went wrong. */
-export var ERROR_TITLE = "Preview failed to load.";
-
-/** Text of the error state: what the reader can do about it. */
-export var ERROR_TEXT =
-  "The document did not arrive. Hover the link again to retry.";
-
-/** Accessible name of the popover while it shows the error state. */
-export var FAILED_LABEL = "Preview failed";
-
-/** Attribute marking the popover as showing the error state. */
-export var ERROR_ATTRIBUTE = "data-error";
-
-/** Class of the locked state shown for a reference into a sealed document. */
-export var LOCKED_CLASS = "preview-locked";
-
-/** Heading of the locked state: what the reference points at. */
-export var LOCKED_TITLE = "Chapter locked";
-
-/** Text of the locked state: what the reader can do about it. */
-export var LOCKED_TEXT =
-  "This chapter is in an encrypted document. Enter its password to read it here.";
-
-/** Accessible name of the popover while it shows the locked state. */
-export var LOCKED_LABEL = "Locked chapter";
-
-/** Attribute marking the popover as showing the locked state. */
-export var LOCKED_ATTRIBUTE = "data-locked";
-
-/** Class of the password form the locked state answers in place. */
-export var UNLOCK_FORM_CLASS = "preview-unlock";
-
-/** Class of the password field of that form. */
-export var UNLOCK_INPUT_CLASS = "preview-unlock-input";
-
-/** Accessible name of the password field. */
-export var UNLOCK_INPUT_LABEL = "Document password";
-
-/** Class of the button that submits the password. */
-export var UNLOCK_SUBMIT_CLASS = "preview-unlock-submit";
-
-/** Text of the unlock button while the panel is idle. */
-export var UNLOCK_SUBMIT_TEXT = "Unlock";
-
-/** Text of the unlock button while an attempt is running. */
-export var UNLOCK_BUSY_TEXT = "Unlocking\u2026";
-
-/** Class of the line that reports a password that did not open the document. */
-export var UNLOCK_ERROR_CLASS = "preview-unlock-error";
-
-/** Text of that line, offered again whatever the next try answers. */
-export var UNLOCK_ERROR_TEXT =
-  "That password did not unlock this document. Try again.";
+export {
+  ERROR_ATTRIBUTE,
+  FAILED_LABEL,
+  LOCKED_ATTRIBUTE,
+  LOCKED_LABEL,
+  LOADING_ATTRIBUTE,
+  LOADING_LABEL,
+  MISSING_ATTRIBUTE,
+  MISSING_LABEL,
+  UNLOCK_BUSY_TEXT,
+} from "./preview-roles.js";
 
 /**
  * Create the preview controller for one reader instance.
@@ -342,1446 +121,72 @@ export function createPreviewView(options) {
   // chapter does not exist. Injected rather than imported so this module stays
   // a view over the preview model and never reaches for the banner itself.
   var onMissingChapter = options.onMissingChapter || null;
-  // The attempt a password makes belongs to the controller: the store
-  // decrypts and the session's memory keeps what opened a document, which is
-  // the same door the lock page's dialog answers through. The panel only
-  // reports what a password did. `passwordCandidates` reads the same
-  // session's table, so a password the reader typed anywhere is tried
-  // quietly here before the panel asks for one.
-  var onUnlock = options.onUnlock || null;
-  var passwordCandidates = options.passwordCandidates || null;
 
-  var panel = null;
-  var head = null;
-  var body = null;
-  var title = null;
-  var path = null;
-  // The notice is part of the panel from the start, hidden behind
-  // `MISSING_ATTRIBUTE`: showing it writes text into nodes that already exist,
-  // so a hover never grows the panel and never reflows it.
-  var notice = null;
-  var noticeText = null;
-  var noticeDoc = null;
-  var noticeChapter = null;
-  // The loading and error states are part of the panel from the start too, on
-  // the same terms as the notice: the split format's first hover on a document
-  // happens while its chunk is still travelling, and the states it turns
-  // through must not grow or reflow the panel as they replace one another.
-  var loading = null;
-  var error = null;
-  // The locked state and its form are part of the panel from the start too,
-  // on the same terms as the notice: a reference into a sealed document
-  // opens the panel with its password form, and the states the panel turns
-  // through must not grow or reflow it as they replace one another.
-  var locked = null;
-  var unlockForm = null;
-  var unlockInput = null;
-  var unlockSubmit = null;
-  var unlockError = null;
-  // Whether an unlock attempt is running: the form is busy — no second
-  // submit, no retype — until the answer arrives.
-  var unlocking = false;
-  // The quiet attempts in flight, by document id: one per document at a
-  // time, so a panel that reopens mid-attempt never stacks a second one.
-  var quietUnlocks = new Map();
-  // The head's two buttons, so their state can follow the pin without a query.
-  var pinButton = null;
-  var closeButton = null;
-  var openTimer = 0;
-  var closeTimer = 0;
-  // The link the panel currently describes, and the one it is about to.
-  var anchor = null;
-  var pending = null;
+  // The showing: the link the panel currently describes, and the one it is
+  // about to. The open timer writes the second and reads both; a content
+  // answer for a link nobody points at any more is dropped by the same pair.
+  // The composer owns it and hands the same object to both modules, so the
+  // two sides can never disagree about what the panel is for.
+  var session = { anchor: null, pending: null };
   var listening = false;
-  // Whether the reader has claimed the panel. Only a click sets it, and only an
-  // explicit act — a button, a second click on `anchor`, Escape — clears it, so
-  // every automatic dismissal asks `isPinned()` before it acts.
-  var pinned = false;
-  // Where the pointer went down on the head, and where the panel was when it
-  // did. `null` means no press is in progress. The press is a drag only once
-  // the pointer has travelled past the threshold, which the origin decides.
-  var press = null;
-  var dragging = false;
-  // Whether this showing of the panel has been placed by hand. `position()`
-  // leaves it alone from then on; `close()` forgets it, so the next hover is
-  // anchored to its own link again.
-  var moved = false;
-  // The resize press in progress: which edge went down, where the pointer
-  // went down, and the geometry the panel had when it did. `null` means no
-  // press is in progress; like a drag, the press becomes a resize only once
-  // the pointer has travelled past the threshold.
-  var resizing = null;
-  // Whether a resize has started applying, so the frame's mark and the
-  // hand-placed flag are written once per gesture, not on every move.
-  var resizingActive = false;
-  // The three handles, each kept with the listener it was built with, because
-  // `dispose` takes both off the page.
-  var resizeHandles = [];
 
-  function view() {
-    return globalThis;
-  }
-
-  /**
-   * The page a gesture is watched on.
-   *
-   * A drag starts below the head and continues over the document, so the moves
-   * are read from the window when there is one — which is what makes the panel
-   * follow a pointer that has left it — and from `globalThis` in a DOM without
-   * one, the same degradation every other listener here relies on.
-   */
-  function windowTarget() {
-    return typeof window === "undefined" ? view() : window;
-  }
-
-  function clearOpenTimer() {
-    if (openTimer) {
-      view().clearTimeout(openTimer);
-      openTimer = 0;
-    }
-  }
-
-  function clearCloseTimer() {
-    if (closeTimer) {
-      view().clearTimeout(closeTimer);
-      closeTimer = 0;
-    }
-  }
-
-  /** Build the empty popover once, on first use. */
-  function ensurePanel() {
-    if (panel) {
-      return panel;
-    }
-
-    panel = document.createElement("div");
-    panel.className = POPOVER_CLASS;
-    panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", PREVIEW_LABEL);
-    panel.hidden = true;
-
-    // The head is also the handle: it says so, and it is where a drag starts.
-    head = document.createElement("div");
-    head.className = HEAD_CLASS;
-    head.setAttribute("title", DRAG_LABEL);
-    head.addEventListener("pointerdown", onHeadPointerDown);
-
-    // The head is two columns: the chapter's name, which may be long and is
-    // therefore the one allowed to shrink, and the buttons, which must not.
-    var headText = document.createElement("div");
-    headText.className = HEAD_TEXT_CLASS;
-
-    title = document.createElement("p");
-    title.className = "preview-title";
-
-    path = document.createElement("p");
-    path.className = "preview-path";
-
-    headText.appendChild(title);
-    headText.appendChild(path);
-
-    var actions = document.createElement("div");
-    actions.className = ACTIONS_CLASS;
-
-    pinButton = iconButton("pin", PIN_CLASS, PIN_LABEL, pinSvg);
-    pinButton.setAttribute("aria-pressed", "false");
-    pinButton.addEventListener("click", onPinClick);
-
-    // The reader already holds this panel when they reach for its buttons, so a
-    // close here must not be read as "a click inside the panel" and pin it.
-    closeButton = iconButton("close", CLOSE_CLASS, CLOSE_LABEL, closeSvg);
-    closeButton.addEventListener("click", onCloseClick);
-
-    actions.appendChild(pinButton);
-    actions.appendChild(closeButton);
-
-    head.appendChild(headText);
-    head.appendChild(actions);
-
-    // The notice: a heading and one sentence. The document and the chapter are
-    // their own `<code>` elements filled with `textContent`, because a path and
-    // a heading may both contain markup characters and are shown as written.
-    notice = document.createElement("div");
-    notice.className = "preview-missing";
-
-    var noticeTitle = document.createElement("p");
-    noticeTitle.className = "preview-missing-title";
-    noticeTitle.textContent = MISSING_TITLE;
-
-    noticeText = document.createElement("p");
-    noticeText.className = "preview-missing-text";
-
-    noticeDoc = document.createElement("code");
-    noticeDoc.className = "preview-missing-code";
-
-    noticeChapter = document.createElement("code");
-    noticeChapter.className = "preview-missing-code";
-
-    noticeText.appendChild(document.createTextNode(MISSING_SEPARATOR));
-    noticeText.appendChild(noticeChapter);
-    noticeText.appendChild(document.createTextNode(MISSING_TAIL));
-    noticeText.appendChild(noticeDoc);
-
-    notice.appendChild(noticeTitle);
-    notice.appendChild(noticeText);
-
-    // The loading state: the spinner is the stylesheet's, drawn on the
-    // element's own `::before`, so the panel loads nothing and animates
-    // nothing until a document is actually on its way.
-    loading = document.createElement("div");
-    loading.className = LOADING_CLASS;
-
-    var loadingText = document.createElement("p");
-    loadingText.className = LOADING_TEXT_CLASS;
-    loadingText.textContent = LOADING_TEXT;
-    loading.appendChild(loadingText);
-
-    // The error state: a heading and one sentence, the notice's shape again.
-    // The document's name stays in the head, where the loading state left it.
-    error = document.createElement("div");
-    error.className = ERROR_CLASS;
-
-    var errorTitle = document.createElement("p");
-    errorTitle.className = "preview-error-title";
-    errorTitle.textContent = ERROR_TITLE;
-
-    var errorText = document.createElement("p");
-    errorText.className = "preview-error-text";
-    errorText.textContent = ERROR_TEXT;
-
-    error.appendChild(errorTitle);
-    error.appendChild(errorText);
-
-    // The locked state: a heading, one sentence and the form the reader
-    // answers in place. The error line is hidden until an attempt fails and
-    // clears itself the moment the reader types again.
-    locked = document.createElement("div");
-    locked.className = LOCKED_CLASS;
-
-    var lockedTitle = document.createElement("p");
-    lockedTitle.className = "preview-locked-title";
-    lockedTitle.textContent = LOCKED_TITLE;
-
-    var lockedText = document.createElement("p");
-    lockedText.className = "preview-locked-text";
-    lockedText.textContent = LOCKED_TEXT;
-
-    unlockForm = document.createElement("form");
-    unlockForm.className = UNLOCK_FORM_CLASS;
-    unlockForm.addEventListener("submit", onUnlockSubmit);
-
-    unlockInput = document.createElement("input");
-    unlockInput.className = UNLOCK_INPUT_CLASS;
-    unlockInput.setAttribute("type", "password");
-    unlockInput.setAttribute("aria-label", UNLOCK_INPUT_LABEL);
-    unlockInput.setAttribute("autocomplete", "off");
-    unlockInput.addEventListener("input", onUnlockInput);
-
-    unlockSubmit = document.createElement("button");
-    unlockSubmit.className = UNLOCK_SUBMIT_CLASS;
-    unlockSubmit.setAttribute("type", "submit");
-    unlockSubmit.textContent = UNLOCK_SUBMIT_TEXT;
-
-    unlockForm.appendChild(unlockInput);
-    unlockForm.appendChild(unlockSubmit);
-
-    unlockError = document.createElement("p");
-    unlockError.className = UNLOCK_ERROR_CLASS;
-    unlockError.setAttribute("role", "alert");
-    unlockError.textContent = UNLOCK_ERROR_TEXT;
-    unlockError.hidden = true;
-
-    locked.appendChild(lockedTitle);
-    locked.appendChild(lockedText);
-    locked.appendChild(unlockForm);
-    locked.appendChild(unlockError);
-
-    body = document.createElement("div");
-    body.className = BODY_CLASS;
-
-    panel.appendChild(head);
-    panel.appendChild(notice);
-    panel.appendChild(loading);
-    panel.appendChild(error);
-    panel.appendChild(locked);
-    panel.appendChild(body);
-    // The handles go on last: they are absolutely positioned strips over the
-    // panel's own edges and must paint above the body's content, or the edge
-    // of a wide table would take the grip away.
-    RESIZE_DIRECTIONS.forEach(function (direction) {
-      panel.appendChild(resizeHandle(direction));
-    });
-    document.body.appendChild(panel);
-
+  var panel = createPreviewPanel({
+    // A press that survived the frame's chrome checks is a handle press.
+    onHeadPress: function (event) {
+      return gestures.onHeadPointerDown(event);
+    },
+    onPinClick: function (event) {
+      return gestures.onPinClick(event);
+    },
+    onCloseClick: function (event) {
+      stopEvent(event);
+      close();
+    },
     // Entering the panel cancels a pending close; leaving it starts one.
-    panel.addEventListener("pointerenter", clearCloseTimer);
-    panel.addEventListener("pointerleave", function () {
-      scheduleClose();
-    });
-
-    // The wheel over the panel belongs to the panel: scrolling the chapter in
-    // the body must never move the article behind it, and over the head or a
-    // notice — where nothing in the panel scrolls — the browser's default
-    // action would reach the article itself. Non-passive, because the answer
-    // to those events is preventDefault.
-    panel.addEventListener("wheel", onPanelWheel, { passive: false });
-
-    // Reading the panel is reaching for it: a click anywhere inside it says the
-    // reader wants this chapter at hand, and the delays stop applying.
-    panel.addEventListener("click", onPanelClick);
-
-    return panel;
-  }
-
-  /** Whether the reader holds the panel, so no delay may take it away. */
-  function isPinned() {
-    return pinned && !!panel && !panel.hidden;
-  }
-
-  /**
-   * Write the pin state through every place that shows it.
-   *
-   * One function owns the field, the frame's attribute and the button's state,
-   * so the three can never disagree — a frame that says "pinned" over a button
-   * that says otherwise is the one bug this state invites.
-   */
-  function setPinned(value) {
-    pinned = !!value;
-
-    if (!panel) {
-      return;
-    }
-
-    if (pinned) {
-      panel.setAttribute(PIN_ATTRIBUTE, "true");
-    } else {
-      panel.removeAttribute(PIN_ATTRIBUTE);
-    }
-
-    if (pinButton) {
-      pinButton.setAttribute("aria-pressed", pinned ? "true" : "false");
-      pinButton.setAttribute("aria-label", pinned ? UNPIN_LABEL : PIN_LABEL);
-      pinButton.setAttribute("title", pinned ? UNPIN_LABEL : PIN_LABEL);
-    }
-  }
-
-  /** A head button: an icon, a name and the button semantics it needs. */
-  function iconButton(kind, className, label, draw) {
-    var button = document.createElement("button");
-    button.className = className;
-    button.setAttribute("type", "button");
-    button.setAttribute("aria-label", label);
-    button.setAttribute("title", label);
-    button.setAttribute("data-icon", kind);
-    button.appendChild(draw());
-
-    return button;
-  }
-
-  /**
-   * Create a node in the SVG namespace.
-   *
-   * `createElementNS` belongs to `document` alone: an `SVGElement` does not
-   * carry it, so asking the element to create its own children throws
-   * `createElementNS is not a function` and takes the whole panel down with it.
-   * Every SVG node is therefore built by the document and appended to its
-   * parent. The fallback keeps a DOM without `createElementNS` working, the
-   * same way the panel itself degrades.
-   */
-  function svgNode(name) {
-    var node = document.createElementNS
-      ? document.createElementNS(SVG_NAMESPACE, name)
-      : document.createElement(name);
-
-    return node;
-  }
-
-  /** A button's drawing surface. */
-  function svgRoot() {
-    var svg = svgNode("svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("aria-hidden", "true");
-
-    return svg;
-  }
-
-  /** One stroke of a button's drawing, appended to its `svg`. */
-  function svgPath(parent, data) {
-    var element = svgNode("path");
-    element.setAttribute("d", data);
-    parent.appendChild(element);
-
-    return element;
-  }
-
-  /** The pin: a head and a needle, drawn inline so the page loads nothing. */
-  function pinSvg() {
-    var svg = svgRoot();
-    svgPath(svg, "M9 4h6");
-    svgPath(svg, "M10 4v6l-2.5 3h9L14 10V4");
-    svgPath(svg, "M12 13v7");
-
-    return svg;
-  }
-
-  /** The cross that closes the panel. */
-  function closeSvg() {
-    var svg = svgRoot();
-    svgPath(svg, "M6 6l12 12");
-    svgPath(svg, "M18 6 6 18");
-
-    return svg;
-  }
-
-  /**
-   * Place the panel next to `link` and keep it inside the viewport.
-   *
-   * Below the link by default; above it when there is no room, which is the
-   * common case for a link near the bottom of a long paragraph. When neither
-   * side holds the whole panel — a link near the middle of a short window —
-   * the panel lays itself on the roomier side and shrinks to the space there,
-   * so the link it describes stays on screen beside it rather than under it.
-   *
-   * Every placement writes the same invariant with a `max-height`: the panel
-   * never crosses the link it describes. The height was measured a moment
-   * ago and the layout may disagree later — a late font, a table's controls,
-   * anything the panel gains after this read — so each branch caps the panel
-   * at the space its own placement leaves, and content that grows after the
-   * measurement scrolls inside the body instead of pushing the bottom edge
-   * over the link.
-   */
-  function position(link) {
-    // A panel the reader has moved is theirs: anchoring it again would undo
-    // the one thing they did to it.
-    if (moved) {
-      return;
-    }
-
-    // Measure at the panel's natural height. A height a previous showing was
-    // shrunk to belongs to that showing; this one decides afresh, and the
-    // cleanup here is what keeps consecutive placings from compounding.
-    panel.style.maxHeight = "";
-
-    var rect = link.getBoundingClientRect();
-    var width = panel.offsetWidth || 480;
-    var height = panel.offsetHeight || 0;
-    var viewportWidth =
-      view().innerWidth || document.documentElement.clientWidth;
-    var viewportHeight =
-      view().innerHeight || document.documentElement.clientHeight;
-
-    var below = rect.bottom + GAP_PX;
-    var above = rect.top - GAP_PX - height;
-    var top = below;
-    if (height && below + height > viewportHeight - MARGIN_PX) {
-      if (above >= MARGIN_PX) {
-        top = above;
-        // The panel fits above as measured; the cap below keeps it there if
-        // it grows afterwards. It is the measured height exactly — a floor
-        // would let the bottom edge cross the link, which is the one thing
-        // this placement may never do.
-        panel.style.maxHeight = Math.max(0, rect.top - GAP_PX - top) + "px";
-      } else {
-        // Neither side holds the whole panel. The old fallback pinned the
-        // panel to the bottom edge, which could park it right over the link
-        // the reader is pointing at. The panel takes the roomier side
-        // instead and shrinks to the space there; the body scrolls, so the
-        // chapter stays reachable at the reduced height.
-        var roomBelow = viewportHeight - MARGIN_PX - below;
-        var roomAbove = rect.top - GAP_PX - MARGIN_PX;
-        if (roomAbove >= roomBelow) {
-          top = MARGIN_PX;
-          panel.style.maxHeight =
-            Math.max(MIN_SHRUNK_HEIGHT_PX, roomAbove) + "px";
-        } else {
-          top = below;
-          panel.style.maxHeight =
-            Math.max(MIN_SHRUNK_HEIGHT_PX, roomBelow) + "px";
-        }
-      }
-    }
-
-    var left = Math.min(
-      Math.max(MARGIN_PX, rect.left),
-      Math.max(MARGIN_PX, viewportWidth - width - MARGIN_PX),
-    );
-
-    place(left, top);
-  }
-
-  /**
-   * Write a position, keeping the whole panel in the viewport.
-   *
-   * A panel taller than the window is pinned to the top margin instead of
-   * being pushed to a negative top: the range would otherwise be empty and the
-   * panel would jump between two impossible corners.
-   */
-  function place(left, top) {
-    var width = panel.offsetWidth || 0;
-    var height = panel.offsetHeight || 0;
-    var viewportWidth =
-      view().innerWidth || document.documentElement.clientWidth;
-    var viewportHeight =
-      view().innerHeight || document.documentElement.clientHeight;
-
-    panel.style.left =
-      Math.round(clampPosition(left, width, viewportWidth)) + "px";
-    panel.style.top =
-      Math.round(clampPosition(top, height, viewportHeight)) + "px";
-  }
-
-  /** `value` kept inside `[MARGIN_PX, viewport - size - MARGIN_PX]`. */
-  function clampPosition(value, size, viewport) {
-    var limit = viewport - size - MARGIN_PX;
-    if (limit < MARGIN_PX) {
-      return MARGIN_PX;
-    }
-
-    return Math.min(Math.max(MARGIN_PX, value), limit);
-  }
-
-  /** Where the panel currently is, as the browser lays it out. */
-  function panelOrigin() {
-    var left = parseFloat(panel.style.left);
-    var top = parseFloat(panel.style.top);
-    var rect = panel.getBoundingClientRect
-      ? panel.getBoundingClientRect()
-      : null;
-
-    return {
-      left: Number.isNaN(left) ? (rect ? rect.left : 0) : left,
-      top: Number.isNaN(top) ? (rect ? rect.top : 0) : top,
-    };
-  }
-
-  /**
-   * A press on the head: the reader asks to move the panel.
-   *
-   * The panel is claimed at once, before a single pixel of movement: a drag
-   * crosses the gap between the link and the panel, and an unpinned panel
-   * would be closed by the pointer leaving on the way. Claiming it here rather
-   * than on the first move also means the press is already a promise the panel
-   * keeps — a reader who presses and lets go without moving still holds it,
-   * which is what a click on the panel did before.
-   *
-   * The default action is cancelled so the heading is not selected while the
-   * panel travels with the hand; the event itself still bubbles, so the click
-   * the browser derives from this press reaches `onPanelClick` as usual.
-   */
-  function onHeadPointerDown(event) {
-    if (!event || event.button) {
-      return;
-    }
-
-    var target = event.target;
-    if (target === pinButton || target === closeButton) {
-      return;
-    }
-    // A widget inside a preview is not a handle either.
-    if (
-      target &&
-      typeof target.closest === "function" &&
-      target.closest("button")
-    ) {
-      return;
-    }
-
-    if (event.preventDefault) {
-      event.preventDefault();
-    }
-
-    setPinned(true);
-
-    var origin = panelOrigin();
-    press = {
-      x: event.clientX,
-      y: event.clientY,
-      left: origin.left,
-      top: origin.top,
-    };
-    dragging = false;
-    listenForDrag();
-  }
-
-  /**
-   * Watch the whole page for the rest of the gesture.
-   *
-   * The panel is fixed and small, so the pointer regularly leaves it before
-   * the drag ends; a move listener on the head would stop following there.
-   */
-  function listenForDrag() {
-    var page = windowTarget();
-    if (!page || typeof page.addEventListener !== "function") {
-      return;
-    }
-    page.addEventListener("pointermove", onDragMove);
-    page.addEventListener("pointerup", onDragEnd);
-    page.addEventListener("pointercancel", onDragEnd);
-  }
-
-  function unlistenForDrag() {
-    var page = windowTarget();
-    if (!page || typeof page.removeEventListener !== "function") {
-      return;
-    }
-    page.removeEventListener("pointermove", onDragMove);
-    page.removeEventListener("pointerup", onDragEnd);
-    page.removeEventListener("pointercancel", onDragEnd);
-  }
-
-  function onDragMove(event) {
-    if (!press || !event) {
-      return;
-    }
-
-    var dx = event.clientX - press.x;
-    var dy = event.clientY - press.y;
-
-    if (!dragging) {
-      // Below the threshold the panel does not move at all: a click must not
-      // nudge it, and the browser's own sub-pixel jitter never gets past here.
-      if (
-        Math.abs(dx) < DRAG_THRESHOLD_PX &&
-        Math.abs(dy) < DRAG_THRESHOLD_PX
-      ) {
-        return;
-      }
-      dragging = true;
-      moved = true;
-      panel.setAttribute(DRAGGING_ATTRIBUTE, "true");
-    }
-
-    place(press.left + dx, press.top + dy);
-  }
-
-  /**
-   * The gesture is over, wherever the pointer was released.
-   *
-   * The panel keeps the place it was left in and the pin the press put on it:
-   * ending a drag is not a dismissal, and only the acts that always closed the
-   * panel — the buttons, Escape, the reference again — still do.
-   */
-  function onDragEnd() {
-    endDrag();
-  }
-
-  /**
-   * Give up the gesture: drop the origin, stop watching the page and take the
-   * dragging mark off. Idempotent, because every path that can end a showing
-   * asks for it — a release, a close, a dispose, a new press.
-   */
-  function endDrag() {
-    press = null;
-    dragging = false;
-    if (panel) {
-      panel.removeAttribute(DRAGGING_ATTRIBUTE);
-    }
-    unlistenForDrag();
-  }
-
-  /**
-   * One handle: a strip the panel is resized by, wired to the direction it
-   * was built for.
-   *
-   * The direction travels in a closure rather than being read back off the
-   * element: a listener is invoked with `this` unset under a module and the
-   * event's target is the handle only by convention, so the factory is what
-   * keeps the wiring honest. Element and listener are kept on `resizeHandles`
-   * together, because `dispose` takes both off the page.
-   */
-  function resizeHandle(direction) {
-    var element = document.createElement("div");
-    element.className = RESIZE_CLASS;
-    element.setAttribute(RESIZE_DIRECTION_ATTRIBUTE, direction);
-
-    var listener = function (event) {
-      onResizePointerDown(direction, event);
-    };
-    element.addEventListener("pointerdown", listener);
-
-    resizeHandles.push({ element: element, listener: listener });
-
-    return element;
-  }
-
-  /**
-   * A press on a handle: the reader asks to change the panel's size.
-   *
-   * The panel is claimed at once, before a single pixel of movement, the way
-   * a press on the head claims it — a resize crosses the same empty page a
-   * drag does, and a panel that closed mid-gesture would take the gesture's
-   * meaning with it. The geometry the resize works from is read here, at the
-   * press, so every move that follows is a delta against what the panel was,
-   * not against wherever a reflow has taken it.
-   *
-   * The default action is cancelled so the edge of the chapter under the
-   * strip is not selected while the frame follows the hand; the event still
-   * bubbles, so the click a release derives reaches `onPanelClick` as usual.
-   */
-  function onResizePointerDown(direction, event) {
-    if (!event || event.button) {
-      return;
-    }
-
-    if (event.preventDefault) {
-      event.preventDefault();
-    }
-
-    setPinned(true);
-    // A new press replaces whatever resize was in progress.
-    endResize();
-
-    var origin = panelOrigin();
-    resizing = {
-      dir: direction,
-      x: event.clientX,
-      y: event.clientY,
-      left: origin.left,
-      top: origin.top,
-      width: panel.offsetWidth || MIN_WIDTH_PX,
-      height: panel.offsetHeight || MIN_HEIGHT_PX,
-    };
-    listenForResize();
-  }
-
-  /**
-   * Watch the whole page for the rest of the gesture, the way a drag is
-   * watched: the pointer regularly leaves the panel mid-resize, and a
-   * listener on the strip would stop following there.
-   */
-  function listenForResize() {
-    var page = windowTarget();
-    if (!page || typeof page.addEventListener !== "function") {
-      return;
-    }
-    page.addEventListener("pointermove", onResizeMove);
-    page.addEventListener("pointerup", onResizeEnd);
-    page.addEventListener("pointercancel", onResizeEnd);
-  }
-
-  function unlistenForResize() {
-    var page = windowTarget();
-    if (!page || typeof page.removeEventListener !== "function") {
-      return;
-    }
-    page.removeEventListener("pointermove", onResizeMove);
-    page.removeEventListener("pointerup", onResizeEnd);
-    page.removeEventListener("pointercancel", onResizeEnd);
-  }
-
-  function onResizeMove(event) {
-    if (!resizing || !event) {
-      return;
-    }
-
-    // Each handle answers one axis: east the width's, south the height's,
-    // the corner both. The axis a handle does not answer reads as no movement
-    // at all, so its share of the threshold never trips on noise alone.
-    var dx = isWidthAxis(resizing.dir) ? event.clientX - resizing.x : 0;
-    var dy = isHeightAxis(resizing.dir) ? event.clientY - resizing.y : 0;
-
-    if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) {
-      return;
-    }
-
-    if (!resizingActive) {
-      resizingActive = true;
-      // A resized panel is placed by hand too: `position()` must not re-anchor
-      // it or rebuild the height a placement capped — not after the open, and
-      // not when a document a panel waits for arrives mid-gesture.
-      moved = true;
-      panel.setAttribute(RESIZE_ATTRIBUTE, "true");
-    }
-
-    applySize(dx, dy);
-  }
-
-  /** Whether `direction` answers the width: east and the corner do. */
-  function isWidthAxis(direction) {
-    return direction === "e" || direction === "se";
-  }
-
-  /** Whether `direction` answers the height: south and the corner do. */
-  function isHeightAxis(direction) {
-    return direction === "s" || direction === "se";
-  }
-
-  /**
-   * Write the size the gesture has reached, clamped to a floor on each axis
-   * and to the edge of the viewport.
-   *
-   * Only the axes the pressed handle answers are written: an east resize
-   * leaves the height to the content and to the placement that capped it, and
-   * a south resize leaves the width alone. The height is written twice, as
-   * `height` and as a `max-height` of the same pixel count, because the
-   * stylesheet's own share of the window would otherwise cap a panel the
-   * reader grew past it — and a chapter shorter than the frame simply ends
-   * the panel early, exactly as it would end a window.
-   */
-  function applySize(dx, dy) {
-    if (isWidthAxis(resizing.dir)) {
-      var viewportWidth =
-        view().innerWidth || document.documentElement.clientWidth;
-      var maxWidth = Math.max(
-        MIN_WIDTH_PX,
-        viewportWidth - resizing.left - MARGIN_PX,
-      );
-      panel.style.width =
-        Math.round(
-          Math.max(MIN_WIDTH_PX, Math.min(resizing.width + dx, maxWidth)),
-        ) + "px";
-    }
-
-    if (isHeightAxis(resizing.dir)) {
-      var viewportHeight =
-        view().innerHeight || document.documentElement.clientHeight;
-      var maxHeight = Math.max(
-        MIN_HEIGHT_PX,
-        viewportHeight - resizing.top - MARGIN_PX,
-      );
-      var height =
-        Math.round(
-          Math.max(MIN_HEIGHT_PX, Math.min(resizing.height + dy, maxHeight)),
-        ) + "px";
-      panel.style.height = height;
-      panel.style.maxHeight = height;
-    }
-  }
-
-  /**
-   * The gesture is over, wherever the pointer was released.
-   *
-   * The panel keeps the size the gesture left and the pin the press put on
-   * it: ending a resize is not a dismissal, exactly as ending a drag is not.
-   */
-  function onResizeEnd() {
-    endResize();
-  }
-
-  /**
-   * Give up the resize: drop the origin, stop watching the page and take the
-   * resizing mark off. Idempotent, because every path that can end a showing
-   * asks for it — a release, a close, a dispose, a new press.
-   */
-  function endResize() {
-    resizing = null;
-    resizingActive = false;
-    if (panel) {
-      panel.removeAttribute(RESIZE_ATTRIBUTE);
-    }
-    unlistenForResize();
-  }
-
-  /** The destination `link` addresses, or `null` when it is no document link. */
-  function destinationOf(link) {
-    return Links.parseDocLink(link.getAttribute("href"));
-  }
-
-  /** The notice `link` was marked with by the build, or `null`. */
-  function missingOf(link, destination) {
-    if (!taggedMissing(link)) {
-      return null;
-    }
-
-    return {
-      kind: "missing",
-      docId: destination.id,
-      anchor: Links.missingAnchorOf(
-        link.getAttribute(Links.MISSING_ANCHOR_ATTRIBUTE),
-      ),
-    };
-  }
-
-  /** Fill the panel with `preview` and put it beside `link`. */
-  function showPreview(preview, link) {
-    ensurePanel();
-    // The panel wears one of four roles; a preview must not inherit the
-    // notice frame, the loading mark or the error frame a previous hover
-    // left on it.
-    setRole("preview");
-    title.textContent = preview.title;
-    path.textContent = preview.path;
-
-    // The chapter reaches the page the way the article does — the shared
-    // document-body render fills the panel's standing body and enhances the
-    // tables right after the markup exists — and the diagrams are drawn for
-    // the theme in effect, the step that measures against the layout.
-    DocBody.fillDocBody(body, preview.html, { enhanceTables: true });
-    DocBody.drawDiagrams(body, theme());
-    DocBody.drawMath(body);
-
-    show(link);
-  }
-
-  function open(link) {
-    var destination = destinationOf(link);
-    if (!destination) {
-      return;
-    }
-
-    // A reference the build could not resolve is recognised from its mark
-    // rather than from the `href`: the route deliberately carries no anchor
-    // (no element emits one), so re-parsing it would only ever say "the whole
-    // document". The mark is read before the anchor is consulted for the
-    // same reason — a broken reference's route also carries none, and the
-    // notice it owes must not be mistaken for a request for the document.
-    var missing = missingOf(link, destination);
-    if (missing) {
-      openNotice(link, missing);
-      return;
-    }
-
-    // A reference into a sealed document has no markup to preview yet: the
-    // panel opens in its locked state and the password form decides what it
-    // becomes. The store knows the seal from the payload alone — the
-    // embedded entry carries the blob, the pages manifest carries the mark —
-    // so the answer needs no fetch first, whatever the format.
-    if (
-      documents &&
-      typeof documents.isEncrypted === "function" &&
-      documents.isEncrypted(destination.id)
-    ) {
-      openLocked(destination, link);
-      return;
-    }
-
-    if (!destination.anchor) {
-      // A reference without a chapter names the whole document, and the panel
-      // shows it whole: the same window a chapter reference opens, opened
-      // onto the document instead of onto one chapter of it.
-      whenArrived(destination, link, Preview.createDocumentPreview);
-      return;
-    }
-
-    whenArrived(destination, link, function (doc) {
-      return Preview.createPreview(doc, destination.anchor);
-    });
-  }
-
-  /**
-   * Answer `link` with the preview `build` makes of the document it names.
-   *
-   * The document on hand answers at once, which is every hover in the
-   * embedded formats and every revisit in the split one. Otherwise — and only
-   * in the split format, where the file can still arrive — the panel opens at
-   * once with its loading state, and the answer fills it when the file gets
-   * here. The answer re-checks the link it belongs to, because the pointer
-   * may have moved on while it travelled — a close or a newer hover clears
-   * the pending link, and an answer for a link nobody points at any more
-   * would be a surprise, not a preview.
-   *
-   * The answers that are not previews are handled, not swallowed: a fetch
-   * that failed turns the panel into its error state, which a later hover
-   * retries because the store keeps no failed request; a document without
-   * the hovered chapter says so through the notice a broken reference wears.
-   * In the embedded formats a document the payload does not hold does not
-   * exist — no request could produce it — and the panel stays closed, the
-   * silence it has always been.
-   */
-  function whenArrived(destination, link, build) {
-    var doc = documents ? documents.peek(destination.id) : null;
-    var preview = build(doc);
-    if (preview) {
-      // A sealed model answers a locked shape instead of markup: the panel
-      // asks for the password rather than pretending the chapter is missing.
-      // The entry the store holds is the payload's own word, so this stays
-      // the answer even where the manifest said nothing.
-      if (preview.locked) {
-        openLocked(destination, link);
-        return;
-      }
-      showPreview(preview, link);
-      return;
-    }
-
-    if (!documents || typeof documents.get !== "function") {
-      return;
-    }
-
-    // A document already in hand whose chapter does not build is a final
-    // answer — the chapter is not there — and stays silent, whatever the
-    // format: the panel has never opened for it and does not start now.
-    var lazy = typeof documents.isLazy === "function" && documents.isLazy();
-    if (doc) {
-      return;
-    }
-
-    var travelling = documents.get(destination.id);
-    if (!travelling || typeof travelling.then !== "function") {
-      return;
-    }
-
-    if (lazy) {
-      showLoading(destination, link);
-    }
-
-    travelling.then(function (loaded) {
-      if (pending !== link && anchor !== link) {
-        return;
-      }
-
-      var arrived = loaded ? build(loaded) : null;
-      if (arrived) {
-        if (arrived.locked) {
-          openLocked(destination, link);
-          return;
-        }
-        showPreview(arrived, link);
-        return;
-      }
-
-      if (!lazy) {
-        return;
-      }
-
-      if (!loaded) {
-        showError(link);
-        return;
-      }
-
-      openNotice(link, {
-        docId: destination.id,
-        anchor: destination.anchor,
-      });
-    });
-  }
-
-  /**
-   * Show the notice for a reference whose chapter the document does not have.
-   *
-   * Nothing is reported to the reader's banner: the build already marked this
-   * link, so hovering it is the reader asking what is wrong with it, and a
-   * tooltip answers that where the pointer already is. The banner belongs to
-   * the click, which navigates and therefore needs to explain the navigation.
-   */
-  function openNotice(link, resolved) {
-    ensurePanel();
-    setRole("missing");
-    // Nothing of a previous preview, loading mark or error may survive: the
-    // notice owns the panel.
-    body.textContent = "";
-    title.textContent = MISSING_TITLE;
-    path.textContent = resolved.docId ? String(resolved.docId) : "";
-    noticeChapter.textContent = resolved.anchor ? String(resolved.anchor) : "";
-    noticeDoc.textContent = resolved.docId ? String(resolved.docId) : "";
-
-    show(link);
-  }
-
-  /**
-   * Show the panel beside `link` with its loading state, for a document the
-   * split build has not put on the page yet.
-   *
-   * The head names the document from the manifest — the one thing about it the
-   * page already holds — and the body is the spinner, so the panel is on
-   * screen the moment the hover matures instead of after the chunk travels.
-   */
-  function showLoading(destination, link) {
-    ensurePanel();
-    setRole("loading");
-    // Nothing of a previous preview, notice or error may survive: the loading
-    // state owns the panel until the document arrives.
-    body.textContent = "";
-    title.textContent = titleOf(destination.id);
-    path.textContent = destination.id;
-
-    show(link);
-  }
-
-  /**
-   * Turn the panel's loading state into its error state.
-   *
-   * The panel is already on screen for this link — the answer only reaches
-   * here through the guard that says so — so the head keeps the document's
-   * name and only the body changes: the spinner gives way to what went wrong
-   * and what the reader can do about it.
-   */
-  function showError(link) {
-    ensurePanel();
-    setRole("error");
-    body.textContent = "";
-
-    show(link);
-  }
-
-  /**
-   * Show the panel beside `link` in its locked state, for a document the
-   * build sealed.
-   *
-   * The head names the document the reference points at — the one thing the
-   * payload still says in public — and the body is the password form. A
-   * password the session already holds is tried quietly before the reader
-   * has to type: one that fits replaces this state with the chapter itself.
-   */
-  function openLocked(destination, link) {
-    ensurePanel();
-    setRole("locked");
-    // Nothing of a previous preview, notice, loading mark or error may
-    // survive: the locked state owns the panel.
-    body.textContent = "";
-    title.textContent = titleOf(destination.id);
-    path.textContent = destination.id;
-    resetUnlockForm();
-
-    show(link);
-    attemptQuietUnlock(destination, link);
-  }
-
-  /** Clear the locked state's form: no text, no error, no running attempt. */
-  function resetUnlockForm() {
-    unlocking = false;
-    if (!unlockInput || !unlockSubmit || !unlockError) {
-      return;
-    }
-
-    unlockInput.value = "";
-    unlockInput.disabled = false;
-    unlockSubmit.disabled = false;
-    unlockSubmit.textContent = UNLOCK_SUBMIT_TEXT;
-    unlockError.hidden = true;
-  }
-
-  /** Turn the form's busy state on and off: no retype while an attempt runs. */
-  function setUnlocking(value) {
-    unlocking = !!value;
-    if (!unlockInput || !unlockSubmit) {
-      return;
-    }
-
-    unlockInput.disabled = unlocking;
-    unlockSubmit.disabled = unlocking;
-    unlockSubmit.textContent = unlocking
-      ? UNLOCK_BUSY_TEXT
-      : UNLOCK_SUBMIT_TEXT;
-  }
-
-  /** The reader is retyping: a failed attempt's answer stops applying. */
-  function onUnlockInput() {
-    if (unlockError) {
-      unlockError.hidden = true;
-    }
-  }
-
-  /**
-   * The password form's answer: unlock the document where the panel stands.
-   *
-   * The attempt belongs to the controller's `onUnlock`, the same door the
-   * lock page's dialog answers through, so a password that opened its
-   * document is remembered for the session by the same hand. The answer is
-   * one of two: the chapter takes the panel, or the error line asks for
-   * another password. A "no" from a document that is no longer sealed is the
-   * race a quiet attempt won while the reader was still typing — the
-   * document opened elsewhere, and no error may claim the password failed.
-   */
-  function onUnlockSubmit(event) {
-    if (event && typeof event.preventDefault === "function") {
-      event.preventDefault();
-    }
-
-    if (
-      !panel ||
-      panel.hidden ||
-      !anchor ||
-      unlocking ||
-      typeof onUnlock !== "function" ||
-      !unlockInput
-    ) {
-      return;
-    }
-
-    var password = unlockInput.value;
-    var destination = destinationOf(anchor);
-    if (!destination || !password) {
-      return;
-    }
-
-    // An answered form is a claimed panel: the attempt runs where the reader
-    // left it, and the delays stop applying while it does.
-    setPinned(true);
-    var link = anchor;
-    setUnlocking(true);
-    Promise.resolve()
-      .then(function () {
-        return onUnlock(destination.id, password);
-      })
-      .then(function (unlocked) {
-        setUnlocking(false);
-        if (
-          !unlocked &&
-          (!documents ||
-            typeof documents.isEncrypted !== "function" ||
-            documents.isEncrypted(destination.id))
-        ) {
-          // Still sealed, and the password did not open it: the reader's to
-          // retype, and the line names the failure while they do.
-          if (unlockError) {
-            unlockError.hidden = false;
-          }
-          return;
-        }
-
-        resetUnlockForm();
-        showUnlockedChapter(destination, link);
-      })
-      .catch(function (_error) {
-        // A failed attempt is a retryable one: the panel does not close for
-        // an answer the store could not give.
-        setUnlocking(false);
-        if (unlockError) {
-          unlockError.hidden = false;
-        }
-      });
-  }
-
-  /**
-   * Try the passwords the session already holds, quietly, in order.
-   *
-   * A site whose articles share one password asks for it once — on whatever
-   * document the reader unlocked first — so the attempt starts as soon as
-   * the locked panel paints and answers into the panel it belongs to: a
-   * pointer that has moved on cancels the answer, the way a travelling
-   * document's does. One attempt per document runs at a time; nothing here
-   * writes the passwords anywhere but the session's own memory.
-   */
-  function attemptQuietUnlock(destination, link) {
-    var id = destination.id;
-    if (
-      typeof onUnlock !== "function" ||
-      typeof passwordCandidates !== "function"
-    ) {
-      return;
-    }
-
-    if (quietUnlocks.has(id)) {
-      return;
-    }
-
-    var passwords = passwordCandidates(id);
-    if (!passwords || !passwords.length) {
-      return;
-    }
-
-    var attempt = passwords.reduce(function (chain, password) {
-      return chain.then(function (opened) {
-        if (opened) {
-          return true;
-        }
-        return Promise.resolve()
-          .then(function () {
-            return onUnlock(id, password);
-          })
-          .then(function (unlocked) {
-            return !!unlocked;
-          });
-      });
-    }, Promise.resolve(false));
-
-    quietUnlocks.set(id, attempt);
-    var forget = function () {
-      quietUnlocks.delete(id);
-    };
-    attempt.then(forget, forget);
-
-    attempt.then(function (opened) {
-      if (opened && (pending === link || anchor === link)) {
-        showUnlockedChapter(destination, link);
-      }
-    });
-  }
-
-  /**
-   * Replace the locked state with the chapter the password opened.
-   *
-   * The document is the full model now, so the same selection the hover
-   * asked for at first answers with real markup: a chapter reference shows
-   * its chapter, a document reference shows the document whole. A pointer
-   * that has moved on cancels the answer, and a model that still fails to
-   * build leaves the locked state up rather than flashing an empty panel.
-   */
-  function showUnlockedChapter(destination, link) {
-    if (pending !== link && anchor !== link) {
-      return;
-    }
-
-    var doc =
-      documents && typeof documents.peek === "function"
-        ? documents.peek(destination.id)
-        : null;
-    var preview = destination.anchor
-      ? Preview.createPreview(doc, destination.anchor)
-      : Preview.createDocumentPreview(doc);
-    if (preview && !preview.locked) {
-      showPreview(preview, link);
-    }
-  }
-
-  /** The name the payload gives `id`, or the id itself when it does not. */
-  function titleOf(id) {
-    if (documents && typeof documents.title === "function") {
-      var named = documents.title(id);
-      if (named) {
-        return String(named);
-      }
-    }
-
-    return id;
-  }
-
-  /**
-   * Switch the panel between the four roles it can play.
-   *
-   * A role is one attribute on the panel root — `data-missing`, `data-loading`
-   * or `data-error`, and none of them for a preview — plus the accessible name
-   * that goes with it and `aria-busy` while a document is on its way. Only
-   * attributes and visible text change, so the element the page already holds
-   * is reused and no role can leave a mark on another: every entry writes the
-   * whole role, which is what keeps a loading mark from surviving into the
-   * notice that replaced it.
-   */
-  function setRole(role) {
-    if (role === "missing") {
-      panel.setAttribute(MISSING_ATTRIBUTE, "true");
-    } else {
-      panel.removeAttribute(MISSING_ATTRIBUTE);
-    }
-
-    if (role === "loading") {
-      panel.setAttribute(LOADING_ATTRIBUTE, "true");
-      panel.setAttribute("aria-busy", "true");
-    } else {
-      panel.removeAttribute(LOADING_ATTRIBUTE);
-      panel.removeAttribute("aria-busy");
-    }
-
-    if (role === "error") {
-      panel.setAttribute(ERROR_ATTRIBUTE, "true");
-    } else {
-      panel.removeAttribute(ERROR_ATTRIBUTE);
-    }
-
-    if (role === "locked") {
-      panel.setAttribute(LOCKED_ATTRIBUTE, "true");
-    } else {
-      panel.removeAttribute(LOCKED_ATTRIBUTE);
-    }
-
-    var label = PREVIEW_LABEL;
-    if (role === "missing") {
-      label = MISSING_LABEL;
-    } else if (role === "loading") {
-      label = LOADING_LABEL;
-    } else if (role === "error") {
-      label = FAILED_LABEL;
-    } else if (role === "locked") {
-      label = LOCKED_LABEL;
-    }
-    panel.setAttribute("aria-label", label);
-  }
-
-  /**
-   * Put the panel on screen beside `link`, whatever it currently shows.
-   *
-   * The panel describes one link at a time, so the link it described before is
-   * released first: moving the pointer from a sound reference to a broken one
-   * must not leave the first announcing an expanded popover it no longer has.
-   */
-  function show(link) {
-    if (anchor && anchor !== link) {
-      anchor.setAttribute("aria-expanded", "false");
-    }
-
-    anchor = link;
-    panel.hidden = false;
-    panel.setAttribute(OPEN_ATTRIBUTE, "true");
-    // Position after insertion, so `offsetWidth`/`offsetHeight` are known.
-    position(link);
-
-    if (link) {
-      link.setAttribute("aria-expanded", "true");
-    }
-  }
-
-  /** Start the open timer for `link`, cancelling any other. */
-  function scheduleOpen(link) {
-    clearOpenTimer();
-    clearCloseTimer();
-
-    if (link === anchor) {
-      return;
-    }
-
-    pending = link;
-    openTimer = view().setTimeout(function () {
-      openTimer = 0;
-      if (pending === link) {
-        open(link);
-      }
-    }, HOVER_DELAY_MS);
-  }
-
-  /**
-   * Start the close timer, cancelled when the pointer comes back.
-   *
-   * Every automatic dismissal ends up here — the pointer leaving the link or
-   * the panel, focus moving on — so a pinned panel is guarded in one place
-   * rather than in each of the handlers that ask for the timer.
-   */
-  function scheduleClose() {
-    clearOpenTimer();
-    clearCloseTimer();
-
-    if (isPinned()) {
-      return;
-    }
-
-    closeTimer = view().setTimeout(close, CLOSE_DELAY_MS);
-  }
-
-  /**
-   * A click inside the panel: the reader claims it.
-   *
-   * The buttons are the exception. Close throws the panel away; the pin has its
-   * own handler, and a click on it must not be an ordinary click first — that
-   * would make "unpin" impossible, since every click would pin again.
-   */
-  function onPanelClick(event) {
-    var target = event && event.target;
-    if (!target || target === pinButton || target === closeButton) {
-      return;
-    }
-
-    setPinned(true);
-  }
-
-  function onPinClick(event) {
-    stopEvent(event);
-
-    if (isPinned()) {
-      unpin();
-      return;
-    }
-
-    if (panel && !panel.hidden) {
-      setPinned(true);
-    }
-  }
-
-  function onCloseClick(event) {
-    stopEvent(event);
-    close();
-  }
-
-  /**
-   * Release the panel back to the delays.
-   *
-   * The pointer may already be somewhere else — the click that unpinned came
-   * from either place — so the panel is kept only while it is still under the
-   * pointer, which `scheduleClose` decides on the usual grace period.
-   */
-  function unpin() {
-    setPinned(false);
-    scheduleClose();
-  }
+    onEnterPanel: function () {
+      return gestures.clearCloseTimer();
+    },
+    onLeavePanel: function () {
+      return gestures.scheduleClose();
+    },
+    // A click inside the panel, on anything but its own buttons, claims it.
+    onClaim: function () {
+      return gestures.claim();
+    },
+    onUnlockSubmit: function (event) {
+      return roles.onUnlockSubmit(event);
+    },
+    onUnlockInput: function () {
+      return roles.onUnlockInput();
+    },
+    onResizePress: function (direction, event) {
+      return gestures.onResizePointerDown(direction, event);
+    },
+  });
+
+  var gestures = createPreviewGestures({
+    session: session,
+    panel: panel,
+    stopEvent: stopEvent,
+    // A matured hover opens the panel for the link that raised it; a grace
+    // period that ran out closes it, unless the reader pinned it meanwhile.
+    onOpen: function (link) {
+      return roles.open(link);
+    },
+    onClose: function () {
+      return close();
+    },
+  });
+
+  var roles = createPreviewRoles({
+    session: session,
+    panel: panel,
+    gestures: gestures,
+    documents: documents,
+    theme: theme,
+    onUnlock: options.onUnlock || null,
+    passwordCandidates: options.passwordCandidates || null,
+  });
 
   /** Keep a button press from reaching the panel, the document and the link. */
   function stopEvent(event) {
@@ -1796,51 +201,6 @@ export function createPreviewView(options) {
     }
   }
 
-  /** Hide the panel and drop what it showed. */
-  function close() {
-    clearOpenTimer();
-    clearCloseTimer();
-    pending = null;
-    // A closed panel is nobody's: the pin goes with the content, and so do
-    // the place the reader dragged it to and the size a resize gave it — the
-    // next hover is anchored to its own link at the stylesheet's size.
-    endDrag();
-    endResize();
-    moved = false;
-    setPinned(false);
-
-    if (!panel) {
-      anchor = null;
-      return;
-    }
-
-    if (anchor) {
-      anchor.setAttribute("aria-expanded", "false");
-    }
-
-    anchor = null;
-    panel.hidden = true;
-    panel.removeAttribute(OPEN_ATTRIBUTE);
-    // Every role is cleared, not just the one that was showing: the next
-    // hover fills in what it needs, and a closed panel holds a stale message
-    // whether or not it is visible.
-    setRole("preview");
-    body.textContent = "";
-    title.textContent = "";
-    path.textContent = "";
-    noticeChapter.textContent = "";
-    noticeDoc.textContent = "";
-    // The locked state's form is a closed panel's business too: a password
-    // half-typed belongs to the showing it was typed for, and no field of
-    // this one survives into the next.
-    resetUnlockForm();
-    // The size a resize gave the panel belongs to that showing, as the place
-    // a drag gave it does: the next hover opens at the stylesheet's size.
-    panel.style.width = "";
-    panel.style.height = "";
-    panel.style.maxHeight = "";
-  }
-
   /** The document link an event started on, or `null`. */
   function linkFrom(event) {
     var target = event && event.target;
@@ -1853,19 +213,19 @@ export function createPreviewView(options) {
   function onPointerOver(event) {
     // The reader has claimed the panel; a pointer crossing the document is not
     // an instruction to replace what it shows.
-    if (isPinned()) {
+    if (gestures.isPinned()) {
       return;
     }
 
     var link = linkFrom(event);
     if (link) {
-      scheduleOpen(link);
+      gestures.scheduleOpen(link);
     }
   }
 
   function onPointerOut(event) {
     var link = linkFrom(event);
-    if (!link || (link !== pending && link !== anchor)) {
+    if (!link || (link !== session.pending && link !== session.anchor)) {
       return;
     }
 
@@ -1875,54 +235,23 @@ export function createPreviewView(options) {
       return;
     }
 
-    scheduleClose();
+    gestures.scheduleClose();
   }
 
   function onFocusIn(event) {
     var link = linkFrom(event);
     if (link) {
-      scheduleOpen(link);
+      gestures.scheduleOpen(link);
     }
   }
 
   function onFocusOut() {
-    scheduleClose();
+    gestures.scheduleClose();
   }
 
   function onKeyDown(event) {
-    if (event.key === "Escape" && panel && !panel.hidden) {
+    if (event.key === "Escape" && panel.isOpen()) {
       close();
-    }
-  }
-
-  /**
-   * A wheel over the panel belongs to the panel.
-   *
-   * The scrollable body consumes its own wheel, and `overscroll-behavior`
-   * keeps a delta it cannot take — past either end of the chapter, or when
-   * the chapter fits — from chaining to the article behind the panel. But
-   * every other part of the panel owns no scroller at all, so there the
-   * browser's default action would reach the article itself: the reader
-   * scrolling over the head or a notice would find the document moving
-   * under their hand. Only a wheel aimed at the body keeps its default;
-   * everywhere else the event is answered with nothing.
-   */
-  function onPanelWheel(event) {
-    if (!event) {
-      return;
-    }
-
-    var target = event.target;
-    if (
-      target &&
-      typeof target.closest === "function" &&
-      target.closest("." + BODY_CLASS)
-    ) {
-      return;
-    }
-
-    if (typeof event.preventDefault === "function") {
-      event.preventDefault();
     }
   }
 
@@ -1931,7 +260,7 @@ export function createPreviewView(options) {
     // unpinned one is a hint about the paragraph under the pointer, and the
     // panel is positioned against the viewport rather than following the
     // document, so scrolling would leave it pointing at the wrong paragraph.
-    if (isPinned()) {
+    if (gestures.isPinned()) {
       return;
     }
 
@@ -1941,12 +270,7 @@ export function createPreviewView(options) {
   function onClick(event) {
     // A click inside the panel is the reader reading it, not dismissing it; the
     // panel's own handler turns that click into the pin.
-    if (
-      panel &&
-      !panel.hidden &&
-      event.target &&
-      panel.contains(event.target)
-    ) {
+    if (panel.isOpen() && event.target && panel.root().contains(event.target)) {
       return;
     }
 
@@ -1954,7 +278,7 @@ export function createPreviewView(options) {
     if (!link) {
       // A click anywhere else is the reader dismissing the preview — unless the
       // preview is pinned, which only an explicit act may end.
-      if (panel && !panel.hidden && !isPinned()) {
+      if (panel.isOpen() && !gestures.isPinned()) {
         close();
       }
       return;
@@ -1973,7 +297,7 @@ export function createPreviewView(options) {
     // The reference a pinned panel describes is where the reader already is:
     // clicking it again is how they let go, so it closes instead of navigating
     // them to the chapter they are looking at.
-    if (isPinned() && link === anchor) {
+    if (gestures.isPinned() && link === session.anchor) {
       event.preventDefault();
       close();
       return;
@@ -1982,7 +306,7 @@ export function createPreviewView(options) {
     // Everything else is a navigation, and a navigation is not a reason to take
     // away a panel the reader holds: it keeps the chapter it opened with while
     // the document behind it changes.
-    if (!isPinned()) {
+    if (!gestures.isPinned()) {
       close();
     }
 
@@ -1990,7 +314,7 @@ export function createPreviewView(options) {
     // would open the document at its top with nothing to explain why. The
     // `onMissingChapter` hook carries the authored chapter into the navigation
     // instead, which keeps the message valid for exactly one render.
-    var broken = taggedMissing(link);
+    var broken = roles.taggedMissing(link);
     if (broken && onMissingChapter) {
       onMissingChapter({
         docId: destination.id,
@@ -2029,7 +353,7 @@ export function createPreviewView(options) {
     content.addEventListener("focusout", onFocusOut);
     content.addEventListener("click", onClick);
     document.addEventListener("keydown", onKeyDown);
-    view().addEventListener("scroll", onScroll, { passive: true });
+    panel.view().addEventListener("scroll", onScroll, { passive: true });
   }
 
   function unlisten() {
@@ -2043,7 +367,7 @@ export function createPreviewView(options) {
     content.removeEventListener("focusout", onFocusOut);
     content.removeEventListener("click", onClick);
     document.removeEventListener("keydown", onKeyDown);
-    view().removeEventListener("scroll", onScroll);
+    panel.view().removeEventListener("scroll", onScroll);
   }
 
   /**
@@ -2071,98 +395,56 @@ export function createPreviewView(options) {
       }
 
       link.setAttribute(Links.DOC_LINK_ATTRIBUTE, "");
-      taggedMissing(link);
+      roles.taggedMissing(link);
       link.setAttribute("aria-expanded", "false");
     });
   }
 
-  /**
-   * Tag the broken references of `root` themselves.
-   *
-   * The build writes the mark on a `<span>` right before the link, keeping
-   * it out of the anchor itself; copying it here leaves the markup in the
-   * document free of reader-only state and lets every handler read one
-   * attribute from the anchor it already has.
-   *
-   * Returns whether `link` carries — or was just given — the mark.
-   */
-  function taggedMissing(link) {
-    if (
-      Links.missingAnchorOf(link.getAttribute(Links.MISSING_ANCHOR_ATTRIBUTE))
-    ) {
-      if (link.classList) {
-        link.classList.add(Links.MISSING_CLASS);
-      }
-      return true;
+  /** Hide the panel and drop what it showed. */
+  function close() {
+    gestures.cancelTimers();
+    session.pending = null;
+    // A closed panel is nobody's: the pin goes with the content, and so do
+    // the place the reader dragged it to and the size a resize gave it — the
+    // next hover is anchored to its own link at the stylesheet's size.
+    gestures.endDrag();
+    gestures.endResize();
+    panel.forgetPlacement();
+    gestures.release();
+
+    if (!panel.isBuilt()) {
+      session.anchor = null;
+      return;
     }
 
-    var sibling = link.previousElementSibling;
-    if (!sibling) {
-      return false;
+    if (session.anchor) {
+      session.anchor.setAttribute("aria-expanded", "false");
     }
 
-    var anchor = Links.missingAnchorOf(
-      sibling.getAttribute(Links.MISSING_ANCHOR_ATTRIBUTE),
-    );
-    if (!anchor) {
-      return false;
-    }
-
-    link.setAttribute(Links.MISSING_ANCHOR_ATTRIBUTE, anchor);
-    link.classList.add(Links.MISSING_CLASS);
-    return true;
+    session.anchor = null;
+    panel.dismiss();
+    roles.reset();
+    // The size a resize gave the panel belongs to that showing, as the place
+    // a drag gave it does: the next hover opens at the stylesheet's size.
+    panel.clearFrame();
   }
 
   /** Drop the panel, its timers and its listeners. */
   function dispose() {
     close();
     unlisten();
-    endDrag();
-
-    if (head && typeof head.removeEventListener === "function") {
-      head.removeEventListener("pointerdown", onHeadPointerDown);
-    }
-    resizeHandles.forEach(function (handle) {
-      if (
-        handle.element &&
-        typeof handle.element.removeEventListener === "function"
-      ) {
-        handle.element.removeEventListener("pointerdown", handle.listener);
-      }
-    });
-    resizeHandles = [];
-    if (panel && panel.parentNode) {
-      panel.parentNode.removeChild(panel);
-    }
-    panel = null;
-    head = null;
-    body = null;
-    title = null;
-    path = null;
-    notice = null;
-    noticeText = null;
-    noticeDoc = null;
-    noticeChapter = null;
-    loading = null;
-    error = null;
-    locked = null;
-    unlockForm = null;
-    unlockInput = null;
-    unlockSubmit = null;
-    unlockError = null;
-    unlocking = false;
-    quietUnlocks.clear();
-    pinButton = null;
-    closeButton = null;
+    gestures.dispose();
+    panel.dispose();
+    roles.dispose();
   }
 
   /** Re-render the open preview's diagrams after a theme change. */
   function refreshDiagrams() {
-    if (!panel || panel.hidden || !body) {
+    if (!panel.isOpen() || !panel.body()) {
       return;
     }
-    DiagramView.resetDiagrams(body);
-    DiagramView.renderDiagrams(body, theme());
+    DiagramView.resetDiagrams(panel.body());
+    DiagramView.renderDiagrams(panel.body(), theme());
   }
 
   listen();
@@ -2174,9 +456,9 @@ export function createPreviewView(options) {
     refreshDiagrams: refreshDiagrams,
     /** Whether the panel is on screen, for tests and for `app.js`. */
     isOpen: function () {
-      return !!panel && !panel.hidden;
+      return panel.isOpen();
     },
     /** Whether the reader holds the panel, for tests. */
-    isPinned: isPinned,
+    isPinned: gestures.isPinned,
   };
 }
