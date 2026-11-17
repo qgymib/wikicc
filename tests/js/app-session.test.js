@@ -18,6 +18,7 @@ import {
   withSession,
   startSession,
   SEALED_PASSWORD,
+  payload,
   lockedDocs,
   lockedManifest,
   lockedChunks,
@@ -575,3 +576,78 @@ test("a pages session shows the lock without fetching, and the unlock travels on
     },
   );
 });
+
+test("a payload built for another format version shows the reader's message", () => {
+  withSession(
+    { hash: "#/doc/index.md", payload: Object.assign(payload(), { v: 2 }) },
+    (session) => {
+      startSession();
+
+      const article = session.shell.get("doc-article");
+      assert.equal(
+        article.children.length,
+        1,
+        "the start stops at the message; nothing is wired after it",
+      );
+      const note = article.children[0];
+      assert.match(
+        note.className,
+        /doc-empty/,
+        "the message wears the article's failure styling",
+      );
+      assert.match(
+        note.textContent,
+        /payload format version 2/,
+        "the message names the version it refused",
+      );
+      assert.match(
+        note.textContent,
+        /rebuild/,
+        "the message says what to do about it",
+      );
+      assert.equal(
+        activeDocListEntries(session),
+        0,
+        "no document list was built for a payload the reader refused",
+      );
+    },
+  );
+});
+
+test("a payload without a format version shows the reader's message too", () => {
+  const withoutVersion = payload();
+  delete withoutVersion.v;
+  withSession(
+    { hash: "#/doc/index.md", payload: withoutVersion },
+    (session) => {
+      startSession();
+
+      const article = session.shell.get("doc-article");
+      assert.equal(
+        article.children.length,
+        1,
+        "the start stops at the message",
+      );
+      assert.match(
+        article.children[0].textContent,
+        /no payload format version/,
+        "the message names the missing field",
+      );
+    },
+  );
+});
+
+/** How many entries the document list carries, for the refusal assertions. */
+function activeDocListEntries(session) {
+  const list = session.shell.get("doc-list");
+  let count = 0;
+  (function walk(node) {
+    (node.children || []).forEach(function (child) {
+      if (child.tagName === "A") {
+        count += 1;
+      }
+      walk(child);
+    });
+  })(list);
+  return count;
+}

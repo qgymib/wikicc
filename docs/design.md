@@ -242,6 +242,17 @@ one is stated as a contract rather than left to the implementation.
   anything, writes the shell page last, so the artifact never references a
   file that is not on disk, and an asset-free or document-free site writes no
   empty directory.
+- **The payload version.** Every JSON surface the reader consumes — the
+  embedded bundle, the pages manifest, the per-document chunks and the
+  search corpus — leads with `"v": 1`, the payload format version, and the
+  reader checks it at every entry point through one helper
+  (`payload-version.js`). The number bumps when a surface's shape changes in
+  a way a reader of the previous format cannot read. A reader that finds a
+  version it does not speak — or none — refuses the surface instead of
+  rendering half of it: an unreadable embedded payload or manifest ends the
+  start with a message in the article column, and a refused chunk or corpus
+  is answered like any other failed fetch. The sealed blob's own `v` is the
+  crypto format's version, checked where the blob is opened.
 - **Weight.** `render.rs` holds a size guard that fails the build if the bundle
   regresses.
 - **The Windows icon.** A Windows executable shows an icon in the file

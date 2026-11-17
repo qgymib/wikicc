@@ -148,6 +148,7 @@ mod tests {
 
         let build = SiteBuild {
             bundle: SiteBundle {
+                v: crate::site::PAYLOAD_FORMAT_VERSION,
                 title: "Site".to_string(),
                 home: None,
                 docs: Vec::new(),

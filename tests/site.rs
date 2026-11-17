@@ -294,7 +294,7 @@ fn an_empty_folder_yields_an_empty_payload() {
     assert_eq!(build.bundle.stats, Stats::default());
     assert_eq!(
         build.bundle.to_json(),
-        r#"{"title":"Fixture","docs":[],"edges":[],"stats":{"documents":0,"assets":0,"asset_bytes":0}}"#
+        r#"{"v":1,"title":"Fixture","docs":[],"edges":[],"stats":{"documents":0,"assets":0,"asset_bytes":0}}"#
     );
 }
 

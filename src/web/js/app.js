@@ -15,8 +15,9 @@
  * trusted build input (raw HTML passthrough is documented behaviour, see
  * `docs/design.md`); every other string goes through `textContent`.
  *
- * This module is the composition root: it reads the payload, builds the
- * store, the session and the views, and hands them to the controllers the
+ * This module is the composition root: it reads the payload — refusing one
+ * whose format version it does not speak — builds the store, the session
+ * and the views, and hands them to the controllers the
  * reader is made of — `navigation.js` (the route cycle), `doc-render.js`
  * (what the article shows), `panels.js` (the layout panels) and
  * `search-controller.js` (the search scopes). The navigation and the search
@@ -40,14 +41,40 @@ import { createDocRender } from "./doc-render.js";
 import { createNavigation } from "./navigation.js";
 import { createPanels } from "./panels.js";
 import { createSearchController } from "./search-controller.js";
+import { versionProblem } from "./payload-version.js";
 
-/** Read and parse the embedded payload. */
+/** Read, parse and version-check the embedded payload. */
 function readPayload() {
   var element = document.getElementById("wikicc-payload");
   if (!element) {
     throw new Error("wikicc payload element is missing");
   }
-  return JSON.parse(element.textContent);
+  var payload = JSON.parse(element.textContent);
+  var problem = versionProblem(payload.v, "The site payload");
+  if (problem) {
+    throw new Error(problem);
+  }
+  return payload;
+}
+
+/**
+ * Say, where the article would be, that the payload cannot be read.
+ *
+ * A payload the reader cannot speak — a format version it does not know,
+ * text that is not JSON — ends the start before anything is wired: the
+ * message lands in the article column, where every other reader failure
+ * speaks, and the rest of the shell stays as the build wrote it.
+ */
+function showFatal(message) {
+  var article = document.getElementById("doc-article");
+  if (!article) {
+    return;
+  }
+  article.textContent = "";
+  var failed = document.createElement("p");
+  failed.className = "doc-empty";
+  failed.textContent = message;
+  article.appendChild(failed);
 }
 
 /** Whether the page was opened from a `file://` address. */
@@ -93,7 +120,16 @@ export function applyTheme(theme, toggle) {
 }
 
 export function start() {
-  var bundle = readPayload();
+  // A payload the reader cannot speak ends the start here, with the reason
+  // on screen: wiring the views against an unreadable bundle is what a
+  // silent misrender is.
+  var bundle;
+  try {
+    bundle = readPayload();
+  } catch (error) {
+    showFatal(error.message);
+    return;
+  }
   var docs = Array.isArray(bundle.docs) ? bundle.docs : [];
   var ids = docs.map(function (doc) {
     return doc.id;

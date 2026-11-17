@@ -158,6 +158,7 @@ export function marksOf(root) {
 /** The payload the session routes against. */
 export function payload() {
   return {
+    v: 1,
     title: "Fixture",
     docs: [
       {
@@ -211,6 +212,7 @@ export function payload() {
  */
 export function lazyManifest() {
   return {
+    v: 1,
     title: "Fixture",
     mode: "pages",
     docs: [
@@ -226,6 +228,7 @@ export function lazyManifest() {
 export function lazyChunks() {
   return {
     "pages/index.md.json?v=h0": {
+      v: 1,
       id: "index.md",
       title: "Index",
       html: "<p>root</p>",
@@ -234,6 +237,7 @@ export function lazyChunks() {
       text: "root",
     },
     "pages/guide/intro.md.json?v=h1": {
+      v: 1,
       id: "guide/intro.md",
       title: "Intro",
       html: '<h2 id="getting-started">Getting Started</h2><p>intro body</p>',
@@ -262,6 +266,7 @@ export function lazyChunks() {
 /** The search corpus the build wrote next to the shell. */
 export function lazyCorpus() {
   return {
+    v: 1,
     docs: [
       { id: "index.md", title: "Index", headings: "", text: "root" },
       {
@@ -704,6 +709,7 @@ export function lockedDocs() {
 /** The pages manifest marking its second document sealed. */
 export function lockedManifest() {
   return {
+    v: 1,
     title: "Fixture",
     mode: "pages",
     docs: [
@@ -719,6 +725,7 @@ export function lockedManifest() {
 export function lockedChunks() {
   return {
     "pages/index.md.json?v=h0": {
+      v: 1,
       id: "index.md",
       title: "Index",
       // The reference the public page carries points into the sealed one, so
@@ -729,6 +736,7 @@ export function lockedChunks() {
       text: "root",
     },
     "pages/guide/intro.md.json?v=h1": {
+      v: 1,
       id: "guide/intro.md",
       title: "Intro",
       html: "",
@@ -740,6 +748,7 @@ export function lockedChunks() {
     // The corpus the build wrote for the sealed site: the sealed document
     // contributes its title alone, and nothing of its body.
     "search.json": {
+      v: 1,
       docs: [
         { id: "index.md", title: "Index", headings: "", text: "root" },
         { id: "guide/intro.md", title: "Intro" },

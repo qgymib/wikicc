@@ -226,7 +226,7 @@ fn the_pages_format_carries_the_sealed_chunk_and_a_title_only_corpus_entry() {
     let value: Value = serde_json::from_str(&chunk).expect("chunk JSON");
     assert_eq!(
         keys_of(&value),
-        vec!["blocks", "enc", "html", "id", "text", "title", "toc"]
+        vec!["blocks", "enc", "html", "id", "text", "title", "toc", "v"]
     );
     assert!(!chunk.contains(SECRET_BODY) && !chunk.contains(PASSWORD));
 

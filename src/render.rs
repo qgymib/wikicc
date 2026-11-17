@@ -52,7 +52,9 @@ use crate::error::{Error, Result};
 use crate::markdown::highlight::{light_theme_css, theme_css};
 use crate::markdown::sections::Block;
 use crate::markdown::toc::TocEntry;
-use crate::site::{Edge, EncryptedBlob, SiteBundle, Stats, flatten_headings};
+use crate::site::{
+    Edge, EncryptedBlob, PAYLOAD_FORMAT_VERSION, SiteBundle, Stats, flatten_headings,
+};
 
 /// Page skeleton, with the four template variables below.
 ///
@@ -248,6 +250,8 @@ struct ManifestDoc<'a> {
 /// The manifest: the payload the pages shell embeds.
 #[derive(serde::Serialize)]
 struct Manifest<'a> {
+    /// Artifact format version, always 1, and the first key of the JSON.
+    v: u8,
     title: &'a str,
     /// The configured home document, absent when `.wikicc.json` set none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,6 +269,8 @@ struct Manifest<'a> {
 /// chunk is byte-identical to what earlier builds wrote.
 #[derive(serde::Serialize)]
 struct ChunkPayload<'a> {
+    /// Artifact format version, always 1, and the first key of the JSON.
+    v: u8,
     id: &'a str,
     title: &'a str,
     html: &'a str,
@@ -297,6 +303,8 @@ struct SearchRecord<'a> {
 /// The search corpus file: the text every document contributes to search.
 #[derive(serde::Serialize)]
 struct SearchCorpus<'a> {
+    /// Artifact format version, always 1, and the first key of the JSON.
+    v: u8,
     docs: Vec<SearchRecord<'a>>,
 }
 
@@ -377,6 +385,7 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
     let mut chunks = Vec::with_capacity(bundle.docs.len());
     for doc in &bundle.docs {
         let payload = ChunkPayload {
+            v: PAYLOAD_FORMAT_VERSION,
             id: &doc.id,
             title: &doc.title,
             html: &doc.html,
@@ -398,6 +407,7 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
     }
 
     let manifest = Manifest {
+        v: PAYLOAD_FORMAT_VERSION,
         title: &bundle.title,
         home: bundle.home.as_deref(),
         mode: MANIFEST_MODE,
@@ -421,6 +431,7 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
     let html = render_template(&bundle.title, css, js, &payload, favicon)?;
 
     let corpus = SearchCorpus {
+        v: PAYLOAD_FORMAT_VERSION,
         docs: bundle
             .docs
             .iter()
@@ -885,7 +896,7 @@ mod tests {
             value
                 .as_object()
                 .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
-            Some(vec!["blocks", "html", "id", "text", "title", "toc"])
+            Some(vec!["blocks", "html", "id", "text", "title", "toc", "v"])
         );
         assert_eq!(value["id"], "a.md");
         assert_eq!(
@@ -906,6 +917,29 @@ mod tests {
 
         // The manifest hash addresses the chunk, so the reader can bust caches.
         assert_eq!(manifest["docs"][0]["hash"], chunk.hash.as_str());
+    }
+
+    #[test]
+    fn the_pages_surfaces_lead_with_the_payload_version() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
+
+        let manifest = payload_of(&rendered.shell.html);
+        assert!(
+            manifest.starts_with(r#"{"v":1,"#),
+            "the manifest leads with the version: {manifest}"
+        );
+        assert!(
+            rendered.chunks[0].json.starts_with(r#"{"v":1,"#),
+            "the chunk leads with the version: {}",
+            rendered.chunks[0].json
+        );
+        assert!(
+            rendered.search_json.starts_with(r#"{"v":1,"#),
+            "the corpus leads with the version: {}",
+            rendered.search_json
+        );
     }
 
     #[test]
@@ -937,7 +971,9 @@ mod tests {
             value
                 .as_object()
                 .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
-            Some(vec!["blocks", "enc", "html", "id", "text", "title", "toc"])
+            Some(vec![
+                "blocks", "enc", "html", "id", "text", "title", "toc", "v"
+            ])
         );
         assert_eq!(value["html"], "");
         assert_eq!(value["text"], "");

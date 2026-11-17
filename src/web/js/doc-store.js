@@ -27,6 +27,12 @@
  * The search corpus of the pages format lives in one file as well; it is
  * fetched once, on the first global search, through the same cache-once rule.
  *
+ * Every fetched surface leads with its payload format version, and one that
+ * names a version this reader does not speak — or none at all — is refused
+ * like any other failed fetch: answered `null` instead of rendered, so a
+ * chunk from an incompatible build cannot reach the article in a shape this
+ * reader was never told about.
+ *
  * Encrypted documents travel sealed. Their payload entry carries an `enc`
  * blob instead of a body — the html, outline, blocks and plain text are
  * emptied by the build — and `decrypt` is the one door that opens one: the
@@ -42,6 +48,7 @@
  */
 import { encodeId } from "./router.js";
 import * as Lock from "./lock.js";
+import { versionProblem } from "./payload-version.js";
 
 /** Where the search corpus lives, relative to the page. */
 export var SEARCH_CORPUS_PATH = "search.json";
@@ -133,7 +140,12 @@ export function createDocStore(bundle, fetchImpl) {
         return response.json();
       })
       .then(function (chunk) {
-        if (chunk && typeof chunk.html === "string" && chunk.id) {
+        if (
+          chunk &&
+          !versionProblem(chunk.v, "The document chunk") &&
+          typeof chunk.html === "string" &&
+          chunk.id
+        ) {
           byId.set(id, chunk);
           return chunk;
         }
@@ -224,6 +236,9 @@ export function createDocStore(bundle, fetchImpl) {
         return response.json();
       })
       .then(function (parsed) {
+        if (parsed && versionProblem(parsed.v, "The search corpus")) {
+          return null;
+        }
         return parsed && Array.isArray(parsed.docs) ? parsed.docs : null;
       })
       .catch(function (_error) {

@@ -31,6 +31,7 @@ function manifest() {
 /** The chunk the build wrote for one document. */
 function chunk(id) {
   return {
+    v: 1,
     id: id,
     title: "T",
     html: "<p>body of " + id + "</p>",
@@ -201,8 +202,45 @@ test("a response that carries no document answers null", async () => {
   }
 });
 
+test("a chunk built for another payload version answers null", async () => {
+  for (const version of [0, 2, undefined]) {
+    const body = chunk("index.md");
+    if (version === undefined) {
+      delete body.v;
+    } else {
+      body.v = version;
+    }
+    const store = docStore.createDocStore(manifest(), () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(body) }),
+    );
+    assert.equal(
+      await store.get("index.md"),
+      null,
+      `version: ${String(version)}`,
+      "a chunk the reader cannot speak is a failed fetch, not a render",
+    );
+  }
+});
+
+test("a corpus built for another payload version answers null", async () => {
+  const fetch_ = fetcher({
+    "search.json": {
+      v: 2,
+      docs: [{ id: "index.md", title: "Index", headings: "", text: "root" }],
+    },
+  });
+  const store = docStore.createDocStore(manifest(), fetch_.fetch);
+
+  assert.equal(
+    await store.corpus(),
+    null,
+    "an incompatible corpus is refused, not indexed",
+  );
+});
+
 test("the corpus is fetched once and answered from the cache", async () => {
   const corpus = {
+    v: 1,
     docs: [{ id: "index.md", title: "Index", headings: "Index", text: "root" }],
   };
   const fetch_ = fetcher({ "search.json": corpus });
@@ -449,6 +487,7 @@ test("a sealed document of the pages format is fetched, then opened", async () =
   };
   const fetch_ = fetcher({
     "pages/guide/intro.md.json?v=h1": {
+      v: 1,
       id: SEALED_ID,
       title: "Intro",
       html: "",

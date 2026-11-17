@@ -32,6 +32,15 @@ use crate::markdown::toc::TocEntry;
 use crate::markdown::{LinkContext, render_document_with, sections_of};
 use crate::scan::{Diagnostic, Severity, SourceDoc};
 
+/// Payload format version, carried by every JSON surface the reader consumes.
+///
+/// The embedded bundle, the pages manifest, the per-document chunks and the
+/// search corpus all lead with this number, so a reader can refuse an
+/// artifact its format does not match instead of failing downstream. It is
+/// the payload's version: the sealed blob's own `v` is the crypto format's
+/// and lives beside the ciphertext.
+pub const PAYLOAD_FORMAT_VERSION: u8 = 1;
+
 /// One document as the front end sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocModel {
@@ -121,6 +130,12 @@ pub struct Stats {
 /// Everything the front end needs, in one serialisable value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SiteBundle {
+    /// Artifact format version, always 1, and the first key of the JSON.
+    ///
+    /// The reader validates it before it looks at anything else, so an
+    /// artifact from an incompatible build fails with a message instead of
+    /// breaking downstream.
+    pub v: u8,
     /// Site title from `--title`.
     pub title: String,
     /// Document the reader opens at an empty or unknown address, from the
@@ -312,6 +327,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
 
     SiteBuild {
         bundle: SiteBundle {
+            v: PAYLOAD_FORMAT_VERSION,
             title: title.to_string(),
             // Set by the pipeline from the configuration file; the assembly
             // stage itself only knows the documents it was handed.
@@ -540,7 +556,20 @@ mod tests {
         assert_eq!(build.bundle.stats, Stats::default());
         assert_eq!(
             build.bundle.to_json(),
-            r#"{"title":"Empty","docs":[],"edges":[],"stats":{"documents":0,"assets":0,"asset_bytes":0}}"#
+            r#"{"v":1,"title":"Empty","docs":[],"edges":[],"stats":{"documents":0,"assets":0,"asset_bytes":0}}"#
+        );
+    }
+
+    #[test]
+    fn the_payload_version_leads_the_serialisation() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
+
+        assert_eq!(build.bundle.v, PAYLOAD_FORMAT_VERSION);
+        assert!(
+            build.bundle.to_json().starts_with(r#"{"v":1,"#),
+            "the version is the payload's first key: {}",
+            build.bundle.to_json()
         );
     }
 
@@ -656,7 +685,7 @@ mod tests {
         // than in declaration order.
         assert_eq!(
             value.as_object().map(|object| keys(object)),
-            Some(vec!["docs", "edges", "stats", "title"])
+            Some(vec!["docs", "edges", "stats", "title", "v"])
         );
         assert_eq!(
             value["docs"][0].as_object().map(keys),
@@ -756,8 +785,8 @@ mod tests {
 
         let json = build.bundle.to_json();
         assert!(
-            json.starts_with(r#"{"title":"Site","home":"a.md","docs":"#),
-            "the home lands between the title and the documents: {json}"
+            json.starts_with(r#"{"v":1,"title":"Site","home":"a.md","docs":"#),
+            "the home lands between the version and the title and the documents: {json}"
         );
 
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
