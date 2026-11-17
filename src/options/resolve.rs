@@ -50,6 +50,9 @@ pub struct Options {
     /// `None` when no source named one. Blank values are rejected: a password
     /// that is empty after trimming cannot be expressed through any source.
     pub password: Option<String>,
+    /// Worker threads the parallel build stages may use, exactly as the
+    /// winning source wrote it; `None` uses every available core.
+    pub jobs: Option<u32>,
 }
 
 impl Options {
@@ -111,6 +114,14 @@ impl Options {
             ));
         }
 
+        // The count readers reject zero already, so only the command line can
+        // carry one here: a build with no worker threads cannot run, whatever
+        // the source.
+        let jobs = cli.jobs.or(env.jobs).or(file.jobs);
+        if jobs == Some(0) {
+            return Err(Error::InvalidInput("'jobs' must be at least 1".to_string()));
+        }
+
         Ok(Self {
             input: input.clone(),
             out: cli
@@ -137,6 +148,7 @@ impl Options {
             exclude: normalize_excludes(&exclude)?,
             favicon,
             password,
+            jobs,
         })
     }
 
@@ -262,6 +274,7 @@ mod tests {
             exclude: Some(vec!["drafts".to_string()]),
             favicon: Some("assets/icon.png".to_string()),
             password: Some("cli secret".to_string()),
+            ..Settings::default()
         };
 
         let options = resolve_cli(dir.path(), settings).expect("valid settings");
@@ -288,6 +301,7 @@ mod tests {
             exclude: Some(vec!["drafts".to_string()]),
             favicon: Some("assets/file.png".to_string()),
             password: Some("file secret".to_string()),
+            ..Settings::default()
         };
 
         let options = resolve_file(dir.path(), file).expect("valid settings");
@@ -316,6 +330,7 @@ mod tests {
                 exclude: Some(vec!["cli-drafts".to_string()]),
                 favicon: Some("cli.png".to_string()),
                 password: Some("cli secret".to_string()),
+                ..Settings::default()
             },
             force: false,
             quiet: false,
@@ -329,6 +344,7 @@ mod tests {
             exclude: Some(vec!["file-drafts".to_string()]),
             favicon: Some("file.png".to_string()),
             password: Some("file secret".to_string()),
+            ..Settings::default()
         };
 
         let options =
@@ -501,6 +517,72 @@ mod tests {
     }
 
     #[test]
+    fn jobs_merge_from_every_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                jobs: Some(2),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+        let env = Settings {
+            jobs: Some(3),
+            ..Settings::default()
+        };
+        let file = Settings {
+            jobs: Some(4),
+            ..Settings::default()
+        };
+
+        let options = Options::resolve(&request, &env, &file).expect("valid settings");
+        assert_eq!(options.jobs, Some(2), "the command line wins");
+
+        let options = Options::resolve(
+            &Request {
+                input: dir.path().to_path_buf(),
+                settings: Settings::default(),
+                force: false,
+                quiet: false,
+            },
+            &env,
+            &file,
+        )
+        .expect("valid settings");
+        assert_eq!(options.jobs, Some(3), "the environment wins over the file");
+
+        let options = resolve_file(dir.path(), file).expect("valid settings");
+        assert_eq!(options.jobs, Some(4));
+
+        let options = resolve_cli(dir.path(), Settings::default()).expect("valid settings");
+        assert_eq!(
+            options.jobs, None,
+            "no source spoke, the default is automatic"
+        );
+    }
+
+    #[test]
+    fn a_zero_jobs_value_is_a_hard_error_whatever_the_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cli = Settings {
+            jobs: Some(0),
+            ..Settings::default()
+        };
+        let file = Settings {
+            jobs: Some(0),
+            ..Settings::default()
+        };
+
+        let cli_error = resolve_cli(dir.path(), cli).expect_err("zero threads cannot build");
+        let file_error = resolve_file(dir.path(), file).expect_err("zero threads cannot build");
+
+        assert_eq!(cli_error.to_string(), "'jobs' must be at least 1");
+        assert_eq!(file_error.to_string(), "'jobs' must be at least 1");
+    }
+
+    #[test]
     fn an_empty_favicon_is_a_hard_error_whatever_the_source() {
         let dir = tempfile::tempdir().expect("temp dir");
         let cli = Settings {
@@ -567,6 +649,7 @@ mod tests {
             exclude: Some(vec!["env-drafts".to_string()]),
             favicon: Some("env.png".to_string()),
             password: Some("env secret".to_string()),
+            ..Settings::default()
         };
 
         let options = resolve_env(dir.path(), env, Settings::default()).expect("valid settings");
@@ -613,6 +696,7 @@ mod tests {
             exclude: Some(vec!["cli-drafts".to_string()]),
             favicon: Some("cli.png".to_string()),
             password: Some("cli secret".to_string()),
+            ..Settings::default()
         };
         let env = Settings {
             out: Some(PathBuf::from("from-env")),
@@ -623,6 +707,7 @@ mod tests {
             exclude: Some(vec!["env-drafts".to_string()]),
             favicon: Some("env.png".to_string()),
             password: Some("env secret".to_string()),
+            ..Settings::default()
         };
         let file = Settings {
             out: Some(dir.path().join("from-file")),
@@ -633,6 +718,7 @@ mod tests {
             exclude: Some(vec!["file-drafts".to_string()]),
             favicon: Some("file.png".to_string()),
             password: Some("file secret".to_string()),
+            ..Settings::default()
         };
 
         let options = Options::resolve(

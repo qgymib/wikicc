@@ -62,6 +62,11 @@ pub struct Settings {
     /// process list.
     #[arg(long, value_name = "PASSWORD")]
     pub password: Option<String>,
+
+    /// Worker threads the parallel build stages may use; overrides `.wikicc.json`
+    /// [default: all cores]
+    #[arg(short = 'j', long, value_name = "N")]
+    pub jobs: Option<u32>,
 }
 
 /// The raw build intent: what the command line said, before any default.

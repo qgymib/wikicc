@@ -43,6 +43,7 @@ pub(crate) enum Field {
     Exclude,
     Favicon,
     Password,
+    Jobs,
 }
 
 impl Field {
@@ -58,6 +59,7 @@ impl Field {
             Field::Exclude => "exclude",
             Field::Favicon => "favicon",
             Field::Password => "password",
+            Field::Jobs => "jobs",
         }
     }
 
@@ -68,7 +70,7 @@ impl Field {
             Field::Home => settings.home = Some(value),
             Field::Favicon => settings.favicon = Some(value),
             Field::Password => settings.password = Some(value),
-            Field::Out | Field::Format | Field::Strict | Field::Exclude => {
+            Field::Out | Field::Format | Field::Strict | Field::Exclude | Field::Jobs => {
                 unreachable!("'{}' does not carry a text value", self.name())
             }
         }
@@ -84,7 +86,8 @@ impl Field {
             | Field::Home
             | Field::Exclude
             | Field::Favicon
-            | Field::Password => {
+            | Field::Password
+            | Field::Jobs => {
                 unreachable!("'{}' does not carry a path value", self.name())
             }
         }
@@ -100,7 +103,8 @@ impl Field {
             | Field::Home
             | Field::Exclude
             | Field::Favicon
-            | Field::Password => {
+            | Field::Password
+            | Field::Jobs => {
                 unreachable!("'{}' does not carry a boolean value", self.name())
             }
         }
@@ -116,7 +120,8 @@ impl Field {
             | Field::Home
             | Field::Exclude
             | Field::Favicon
-            | Field::Password => {
+            | Field::Password
+            | Field::Jobs => {
                 unreachable!("'{}' does not carry a format value", self.name())
             }
         }
@@ -132,8 +137,26 @@ impl Field {
             | Field::Strict
             | Field::Home
             | Field::Favicon
-            | Field::Password => {
+            | Field::Password
+            | Field::Jobs => {
                 unreachable!("'{}' does not carry a list value", self.name())
+            }
+        }
+    }
+
+    /// Store a worker-thread count value.
+    fn store_count(self, settings: &mut Settings, value: u32) {
+        match self {
+            Field::Jobs => settings.jobs = Some(value),
+            Field::Out
+            | Field::Format
+            | Field::Title
+            | Field::Strict
+            | Field::Home
+            | Field::Exclude
+            | Field::Favicon
+            | Field::Password => {
+                unreachable!("'{}' does not carry a count value", self.name())
             }
         }
     }
@@ -165,6 +188,11 @@ pub(crate) enum Kind {
     /// with commas; the configuration file carries a JSON array. Both hand
     /// the winning list to the shared normalization in the merge.
     List,
+    /// A positive worker-thread count (`jobs`). The environment spells it a
+    /// decimal integer; the configuration file carries a JSON number. Zero
+    /// and non-integers are rejected: a build with no worker threads cannot
+    /// run.
+    Count,
 }
 
 /// One setting's coordinates: which field the entry fills, the full
@@ -223,6 +251,11 @@ impl SettingSpec {
             Kind::List => {
                 let list = parse_env_excludes(self.var, value)?;
                 self.field.store_list(settings, list);
+                Ok(())
+            }
+            Kind::Count => {
+                let count = parse_count(self.var, value)?;
+                self.field.store_count(settings, count);
                 Ok(())
             }
         }
@@ -295,6 +328,16 @@ impl SettingSpec {
                 let list = normalize_excludes(&list)?;
                 self.field.store_list(settings, list);
             }
+            Kind::Count => {
+                let Value::Number(number) = value else {
+                    return Err(wrong_type(key, "a number"));
+                };
+                let count = number
+                    .as_u64()
+                    .filter(|count| *count <= u32::MAX as u64)
+                    .ok_or_else(|| wrong_type(key, "a positive integer"))?;
+                self.field.store_count(settings, count as u32);
+            }
         }
         Ok(())
     }
@@ -356,10 +399,18 @@ pub(crate) const PASSWORD: SettingSpec = SettingSpec {
     kind: Kind::RequiredText("string"),
 };
 
+/// The worker-thread count setting.
+pub(crate) const JOBS: SettingSpec = SettingSpec {
+    field: Field::Jobs,
+    var: "WIKICC_JOBS",
+    kind: Kind::Count,
+};
+
 /// Every setting this version knows, in the order the [`Settings`] struct
 /// declares them.
-pub(crate) const SETTINGS: [SettingSpec; 8] =
-    [OUT, FORMAT, TITLE, STRICT, HOME, EXCLUDE, FAVICON, PASSWORD];
+pub(crate) const SETTINGS: [SettingSpec; 9] = [
+    OUT, FORMAT, TITLE, STRICT, HOME, EXCLUDE, FAVICON, PASSWORD, JOBS,
+];
 
 /// Parse a boolean spelled `true`, `false`, `1` or `0`, in any letter case.
 ///
@@ -371,6 +422,17 @@ fn parse_flag(var: &str, value: &str) -> Result<bool> {
         "false" | "0" => Ok(false),
         _ => Err(invalid(var, "must be 'true', 'false', '1' or '0'")),
     }
+}
+
+/// Parse a worker-thread count: a decimal integer of at least 1.
+fn parse_count(var: &str, value: &str) -> Result<u32> {
+    let parsed = value
+        .parse::<u32>()
+        .map_err(|_| invalid(var, "must be a positive integer"))?;
+    if parsed == 0 {
+        return Err(invalid(var, "must be at least 1"));
+    }
+    Ok(parsed)
 }
 
 /// Split an environment exclusion value on commas; an empty entry is a hard
@@ -501,6 +563,7 @@ mod tests {
             Field::Exclude => ("drafts,archive/old", r#"["drafts", "archive/old"]"#),
             Field::Favicon => ("assets/icon.png", "\"assets/icon.png\""),
             Field::Password => ("global secret", "\"global secret\""),
+            Field::Jobs => ("4", "4"),
         }
     }
 
@@ -530,6 +593,7 @@ mod tests {
             Field::Exclude => assert_eq!(options.exclude, ["drafts", "archive/old"]),
             Field::Favicon => assert_eq!(options.favicon.as_deref(), Some("assets/icon.png")),
             Field::Password => assert_eq!(options.password.as_deref(), Some("global secret")),
+            Field::Jobs => assert_eq!(options.jobs, Some(4)),
         }
     }
 

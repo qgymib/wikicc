@@ -39,6 +39,7 @@ fn help_lists_documented_options() {
         "--exclude",
         "--favicon",
         "--password",
+        "--jobs",
         "--force",
         "--quiet",
     ] {
@@ -80,6 +81,7 @@ fn help_output_is_pinned_byte_for_byte() {
         "      --exclude <DIR>        Directory whose entire subtree stays out of the site; repeatable, overrides `.wikicc.json`",
         "      --favicon <FILE>       Favicon file relative to the input folder; overrides `.wikicc.json` [default: the wikicc logo]",
         "      --password <PASSWORD>  Global password for documents whose front matter declares encryption; overrides `.wikicc.json`. Prefer the `WIKICC_PASSWORD` environment variable: a command line value stays in the shell history and the process list",
+        "  -j, --jobs <N>             Worker threads the parallel build stages may use; overrides `.wikicc.json` [default: all cores]",
         "      --force                Overwrite the output directory without confirmation",
         "  -q, --quiet                Suppress the summary line",
         "      --init-config [<DIR>]  Write a default `.wikicc.json` into DIR [default: the current directory] and exit",

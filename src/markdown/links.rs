@@ -45,6 +45,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::assets::{ASSET_PLACEHOLDER_PREFIX, AssetTable};
 use crate::scan::Diagnostic;
@@ -352,17 +353,23 @@ pub fn doc_dir(doc_id: &str) -> &str {
 }
 
 /// Site-wide state shared by the per-document resolvers.
+///
+/// The immutable half — the input root, the document ids and the anchor
+/// table — lives behind [`Arc`], so [`LinkContext::snapshot`] hands a
+/// per-document context to the parallel assembly at the cost of three
+/// reference counts. The mutable half — the assets and the diagnostics —
+/// stays exclusive, which is what keeps every registration ordered.
 #[derive(Debug, Clone)]
 pub struct LinkContext {
-    root: PathBuf,
-    docs: BTreeSet<String>,
+    root: Arc<PathBuf>,
+    docs: Arc<BTreeSet<String>>,
     /// Heading anchors per document id.
     ///
     /// A document without an entry has no headings, so every chapter anchor
     /// pointing at it is unknown. The table is filled before the first document
     /// is resolved, because a block reference may name a chapter of a document
     /// that has not been rendered yet.
-    anchors: BTreeMap<String, BTreeSet<String>>,
+    anchors: Arc<BTreeMap<String, BTreeSet<String>>>,
     assets: AssetTable,
     diagnostics: Vec<Diagnostic>,
 }
@@ -371,9 +378,25 @@ impl LinkContext {
     /// Context for a site rooted at `root` whose documents are `docs`.
     pub fn new(root: impl Into<PathBuf>, docs: impl IntoIterator<Item = String>) -> Self {
         Self {
-            root: root.into(),
-            docs: docs.into_iter().collect(),
-            anchors: BTreeMap::new(),
+            root: Arc::new(root.into()),
+            docs: Arc::new(docs.into_iter().collect()),
+            anchors: Arc::new(BTreeMap::new()),
+            assets: AssetTable::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    /// A context for one document, for the parallel assembly.
+    ///
+    /// The site-wide state is shared, the mutable state starts empty: the
+    /// document's own asset registrations and diagnostics stay private until
+    /// the caller folds the snapshots back in document order, which is what
+    /// keeps both in document order whatever the threads finished first.
+    pub fn snapshot(&self) -> LinkContext {
+        LinkContext {
+            root: Arc::clone(&self.root),
+            docs: Arc::clone(&self.docs),
+            anchors: Arc::clone(&self.anchors),
             assets: AssetTable::new(),
             diagnostics: Vec::new(),
         }
@@ -385,8 +408,7 @@ impl LinkContext {
     /// caller that renders a document after collecting its anchors needs no
     /// bookkeeping.
     pub fn register_anchors(&mut self, doc_id: &str, anchors: impl IntoIterator<Item = String>) {
-        self.anchors
-            .insert(doc_id.to_string(), anchors.into_iter().collect());
+        Arc::make_mut(&mut self.anchors).insert(doc_id.to_string(), anchors.into_iter().collect());
     }
 
     /// Whether `doc_id` has a heading anchored `anchor`, in any spelling.
@@ -413,7 +435,7 @@ impl LinkContext {
 
     /// Document ids known to the site.
     pub fn docs(&self) -> &BTreeSet<String> {
-        &self.docs
+        self.docs.as_ref()
     }
 
     /// Assets registered so far.
@@ -429,6 +451,18 @@ impl LinkContext {
     /// Consume the context, returning the assets and the diagnostics.
     pub fn into_parts(self) -> (AssetTable, Vec<Diagnostic>) {
         (self.assets, self.diagnostics)
+    }
+
+    /// Fold another context's mutable state into this one.
+    ///
+    /// The parallel assembly collects one [`LinkContext::snapshot`] per
+    /// document and merges them back in document order: the assets
+    /// deduplicate by content hash with the first registration winning, and
+    /// the diagnostics join the front so the report stays in document order
+    /// whatever the threads finished first.
+    pub fn merge(&mut self, other: LinkContext) {
+        self.assets.merge(other.assets);
+        self.diagnostics.extend(other.diagnostics);
     }
 
     /// Resolver for one document, to be handed to
@@ -1459,5 +1493,111 @@ mod tests {
 
         assert_eq!(assets.len(), 1);
         assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn a_snapshot_shares_the_site_state_and_starts_empty() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        context.register_anchors("b.md", ["existing".to_string()]);
+
+        let mut snapshot = context.snapshot();
+
+        assert!(snapshot.assets().is_empty(), "assets start empty");
+        assert!(snapshot.diagnostics().is_empty(), "diagnostics start empty");
+        let mut resolver = snapshot.for_doc("a.md");
+        assert_eq!(
+            resolver.resolve("b.md#existing", 1).dest,
+            "#/doc/b.md#existing",
+            "the snapshot sees the anchors registered before it"
+        );
+        assert_eq!(resolver.resolve("missing.md", 2).dest, "missing.md");
+        drop(resolver);
+
+        assert!(
+            context.assets().is_empty(),
+            "the snapshot's registrations stay private"
+        );
+        assert!(context.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn snapshot_registrations_merge_back_in_call_order() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        write(dir.path(), "logo.svg", b"<svg/>");
+        let mut context = context(dir.path(), &["a.md"]);
+
+        let mut snapshot = context.snapshot();
+        {
+            let mut resolver = snapshot.for_doc("a.md");
+            resolver.resolve("logo.svg", 1);
+        }
+        context.merge(snapshot);
+
+        assert_eq!(context.assets().len(), 1);
+        assert!(context.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn merging_two_snapshots_keeps_the_first_registration_and_the_call_order() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        write(dir.path(), "shared.svg", b"<svg/>");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+
+        let mut first = context.snapshot();
+        {
+            let mut resolver = first.for_doc("a.md");
+            resolver.resolve("shared.svg", 1);
+            resolver.resolve("missing-a.md", 2);
+        }
+        let mut second = context.snapshot();
+        {
+            let mut resolver = second.for_doc("b.md");
+            resolver.resolve("shared.svg", 1);
+            resolver.resolve("missing-b.md", 2);
+        }
+
+        context.merge(first);
+        context.merge(second);
+
+        assert_eq!(context.assets().len(), 1, "the same content is one asset");
+        let messages: Vec<String> = context
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.to_string())
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "warning: a.md:2: link target not found: 'missing-a.md'".to_string(),
+                "warning: b.md:2: link target not found: 'missing-b.md'".to_string(),
+            ],
+            "the diagnostics follow the merge order, not the finish order"
+        );
+    }
+
+    #[test]
+    fn anchors_registered_after_a_snapshot_do_not_leak_into_it() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md", "b.md"]);
+        context.register_anchors("b.md", ["early".to_string()]);
+        let mut snapshot = context.snapshot();
+        context.register_anchors("b.md", ["late".to_string()]);
+
+        let mut resolver = snapshot.for_doc("a.md");
+        assert_eq!(resolver.resolve("b.md#early", 1).dest, "#/doc/b.md#early");
+        assert_eq!(
+            resolver.resolve("b.md#late", 2).dest,
+            "#/doc/b.md",
+            "the late registration is invisible to the snapshot"
+        );
+        drop(resolver);
+
+        assert_eq!(
+            snapshot.diagnostics().len(),
+            1,
+            "the snapshot reports the chapter it cannot see"
+        );
+        assert!(context.diagnostics().is_empty());
     }
 }

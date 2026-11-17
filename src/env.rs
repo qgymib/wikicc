@@ -2,7 +2,7 @@
 //!
 //! Environment variables are the second of the three setting sources: an
 //! explicit command line flag overrides them, and they override
-//! `.wikicc.json`. Eight variables name the settings both other surfaces
+//! `.wikicc.json`. Nine variables name the settings both other surfaces
 //! carry ([`crate::options::Settings`]), spelled with a `WIKICC_` prefix and
 //! in upper case only — one entry of the settings spec each
 //! (`src/options/spec.rs`), which is where their names and their value
@@ -30,6 +30,10 @@
 //!   every variable the value is trimmed, so a password that must begin or
 //!   end with whitespace cannot be expressed here — spell it in the
 //!   configuration file instead, where values are read verbatim.
+//! - `WIKICC_JOBS`: the worker threads the parallel build stages may use,
+//!   spelled like the `--jobs` flag: a positive integer. Unset, the build
+//!   uses every available core; `1` keeps the parallel-capable stages
+//!   effectively sequential.
 //!
 //! The reading rules follow the variable's role as an export in someone
 //! else's environment:
@@ -56,7 +60,7 @@
 use crate::error::Result;
 use crate::options::Settings;
 use crate::options::spec::{
-    EXCLUDE, FAVICON, FORMAT, HOME, OUT, PASSWORD, STRICT, SettingSpec, TITLE,
+    EXCLUDE, FAVICON, FORMAT, HOME, JOBS, OUT, PASSWORD, STRICT, SettingSpec, TITLE,
 };
 
 /// Prefix of the environment variables this module reads.
@@ -88,6 +92,9 @@ pub const FAVICON_VAR: &str = FAVICON.var;
 
 /// Environment variable naming the global sealing password.
 pub const PASSWORD_VAR: &str = PASSWORD.var;
+
+/// Environment variable naming the worker-thread count of the build.
+pub const JOBS_VAR: &str = JOBS.var;
 
 /// Read the `WIKICC_*` settings from the process environment.
 ///
@@ -161,6 +168,7 @@ mod tests {
             (EXCLUDE_VAR, "drafts,archive/old"),
             (FAVICON_VAR, "assets/icon.png"),
             (PASSWORD_VAR, "global secret"),
+            (JOBS_VAR, "4"),
         ])
         .expect("the variables parse");
 
@@ -175,6 +183,7 @@ mod tests {
         );
         assert_eq!(settings.favicon.as_deref(), Some("assets/icon.png"));
         assert_eq!(settings.password.as_deref(), Some("global secret"));
+        assert_eq!(settings.jobs, Some(4));
     }
 
     #[test]
@@ -270,6 +279,33 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "environment variable 'WIKICC_FORMAT': invalid format 'pdf', expected one of: single-html, html-dir, pages"
+        );
+    }
+
+    #[test]
+    fn jobs_reads_a_positive_integer() {
+        let settings = pairs(&[(JOBS_VAR, " 4 ")]).expect("the variable parses");
+
+        assert_eq!(settings.jobs, Some(4));
+    }
+
+    #[test]
+    fn an_unknown_jobs_value_is_a_hard_error_naming_the_variable() {
+        let error = pairs(&[(JOBS_VAR, "four")]).expect_err("four is not an integer");
+
+        assert_eq!(
+            error.to_string(),
+            "environment variable 'WIKICC_JOBS': must be a positive integer"
+        );
+    }
+
+    #[test]
+    fn a_zero_jobs_value_is_a_hard_error_naming_the_variable() {
+        let error = pairs(&[(JOBS_VAR, "0")]).expect_err("zero threads cannot build");
+
+        assert_eq!(
+            error.to_string(),
+            "environment variable 'WIKICC_JOBS': must be at least 1"
         );
     }
 

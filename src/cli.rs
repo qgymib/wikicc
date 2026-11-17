@@ -118,6 +118,8 @@ mod tests {
             "assets/icon.png",
             "--password",
             "global secret",
+            "--jobs",
+            "4",
             "--force",
             "--quiet",
         ]);
@@ -131,6 +133,7 @@ mod tests {
         assert_eq!(cli.settings.exclude, Some(vec!["drafts".to_string()]));
         assert_eq!(cli.settings.favicon.as_deref(), Some("assets/icon.png"));
         assert_eq!(cli.settings.password.as_deref(), Some("global secret"));
+        assert_eq!(cli.settings.jobs, Some(4));
         assert!(cli.force);
         assert!(cli.quiet);
     }
@@ -182,6 +185,13 @@ mod tests {
 
         assert_eq!(cli.settings.out, Some(PathBuf::from("build")));
         assert!(cli.quiet);
+    }
+
+    #[test]
+    fn jobs_accepts_the_short_spelling() {
+        let cli = parse(&["wikicc", "docs", "-j", "2"]);
+
+        assert_eq!(cli.settings.jobs, Some(2));
     }
 
     #[test]

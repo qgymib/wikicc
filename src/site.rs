@@ -281,41 +281,72 @@ pub fn flatten_headings(toc: &[TocEntry]) -> String {
 /// build (it only fails one that was run with `--strict`).
 ///
 /// Documents are visited in the order they are given, which is scan order, so
-/// the payload lists them exactly once and always in the same order.
+/// the payload lists them exactly once and always in the same order. The two
+/// passes are per-document work, so they run in parallel; the outcomes are
+/// collected in scan order and merged back in the same order, which pins the
+/// payload order, the diagnostics order and the asset first-registration
+/// order to the scan instead of the thread schedule.
 ///
 /// Chapter anchors of every document are collected *before* any link is
 /// resolved (see [`sections_of`]): a block reference has to be checked against
 /// the headings of a document that may not have been rendered yet, so the
 /// anchor table cannot be built incrementally alongside the render pass.
 pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
+    use rayon::prelude::*;
+
+    // The anchor pre-pass. The parse is per-document, so it runs in parallel;
+    // the registration is cheap and stays sequential, in scan order.
+    let anchor_sets: Vec<Vec<String>> = docs.par_iter().map(|doc| sections_of(&doc.text)).collect();
     let mut context = LinkContext::new(root.to_path_buf(), docs.iter().map(|doc| doc.id.clone()));
-    for doc in docs {
-        context.register_anchors(&doc.id, sections_of(&doc.text));
+    for (doc, anchors) in docs.iter().zip(anchor_sets) {
+        context.register_anchors(&doc.id, anchors);
     }
+
+    // The render pass. Every document resolves against a private snapshot of
+    // the context — its own asset registrations and diagnostics stay out of
+    // the shared state until the fold below — and the collection preserves
+    // the scan order by construction.
+    let outcomes: Vec<DocOutcome> = docs
+        .par_iter()
+        .map(|doc| {
+            let mut snapshot = context.snapshot();
+            let mut resolver = snapshot.for_doc(&doc.id);
+            let rendered = render_document_with(&doc.text, &mut resolver);
+            let targets = resolver.take_targets();
+            drop(resolver);
+
+            DocOutcome {
+                resolved: snapshot,
+                front_matter: rendered.front_matter,
+                targets,
+                model: DocModel {
+                    id: doc.id.clone(),
+                    path: doc.id.clone(),
+                    title: doc.title.clone(),
+                    html: rendered.html,
+                    toc: rendered.toc,
+                    blocks: rendered.blocks,
+                    text: rendered.text,
+                    enc: None,
+                },
+            }
+        })
+        .collect();
 
     let mut models: Vec<DocModel> = Vec::with_capacity(docs.len());
     let mut front_matters: Vec<Option<String>> = Vec::with_capacity(docs.len());
     let mut links: Vec<(String, String)> = Vec::new();
 
-    for doc in docs {
-        let mut resolver = context.for_doc(&doc.id);
-        let rendered = render_document_with(&doc.text, &mut resolver);
-        let targets = resolver.take_targets();
-        drop(resolver);
-
-        links.extend(targets.into_iter().map(|target| (doc.id.clone(), target)));
-        front_matters.push(rendered.front_matter);
-
-        models.push(DocModel {
-            id: doc.id.clone(),
-            path: doc.id.clone(),
-            title: doc.title.clone(),
-            html: rendered.html,
-            toc: rendered.toc,
-            blocks: rendered.blocks,
-            text: rendered.text,
-            enc: None,
-        });
+    for (doc, outcome) in docs.iter().zip(outcomes) {
+        links.extend(
+            outcome
+                .targets
+                .into_iter()
+                .map(|target| (doc.id.clone(), target)),
+        );
+        front_matters.push(outcome.front_matter);
+        models.push(outcome.model);
+        context.merge(outcome.resolved);
     }
 
     let edges = build_edges(&links);
@@ -341,6 +372,19 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
         assets,
         diagnostics,
     }
+}
+
+/// One document's parallel render: everything the fold needs, in scan order.
+struct DocOutcome {
+    /// The document's own resolver state — assets and diagnostics — merged
+    /// into the shared context in scan order after the collection.
+    resolved: LinkContext,
+    /// Raw front matter, beside the model for the sealing pass.
+    front_matter: Option<String>,
+    /// Document ids the document links to successfully, in resolution order.
+    targets: Vec<String>,
+    /// The payload model of the document.
+    model: DocModel,
 }
 
 #[cfg(test)]
@@ -651,6 +695,118 @@ mod tests {
         assert_eq!(first.bundle.to_json(), second.bundle.to_json());
         assert_eq!(first.assets, second.assets);
         assert_eq!(first.diagnostics, second.diagnostics);
+    }
+
+    /// A site of `count` documents that exercises every parallel hazard at
+    /// once: a shared asset, a per-document asset, links to the next
+    /// document, block references to the next document's chapter, unknown
+    /// links and a repeated heading shape. The ids are zero-padded, so scan
+    /// order is lexicographic order.
+    fn many_document_fixture(dir: &Path, count: usize) -> Vec<SourceDoc> {
+        let images = dir.join("img");
+        fs::create_dir_all(&images).expect("create image directory");
+        fs::write(images.join("shared.svg"), b"<svg>shared</svg>").expect("write shared asset");
+
+        (0..count)
+            .map(|index| {
+                let next = (index + 1) % count;
+                fs::write(
+                    images.join(format!("doc{index}.svg")),
+                    format!("<svg>{index}</svg>"),
+                )
+                .expect("write own asset");
+                let id = format!("{index:03}.md");
+                let text = format!(
+                    "# Doc {index}\n\n## Chapter\n\n\
+                     ![shared](img/shared.svg) ![own](img/doc{index}.svg)\n\n\
+                     [next]({next:03}.md) [chapter]({next:03}.md#chapter) [gone](missing-{index}.md)\n"
+                );
+                SourceDoc {
+                    id: id.clone(),
+                    path: dir.join(&id),
+                    title: format!("Doc {index}"),
+                    text,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_many_document_site_reports_diagnostics_in_scan_order() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = many_document_fixture(dir.path(), 32);
+
+        let build = build_site("Site", dir.path(), &docs);
+
+        assert_eq!(build.warning_count(), 32, "one unknown link per document");
+        let ids: Vec<String> = build
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                diagnostic
+                    .to_string()
+                    .split(':')
+                    .nth(1)
+                    .expect("the diagnostic names its document")
+                    .trim()
+                    .to_string()
+            })
+            .collect();
+        let expected: Vec<String> = (0..32).map(|index| format!("{index:03}.md")).collect();
+        assert_eq!(
+            ids, expected,
+            "the diagnostics follow the scan order, not the thread schedule"
+        );
+    }
+
+    #[test]
+    fn a_many_document_site_deduplicates_the_shared_asset_and_sorts_the_edges() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = many_document_fixture(dir.path(), 32);
+
+        let build = build_site("Site", dir.path(), &docs);
+
+        assert_eq!(
+            build.bundle.stats.assets, 33,
+            "one shared image plus one per document"
+        );
+        assert_eq!(
+            build.bundle.edges.len(),
+            32,
+            "every document links the next, duplicates collapse"
+        );
+        assert_eq!(
+            build.bundle.edges[0],
+            Edge {
+                from: "000.md".to_string(),
+                to: "001.md".to_string(),
+            }
+        );
+        assert_eq!(
+            build.bundle.edges[31],
+            Edge {
+                from: "031.md".to_string(),
+                to: "000.md".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn one_thread_and_the_default_pool_build_byte_identically() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = many_document_fixture(dir.path(), 32);
+
+        let parallel = build_site("Site", dir.path(), &docs);
+        let sequential = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("the pool builds")
+            .install(|| build_site("Site", dir.path(), &docs));
+
+        assert_eq!(parallel.bundle.to_json(), sequential.bundle.to_json());
+        assert_eq!(parallel.assets, sequential.assets);
+        assert_eq!(parallel.diagnostics, sequential.diagnostics);
+        assert_eq!(parallel.front_matters, sequential.front_matters);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Site configuration file: `.wikicc.json` in the input folder root.
 //!
-//! The file is optional and carries eight keys, exactly the settings the
+//! The file is optional and carries nine keys, exactly the settings the
 //! command line can also express ([`Settings`]):
 //!
 //! - `home`: the document the reader shows when it is opened at an empty or
@@ -27,6 +27,9 @@
 //!   shell history or the process list, and it is read verbatim — leading
 //!   and trailing whitespace belong to the password.
 //! - `strict`: whether warnings fail the build, spelled as a JSON boolean.
+//! - `jobs`: the worker threads the parallel build stages may use, spelled
+//!   as a JSON number of at least 1. Without the key the build uses every
+//!   available core.
 //!
 //! The keys and their value grammar are the entries of the settings spec
 //! (`src/options/spec.rs`), not a match arm here: the loader looks each key
@@ -151,7 +154,7 @@ pub fn load(input: &Path) -> Result<SiteConfig> {
 /// through [`parse`], so the default content can never drift away from what
 /// the loader accepts.
 pub fn template() -> &'static str {
-    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"favicon\": null,\n  \"password\": null,\n  \"strict\": null\n}\n"
+    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"favicon\": null,\n  \"password\": null,\n  \"strict\": null,\n  \"jobs\": null\n}\n"
 }
 
 /// Write the default configuration file into `dir` and report it.

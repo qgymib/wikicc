@@ -169,7 +169,13 @@ hard requirement, not an aspiration, and it constrains every stage:
   value. The elapsed time exists only in the stdout summary;
 - on the front end, the force layout is seeded from a hash of the document ids,
   the same generator feeds the initial jitter and `simulation.randomSource()`,
-  and the simulation is stepped synchronously.
+  and the simulation is stepped synchronously;
+- the per-document passes — the assembly's parse/resolve work and the sealing
+  pass — run in parallel over a worker pool, but the results are collected and
+  merged in scan order: the thread count (`jobs`, default all cores) changes
+  the wall-clock time, never the bytes. The sealing pass's random salt and
+  nonce are the one deliberate exception — a sealed document is never
+  byte-identical across builds, by design.
 
 ## 6. Contracts at the edges
 
@@ -177,9 +183,9 @@ These are the boundaries where an internal change becomes observable, so each
 one is stated as a contract rather than left to the implementation.
 
 - **The configuration file.** `.wikicc.json` sits in the input folder root and
-  is optional. It carries eight keys — `home`, `exclude`, `out`, `format`,
-  `title`, `favicon`, `password`, `strict` — exactly the `Settings` shape the
-  command line and the `WIKICC_*` environment variables also express, and
+  is optional. It carries nine keys — `home`, `exclude`, `out`, `format`,
+  `title`, `favicon`, `password`, `strict`, `jobs` — exactly the `Settings`
+  shape the command line and the `WIKICC_*` environment variables also express, and
   every value it names is a default: a set variable overrides it, an explicit
   flag overrides the variable. A relative `out` is resolved against the input folder (the
   folder the file sits in), so the build lands in the same place whatever the
@@ -222,7 +228,9 @@ one is stated as a contract rather than left to the implementation.
   configured values, `--strict` is three-state — a bare flag turns the gate
   on, `--strict=false` turns it off — and `--password` carries the global
   sealing password, preferably through the `WIKICC_PASSWORD` variable; the
-  password sources and the security notes live in `docs/encrypt.md`.
+  password sources and the security notes live in `docs/encrypt.md`. `--jobs`
+  caps the worker threads the parallel per-document passes run on — the count
+  is a throughput knob only, so it never changes the bytes.
 - **Exit codes.** `error` maps every failure to `0` (success, possibly with
   warnings), `1` (runtime failure, including `--strict` with warnings) or `2`
   (usage error, reported by `clap`). The mapping is centralised so a new stage

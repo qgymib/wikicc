@@ -25,7 +25,9 @@
 //! and the counters are untouched, because ids and titles are metadata the
 //! reader shows anyway. A document that declares encryption without any
 //! available password is a hard error naming the document, whatever
-//! `--strict` says.
+//! `--strict` says. The per-document computation runs in parallel and its
+//! results apply in document order, so the reported failure is the first
+//! failing document in document order.
 //!
 //! The asset boundary is sealed with the body. Before a document is
 //! encrypted, its own asset placeholders — in `html` and in every chapter
@@ -43,11 +45,11 @@ use std::collections::BTreeSet;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_yaml::Value;
 
-use crate::assets::ASSET_PLACEHOLDER_PREFIX;
+use crate::assets::{ASSET_PLACEHOLDER_PREFIX, AssetTable};
 use crate::crypto;
 use crate::error::{Error, Result};
 use crate::markdown::{sections::Block, toc::TocEntry};
-use crate::site::{EncryptedBlob, SiteBuild};
+use crate::site::{DocModel, EncryptedBlob, SiteBuild};
 use crate::writers::single_html::write_data_uri;
 use crate::writers::{expand_placeholders, placeholder_hashes};
 
@@ -126,6 +128,12 @@ struct PlainBody<'a> {
 /// salt and the nonce are fresh random bytes of every call, so two builds of
 /// the same site never produce the same sealed bytes.
 ///
+/// The per-document computation — placeholder expansion, serialisation and
+/// the key derivation — reads only shared state, so it runs in parallel; the
+/// results are collected in document order and the apply pass writes them in
+/// the same order. A failure therefore surfaces for the first failing
+/// document in document order, exactly as a sequential pass would report it.
+///
 /// `favicon` is the placeholder the favicon registration returned. The
 /// favicon is addressed by the rendered head rather than by any document, so
 /// the prune below could not know to keep it otherwise.
@@ -141,60 +149,29 @@ pub fn seal_bundle(
     global_password: Option<&str>,
     favicon_placeholder: &str,
 ) -> Result<()> {
-    for (index, doc) in build.bundle.docs.iter_mut().enumerate() {
-        let Some(raw) = build.front_matters.get(index).and_then(Option::as_deref) else {
-            continue;
-        };
-        let Some(directive) = parse_directive(raw, &doc.id)? else {
-            continue;
-        };
+    use rayon::prelude::*;
 
-        let password = match &directive {
-            EncryptDirective::Global => global_password,
-            EncryptDirective::PerDoc(password) => Some(password.as_str()),
-        };
-        let Some(password) = password else {
-            return Err(Error::InvalidInput(format!(
-                "document '{}' declares encryption but no password is available: pass \
-                 --password, set WIKICC_PASSWORD, or set 'password' in .wikicc.json",
-                doc.id
-            )));
-        };
-
-        // The sealed body must render after an unlock, so its own asset
-        // references travel inside the ciphertext as data URIs. An unknown
-        // placeholder is the same internal contract break it is at write
-        // time — a document cannot carry one, because the resolve stage
-        // leaves the original text and a warning for an asset it could not
-        // read — and aborts the build before anything is reported or written.
-        let mut scratch: Vec<u8> = Vec::new();
-        let (html, _) = expand_placeholders(&doc.html, &build.assets, |asset, sink| {
-            write_data_uri(asset, sink, &mut scratch)
-        })?;
-        doc.html = html;
-        for block in &mut doc.blocks {
-            let (html, _) = expand_placeholders(&block.html, &build.assets, |asset, sink| {
-                write_data_uri(asset, sink, &mut scratch)
-            })?;
-            block.html = html;
-        }
-
-        let plain = serde_json::to_vec(&PlainBody {
-            html: &doc.html,
-            toc: &doc.toc,
-            blocks: &doc.blocks,
-            text: &doc.text,
+    // The computation is read-only over the bundle: `docs`, `front_matters`
+    // and the asset table are only borrowed. The heavy work — the PBKDF2 key
+    // derivation per sealed document — lives here, so the wall-clock time of
+    // many sealed documents scales with the threads.
+    let sealed: Vec<Result<Option<EncryptedBlob>>> = build
+        .bundle
+        .docs
+        .par_iter()
+        .zip(&build.front_matters)
+        .map(|(doc, front_matter)| {
+            seal_one(doc, front_matter.as_deref(), &build.assets, global_password)
         })
-        .expect("a document body always serialises to JSON");
-        let sealed = crypto::seal(&plain, password, doc.id.as_bytes());
+        .collect();
 
-        let blob = EncryptedBlob {
-            v: crypto::FORMAT_VERSION,
-            kdf: crypto::KDF_NAME.to_string(),
-            iters: crypto::KDF_ITERATIONS,
-            salt: STANDARD.encode(sealed.salt),
-            nonce: STANDARD.encode(sealed.nonce),
-            ct: STANDARD.encode(&sealed.ct),
+    // The apply pass walks the collected results in document order, so the
+    // first `Err` is the first failing document — the message a sequential
+    // pass would have printed. A document that sealed clears its plaintext
+    // body and carries the blob beside the public title.
+    for (doc, result) in build.bundle.docs.iter_mut().zip(sealed) {
+        let Some(blob) = result? else {
+            continue;
         };
 
         doc.html = String::new();
@@ -207,6 +184,76 @@ pub fn seal_bundle(
     prune_assets(build, favicon_placeholder);
 
     Ok(())
+}
+
+/// The sealed blob of one document, computed without touching the bundle.
+///
+/// `None` when the front matter declares nothing. The expanded body — the
+/// placeholders turned into data URIs — is a local value: it feeds the
+/// canonical JSON and the ciphertext and is dropped, because a sealed
+/// document's payload fields are emptied in the apply pass anyway.
+fn seal_one(
+    doc: &DocModel,
+    front_matter: Option<&str>,
+    assets: &AssetTable,
+    global_password: Option<&str>,
+) -> Result<Option<EncryptedBlob>> {
+    let Some(raw) = front_matter else {
+        return Ok(None);
+    };
+    let Some(directive) = parse_directive(raw, &doc.id)? else {
+        return Ok(None);
+    };
+
+    let password = match &directive {
+        EncryptDirective::Global => global_password,
+        EncryptDirective::PerDoc(password) => Some(password.as_str()),
+    };
+    let Some(password) = password else {
+        return Err(Error::InvalidInput(format!(
+            "document '{}' declares encryption but no password is available: pass \
+             --password, set WIKICC_PASSWORD, or set 'password' in .wikicc.json",
+            doc.id
+        )));
+    };
+
+    // The sealed body must render after an unlock, so its own asset
+    // references travel inside the ciphertext as data URIs. An unknown
+    // placeholder is the same internal contract break it is at write
+    // time — a document cannot carry one, because the resolve stage
+    // leaves the original text and a warning for an asset it could not
+    // read — and aborts the build before anything is reported or written.
+    let mut scratch: Vec<u8> = Vec::new();
+    let (html, _) = expand_placeholders(&doc.html, assets, |asset, sink| {
+        write_data_uri(asset, sink, &mut scratch)
+    })?;
+    let mut blocks = Vec::with_capacity(doc.blocks.len());
+    for block in &doc.blocks {
+        let (html, _) = expand_placeholders(&block.html, assets, |asset, sink| {
+            write_data_uri(asset, sink, &mut scratch)
+        })?;
+        let mut block = block.clone();
+        block.html = html;
+        blocks.push(block);
+    }
+
+    let plain = serde_json::to_vec(&PlainBody {
+        html: &html,
+        toc: &doc.toc,
+        blocks: &blocks,
+        text: &doc.text,
+    })
+    .expect("a document body always serialises to JSON");
+    let sealed = crypto::seal(&plain, password, doc.id.as_bytes());
+
+    Ok(Some(EncryptedBlob {
+        v: crypto::FORMAT_VERSION,
+        kdf: crypto::KDF_NAME.to_string(),
+        iters: crypto::KDF_ITERATIONS,
+        salt: STANDARD.encode(sealed.salt),
+        nonce: STANDARD.encode(sealed.nonce),
+        ct: STANDARD.encode(&sealed.ct),
+    }))
 }
 
 /// Drop every asset the artifact no longer addresses, after all sealing.
@@ -278,6 +325,43 @@ mod tests {
     /// The front matter text of a document that declares `directive`.
     fn declared(directive: &str) -> String {
         format!("---\n{directive}\n---\n\n# A\n\nsecret body\n")
+    }
+
+    /// A site whose documents carry the given front-matter texts, sealed
+    /// with `global`. The ids are zero-padded, so document order is
+    /// lexicographic order.
+    fn sealed_site(matters: &[&str], global: Option<&str>) -> Result<crate::site::SiteBuild> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs: Vec<SourceDoc> = matters
+            .iter()
+            .enumerate()
+            .map(|(index, matter)| SourceDoc {
+                text: format!("---\n{matter}\n---\n\n# Doc {index}\n\nsecret {index}\n"),
+                id: format!("{index:02}.md"),
+                path: dir.path().join(format!("{index:02}.md")),
+                title: format!("Doc {index}"),
+            })
+            .collect();
+        let mut build = build_site("Site", dir.path(), &docs);
+        let favicon = build.register_favicon("logo.svg", b"<svg/>");
+        seal_bundle(&mut build, global, &favicon)?;
+        Ok(build)
+    }
+
+    /// Open the canonical JSON of a blob with `password`.
+    fn opened_json(blob: &EncryptedBlob, password: &str, id: &str) -> Json {
+        let plain = open(
+            SealedRef {
+                salt: &STANDARD.decode(&blob.salt).expect("salt decodes"),
+                nonce: &STANDARD.decode(&blob.nonce).expect("nonce decodes"),
+                ct: &STANDARD.decode(&blob.ct).expect("ct decodes"),
+            },
+            password,
+            id.as_bytes(),
+        )
+        .expect("the password opens the body");
+
+        serde_json::from_slice(&plain).expect("canonical JSON")
     }
 
     // The `encrypt` semantic matrix.
@@ -491,6 +575,99 @@ mod tests {
         .expect_err("the wrong password cannot open the body");
 
         assert_eq!(error, crate::crypto::OpenError::Authenticated);
+    }
+
+    #[test]
+    fn several_documents_seal_and_every_one_opens_with_its_own_password() {
+        let build = sealed_site(
+            &["encrypt: true", "encrypt: \"doc1pw\"", "title: public"],
+            Some(GLOBAL),
+        )
+        .expect("seals");
+
+        let plain0 = opened_json(
+            build.bundle.docs[0].enc.as_ref().expect("doc 0 seals"),
+            GLOBAL,
+            "00.md",
+        );
+        assert!(
+            plain0["text"].as_str().expect("text").contains("secret 0"),
+            "doc 0 sealed its own body: {}",
+            plain0["text"]
+        );
+
+        let plain1 = opened_json(
+            build.bundle.docs[1].enc.as_ref().expect("doc 1 seals"),
+            "doc1pw",
+            "01.md",
+        );
+        assert!(
+            plain1["text"].as_str().expect("text").contains("secret 1"),
+            "doc 1 sealed its own body: {}",
+            plain1["text"]
+        );
+
+        assert!(
+            build.bundle.docs[2].enc.is_none(),
+            "the public document stays public"
+        );
+        assert_eq!(build.bundle.docs[2].text, "Doc 2 secret 2");
+        assert_eq!(build.bundle.stats.documents, 3);
+    }
+
+    #[test]
+    fn a_missing_password_reports_the_first_failing_document_in_order() {
+        // Doc 0 seals with its own password; doc 1 needs the global one,
+        // which is absent; doc 2 has its own too. The first failure in
+        // document order is doc 1 — never doc 2, whatever the threads.
+        let error = sealed_site(
+            &["encrypt: \"own0\"", "encrypt: true", "encrypt: \"own2\""],
+            None,
+        )
+        .expect_err("doc 1 has no password");
+
+        assert!(
+            error.to_string().contains("document '01.md'"),
+            "the first failing document is named: {error}"
+        );
+    }
+
+    #[test]
+    fn a_single_thread_pool_seals_and_opens_like_the_default_one() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs: Vec<SourceDoc> = (0..4)
+            .map(|index| SourceDoc {
+                id: format!("{index:02}.md"),
+                path: dir.path().join(format!("{index:02}.md")),
+                title: format!("Doc {index}"),
+                text: format!("---\nencrypt: true\n---\n\n# Doc {index}\n\nsecret {index}\n"),
+            })
+            .collect();
+        let mut build = build_site("Site", dir.path(), &docs);
+        let favicon = build.register_favicon("logo.svg", b"<svg/>");
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("the pool builds");
+        pool.install(|| seal_bundle(&mut build, Some(GLOBAL), &favicon))
+            .expect("seals");
+
+        assert_eq!(build.bundle.stats.documents, 4);
+        for (index, doc) in build.bundle.docs.iter().enumerate() {
+            let plain = opened_json(
+                doc.enc.as_ref().expect("sealed"),
+                GLOBAL,
+                &format!("{index:02}.md"),
+            );
+            assert!(
+                plain["text"]
+                    .as_str()
+                    .expect("text")
+                    .contains(&format!("secret {index}")),
+                "document {index} sealed its own body"
+            );
+        }
     }
 
     #[test]

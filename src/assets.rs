@@ -188,6 +188,24 @@ impl AssetTable {
         self.by_path
             .retain(|_, hash| self.by_hash.contains_key(hash));
     }
+
+    /// Fold the entries of `other` into this table, keeping what is here.
+    ///
+    /// The parallel assembly gives every document its own table; this runs
+    /// after the collection, in document order, so the entries the first
+    /// document registered win. A file two documents referenced is read
+    /// twice in parallel and collapses here into one entry by content hash,
+    /// and the first registration also wins when a file changed between the
+    /// two reads, which keeps the build deterministic whatever the threads
+    /// saw.
+    pub fn merge(&mut self, other: AssetTable) {
+        for (path, hash) in other.by_path {
+            self.by_path.entry(path).or_insert(hash);
+        }
+        for (hash, asset) in other.by_hash {
+            self.by_hash.entry(hash).or_insert(asset);
+        }
+    }
 }
 
 /// Content address of `bytes`: the first [`HASH_HEX_LEN`] hex characters of the
@@ -495,5 +513,72 @@ mod tests {
 
         assert_eq!(table.len(), 2);
         assert_eq!(table.total_bytes(), bytes);
+    }
+
+    #[test]
+    fn merging_folds_in_the_entries_the_table_lacks() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut table = AssetTable::new();
+        table
+            .insert_file(&write(dir.path(), "a.svg", b"<svg>a</svg>"))
+            .expect("read a");
+
+        let mut other = AssetTable::new();
+        other
+            .insert_file(&write(dir.path(), "b.svg", b"<svg>b</svg>"))
+            .expect("read b");
+
+        table.merge(other);
+
+        assert_eq!(table.len(), 2, "both entries survive");
+    }
+
+    #[test]
+    fn merging_collapses_content_deduplicates_across_tables() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut table = AssetTable::new();
+        table
+            .insert_file(&write(dir.path(), "one/logo.svg", b"<svg/>"))
+            .expect("read one");
+
+        let mut other = AssetTable::new();
+        other
+            .insert_file(&write(dir.path(), "two/logo.svg", b"<svg/>"))
+            .expect("read two");
+
+        table.merge(other);
+
+        assert_eq!(table.len(), 1, "identical content is one asset");
+    }
+
+    #[test]
+    fn merging_keeps_the_first_registration_of_a_shared_path() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write(dir.path(), "logo.svg", b"<svg>first</svg>");
+        let mut table = AssetTable::new();
+        table.insert_file(&path).expect("read once");
+
+        // The same path re-registered into a fresh table — the shape the
+        // parallel assembly produces when two documents reference one file.
+        let mut other = AssetTable::new();
+        other.insert_file(&path).expect("read twice");
+
+        table.merge(other);
+
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn merging_an_empty_table_changes_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut table = AssetTable::new();
+        table
+            .insert_file(&write(dir.path(), "a.svg", b"<svg>a</svg>"))
+            .expect("read a");
+        let before = table.clone();
+
+        table.merge(AssetTable::new());
+
+        assert_eq!(table, before);
     }
 }

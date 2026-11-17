@@ -19,6 +19,12 @@
 //! 9. render the page and write the artifact,
 //! 10. print the summary line (unless `--quiet`).
 //!
+//! The per-document work of the assembly (step 5) and of the encryption pass
+//! that follows it runs in parallel over a worker pool sized by the `jobs`
+//! setting (command line `--jobs`, `WIKICC_JOBS`, the configuration `jobs`
+//! key). The outcomes are collected and merged in scan order, so the thread
+//! count changes the wall-clock time, never the bytes.
+//!
 //! The gate comes before rendering and writing on purpose: a build that fails
 //! on warnings must neither create an artifact nor empty a previous one.
 //!
@@ -31,6 +37,8 @@
 
 use std::io::Write;
 use std::time::{Duration, Instant};
+
+use rayon::ThreadPoolBuilder;
 
 use crate::config;
 use crate::encrypt;
@@ -92,6 +100,20 @@ pub fn strict_message(warnings: usize) -> String {
     }
 }
 
+/// Threads the parallel stages may use: the explicit count, else every core.
+///
+/// An unset `jobs` asks the operating system how many cores are available and
+/// falls back to one when that cannot be answered. A count of one keeps the
+/// parallel-capable stages effectively sequential — the knob for debugging a
+/// suspected nondeterminism against a known-good run.
+fn worker_threads(options: &Options) -> usize {
+    match options.jobs {
+        // `u32` widens into `usize` on every supported target.
+        Some(jobs) => jobs as usize,
+        None => std::thread::available_parallelism().map_or(1, |count| count.get()),
+    }
+}
+
 /// Run the whole pipeline for `request`.
 ///
 /// Diagnostics and the warning summary go to `err`; the summary line goes to
@@ -131,7 +153,18 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     let mut config_diagnostics = site_config.diagnostics;
     config_diagnostics.extend(resolved_diagnostics);
 
-    let mut build = site::build_site(&options.title, &options.input, &report.docs);
+    // The two per-document stages — the assembly and the sealing — run their
+    // per-document work in parallel over this pool. The count is a pure
+    // throughput knob: the outcomes are collected and merged in scan order,
+    // so no thread schedule can reach the artifact.
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(worker_threads(&options))
+        .build()
+        .map_err(|error| {
+            Error::InvalidInput(format!("cannot start the worker threads: {error}"))
+        })?;
+
+    let mut build = pool.install(|| site::build_site(&options.title, &options.input, &report.docs));
     build.bundle.home = home;
     // The favicon joins the asset table like any document-referenced resource
     // (deduplicated by content); the rendered head addresses it by the
@@ -146,7 +179,7 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     // and the assets only sealed documents referenced are pruned from the
     // table, so no writer publishes them in the clear. The favicon
     // placeholder rides along because the prune could not know it otherwise.
-    encrypt::seal_bundle(&mut build, options.password.as_deref(), &favicon_href)?;
+    pool.install(|| encrypt::seal_bundle(&mut build, options.password.as_deref(), &favicon_href))?;
 
     // Diagnostics always reach stderr; `--quiet` only silences the summary
     // line. Scan messages come first, then the configuration problems, then
@@ -622,6 +655,168 @@ mod tests {
             before,
             "a refused build must not empty the previous one"
         );
+    }
+
+    /// The global password the sealing tests seal with.
+    const SEAL_PASSWORD: &str = "pool secret";
+
+    /// A fixture with `count` documents that cross-link, reference a chapter
+    /// of the next document and share one asset, so the parallel stages have
+    /// real per-document work to race on.
+    fn many_document_fixture(count: usize) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir(dir.path().join("img")).expect("create image directory");
+        std::fs::write(dir.path().join("img").join("logo.svg"), b"<svg/>").expect("write asset");
+        for index in 0..count {
+            let next = (index + 1) % count;
+            std::fs::write(
+                dir.path().join(format!("{index:02}.md")),
+                format!(
+                    "# Doc {index}\n\n## Chapter\n\n![logo](img/logo.svg)\n\n\
+                     [next]({next:02}.md) [chapter]({next:02}.md#chapter) [gone](missing-{index}.md)\n"
+                ),
+            )
+            .expect("write fixture");
+        }
+        dir
+    }
+
+    #[test]
+    fn the_jobs_count_never_reaches_the_artifact() {
+        let dir = many_document_fixture(12);
+        let out_one = dir.path().join("one");
+        let out_four = dir.path().join("four");
+
+        let mut one = request(dir.path(), &out_one, OutputFormat::SingleHtml);
+        one.settings.jobs = Some(1);
+        let (outcome, _, _) = execute(&one);
+        outcome.expect("the single-threaded build succeeds");
+
+        let mut four = request(dir.path(), &out_four, OutputFormat::SingleHtml);
+        four.settings.jobs = Some(4);
+        let (outcome, _, _) = execute(&four);
+        outcome.expect("the four-thread build succeeds");
+
+        assert_eq!(
+            std::fs::read(out_one.join(writers::HTML_FILE_NAME)).expect("read one"),
+            std::fs::read(out_four.join(writers::HTML_FILE_NAME)).expect("read four"),
+            "the thread count cannot change the bytes"
+        );
+    }
+
+    /// The payload JSON embedded in a single-html artifact.
+    fn payload_value(artifact: &str) -> serde_json::Value {
+        const OPENING: &str = r#"<script id="wikicc-payload" type="application/json">"#;
+        let start = artifact.find(OPENING).expect("payload element") + OPENING.len();
+        let end = artifact[start..].find("</script>").expect("payload end") + start;
+
+        serde_json::from_str(&artifact[start..end]).expect("payload JSON")
+    }
+
+    /// The decrypted canonical JSON of one sealed document of the payload.
+    fn decrypted(payload: &serde_json::Value, id: &str) -> Vec<u8> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let doc = payload["docs"]
+            .as_array()
+            .expect("docs")
+            .iter()
+            .find(|doc| doc["id"] == id)
+            .expect("the document is in the payload");
+        let enc = &doc["enc"];
+
+        crate::crypto::open(
+            crate::crypto::SealedRef {
+                salt: &STANDARD
+                    .decode(enc["salt"].as_str().expect("salt"))
+                    .expect("decodes"),
+                nonce: &STANDARD
+                    .decode(enc["nonce"].as_str().expect("nonce"))
+                    .expect("decodes"),
+                ct: &STANDARD
+                    .decode(enc["ct"].as_str().expect("ct"))
+                    .expect("decodes"),
+            },
+            SEAL_PASSWORD,
+            id.as_bytes(),
+        )
+        .expect("the password opens the body")
+    }
+
+    #[test]
+    fn sealed_documents_are_identical_whatever_the_jobs_count() {
+        // Four documents keep the serial `--jobs 1` run's key derivations
+        // (the suite's cost is per sealed document) while still racing real
+        // work across the pool.
+        let dir = many_document_fixture(4);
+        for index in 0..4 {
+            let path = dir.path().join(format!("{index:02}.md"));
+            let text = std::fs::read_to_string(&path).expect("read doc");
+            std::fs::write(&path, format!("---\nencrypt: true\n---\n\n{text}"))
+                .expect("declare encryption");
+        }
+
+        let out_one = dir.path().join("one");
+        let mut one = request(dir.path(), &out_one, OutputFormat::SingleHtml);
+        one.settings.jobs = Some(1);
+        one.settings.password = Some(SEAL_PASSWORD.to_string());
+        execute(&one).0.expect("the single-threaded seal succeeds");
+
+        let out_four = dir.path().join("four");
+        let mut four = request(dir.path(), &out_four, OutputFormat::SingleHtml);
+        four.settings.jobs = Some(4);
+        four.settings.password = Some(SEAL_PASSWORD.to_string());
+        execute(&four).0.expect("the four-thread seal succeeds");
+
+        // The artifacts differ in the random seal parameters, so the
+        // plaintext bodies are what must match: both runs decrypt to the
+        // same canonical JSON, and every document is sealed in both.
+        let one_payload = payload_value(
+            &std::fs::read_to_string(out_one.join(writers::HTML_FILE_NAME)).expect("one"),
+        );
+        let four_payload = payload_value(
+            &std::fs::read_to_string(out_four.join(writers::HTML_FILE_NAME)).expect("four"),
+        );
+
+        assert_eq!(
+            decrypted(&one_payload, "00.md"),
+            decrypted(&four_payload, "00.md"),
+            "the plaintext the reader opens is the same either way"
+        );
+        for index in 0..4 {
+            let id = format!("{index:02}.md");
+            for (name, payload) in [("one", &one_payload), ("four", &four_payload)] {
+                let doc = payload["docs"]
+                    .as_array()
+                    .expect("docs")
+                    .iter()
+                    .find(|doc| doc["id"] == id)
+                    .expect("the document is in the payload");
+                assert!(doc.get("enc").is_some(), "{name}: document {id} is sealed");
+                assert_eq!(
+                    doc["html"].as_str().expect("html"),
+                    "",
+                    "{name}: the plaintext is emptied"
+                );
+                assert_eq!(
+                    doc["title"],
+                    format!("Doc {index}"),
+                    "{name}: title stays public"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_jobs_setting_uses_every_core_without_spelling_it() {
+        // No source names `jobs`; the pool is sized by the operating system.
+        // The build must succeed exactly as an explicit count would.
+        let dir = many_document_fixture(12);
+        let out = dir.path().join("dist");
+
+        let (outcome, stdout, _) = execute(&request(dir.path(), &out, OutputFormat::SingleHtml));
+        outcome.expect("the automatic build succeeds");
+        assert!(stdout.starts_with("compiled 12 documents"), "{stdout}");
     }
 
     #[test]

@@ -166,6 +166,8 @@ wikicc [OPTIONS] [INPUT_DIR]
                          the WIKICC_PASSWORD environment variable: a command
                          line value stays in the shell history and the process
                          list
+  -j, --jobs <N>         Worker threads the parallel build stages may use;
+                         overrides .wikicc.json [default: all cores]
       --force            Overwrite the output directory without confirmation
   -q, --quiet            Suppress the summary line
       --init-config [DIR]
@@ -186,6 +188,7 @@ wikicc path/to/docs --exclude drafts      # override the configured exclusions
 wikicc path/to/docs --favicon assets/icon.png
 WIKICC_PASSWORD="opensesame" wikicc path/to/docs # seal documents marked encrypt: true
 wikicc path/to/docs --password "opensesame"      # the same seal, but the password lands in the shell history
+wikicc path/to/docs --jobs 4              # cap the parallel build at four worker threads
 wikicc --init-config path/to/docs         # writes path/to/docs/.wikicc.json
 ```
 
@@ -208,11 +211,12 @@ upper case. The command line overrides the variables; the variables override
 | `WIKICC_EXCLUDE` | Comma-separated directories kept out of the site |
 | `WIKICC_FAVICON` | Favicon file relative to the input folder |
 | `WIKICC_PASSWORD` | Global password for documents whose front matter declares encryption |
+| `WIKICC_JOBS` | Worker threads the parallel build stages may use; a positive integer |
 
 A variable that is not set, or whose value is blank, did not speak: the next
 source down decides. A value that cannot be understood — an unknown format, an
 unparseable boolean, an empty exclusion entry — fails the build with an error
-naming the variable. Only the eight names above count; any other `WIKICC_*`
+naming the variable. Only the nine names above count; any other `WIKICC_*`
 variable in the environment is ignored, because that namespace belongs to
 other programs too. `--force`, `--quiet`, `--init-config` and the input
 directory exist only on the command line, never as variables.
@@ -244,6 +248,7 @@ by a flag or a set variable:
 | `favicon` | Favicon file relative to the input folder [default: the wikicc logo] |
 | `password` | Global password for documents whose front matter declares encryption; read verbatim |
 | `strict` | Fail the build on warnings [default: `false`] |
+| `jobs` | Worker threads the parallel build stages may use, at least 1 [default: all cores] |
 
 `home` is a document id — the path relative to the input folder, `/`
 separated, extension included — and a missing `.md` (or `.markdown`) suffix is
@@ -282,7 +287,8 @@ the executable at build time.
   "title": "Handbook",
   "favicon": "assets/icon.png",
   "password": "opensesame",
-  "strict": false
+  "strict": false,
+  "jobs": 4
 }
 ```
 
@@ -290,14 +296,14 @@ the executable at build time.
 over it, and an explicit flag wins over the variable.**
 
 - `WIKICC_OUT`, `WIKICC_FORMAT`, `WIKICC_TITLE`, `WIKICC_STRICT`, `WIKICC_HOME`,
-  `WIKICC_EXCLUDE`, `WIKICC_FAVICON` and `WIKICC_PASSWORD` override their
-  configured counterparts; the command line flags below override the variables
-  again.
+  `WIKICC_EXCLUDE`, `WIKICC_FAVICON`, `WIKICC_PASSWORD` and `WIKICC_JOBS`
+  override their configured counterparts; the command line flags below override
+  the variables again.
 - `--home` replaces the configured `home`.
 - `--exclude` **replaces** the configured list entirely; repeat the flag for
   several directories.
-- `--out`, `--format`, `--title`, `--favicon` and `--password` override their
-  configured counterparts.
+- `--out`, `--format`, `--title`, `--favicon`, `--password` and `--jobs`
+  override their configured counterparts.
 - A bare `--strict` turns the gate on and `--strict=false` turns it off,
   whatever the file says.
 - `--force` and `--quiet` exist only on the command line; the file never
@@ -332,7 +338,8 @@ key unset:
   "title": null,
   "favicon": null,
   "password": null,
-  "strict": null
+  "strict": null,
+  "jobs": null
 }
 ```
 
@@ -353,6 +360,22 @@ sealed declaration that finds no password anywhere fails the build with exit
 code 1 and nothing written, whatever `--strict` says. The title stays public;
 the full contract — marking, password sources, the reader's lock page and the
 scheme's boundaries — is described in [`docs/encrypt.md`](docs/encrypt.md).
+
+### Parallel compilation
+
+The per-document work — parsing and rendering every document's Markdown,
+resolving its links and assets, and sealing the documents marked `encrypt` —
+runs in parallel across the machine's cores. The results are collected and
+merged in the scan order, so the thread count changes how long a build takes,
+never the bytes: two builds of the same input are byte-identical whatever the
+worker count was.
+
+`--jobs N` caps the worker threads (`--jobs 1` keeps the parallel stages
+effectively sequential — the knob for comparing a suspicious artifact against
+a known-good one). The setting takes the same three sources as every other
+one — `--jobs` over `WIKICC_JOBS` over the configuration file's `jobs` key —
+and without any of them the build uses every available core. A value below 1
+fails the build with exit code 1.
 
 ### Warnings and `--strict`
 
