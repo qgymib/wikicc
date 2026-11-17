@@ -56,13 +56,10 @@ their chapter outline.
 ### Encrypted documents
 
 A document whose front matter declares `encrypt` is sealed into the artifact:
-AES-256-GCM ciphertext under PBKDF2 key derivation, so a copied artifact or a
-text editor shows no body, no chapter structure and no password. The reader
-shows the title and a password field on a lock page, and the password typed
-there renders the document in place; a reference to a sealed chapter offers
-the same field inside its hover preview, and search finds the title before
-the unlock and the body after it. Unlocked passwords live in the session's
-memory alone — reloading the page relocks every document.
+AES-256-GCM ciphertext, so a copied artifact shows no body, no chapter
+structure and no password. The reader unlocks it in place, the title stays
+public and searchable, and unlocked passwords live in the session's memory
+alone. See [`docs/encrypt.md`](docs/encrypt.md) for the full contract.
 
 ### Output formats
 
@@ -346,51 +343,16 @@ key unset:
 
 ### Encrypted documents
 
-A document's front matter can ask the build to seal it. The key is `encrypt`:
-
-| Front matter | Meaning |
-| --- | --- |
-| *(no key)*, `encrypt: false`, `encrypt:` | Build the document as usual |
-| `encrypt: true` | Seal it with the global password |
-| `encrypt: "secret"` | Seal it with this document's own password |
-| anything else (`encrypt: ""`, a number, a list, invalid YAML) | Fail the build with an error naming the document |
-
-```markdown
----
-title: Private notes
-encrypt: true
----
-
-Nobody reads this without the password.
-```
-
-The global password takes the same three sources as every setting, in the
-same order — `--password` over `WIKICC_PASSWORD` over the configuration
-file's `password` key. A document that asks for encryption and finds no
-password anywhere fails the build: exit code 1, the error names the document
-on stderr, and nothing is written, whatever `--strict` says.
-
-```sh
-WIKICC_PASSWORD="opensesame" wikicc path/to/docs
-wikicc path/to/docs --password "opensesame" # works, but the password lands in the shell history
-```
-
-Two boundaries are worth knowing:
-
-- **The password is the security.** The salt, the nonce and the iteration
-  count are public parameters that weaken nothing; a short password does.
-  A command line `--password` stays in the shell history and the process
-  list, so prefer `WIKICC_PASSWORD` — whose value is trimmed, which makes
-  the configuration file the only source that can carry a password with
-  leading or trailing whitespace (its values are read verbatim).
-- **The title stays public.** The lock page, the sidebar, the link graph and
-  search all show the title; search reaches the body only after the reader
-  unlocks the document, and local assets a sealed document references become
-  visible with that unlock too.
-
-The reader keeps unlocked passwords in the session's memory alone — nothing
-is written to `localStorage`, `sessionStorage` or a cookie — so reloading
-the page relocks every document, and a fresh session asks again.
+A document's front matter can ask the build to seal it: `encrypt: true` seals
+it with the global password, `encrypt: "secret"` seals it with a password of
+its own, and a missing key, `false` or null builds the document as usual —
+every other value fails the build with an error naming the document. The
+global password takes the same three sources as every setting — `--password`
+over `WIKICC_PASSWORD` over the configuration file's `password` key — and a
+sealed declaration that finds no password anywhere fails the build with exit
+code 1 and nothing written, whatever `--strict` says. The title stays public;
+the full contract — marking, password sources, the reader's lock page and the
+scheme's boundaries — is described in [`docs/encrypt.md`](docs/encrypt.md).
 
 ### Warnings and `--strict`
 
@@ -415,6 +377,8 @@ one.
 - [`CHANGELOG.md`](CHANGELOG.md) — what changed in each release.
 - [`docs/search.md`](docs/search.md) — how the reader's search works, and the
   query syntax it understands.
+- [`docs/encrypt.md`](docs/encrypt.md) — how sealed documents work: marking
+  them, passwords, the reader's lock page and the scheme's boundaries.
 - [`docs/design.md`](docs/design.md) — how `wikicc` is built.
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — the development rules: the
   quality gates every commit has to pass, and the steps that regenerate the
