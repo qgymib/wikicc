@@ -563,3 +563,217 @@ fn a_site_without_encryption_carries_no_enc_key_anywhere() {
         }
     }
 }
+
+/// Image X: shown by a public document and by a sealed one.
+const X_IMAGE: &[u8] = b"<svg>shared image X</svg>";
+
+/// Image Y: shown only by a sealed document.
+const Y_IMAGE: &[u8] = b"<svg>sealed-only image Y</svg>";
+
+/// A three-document site with the two halves of the asset boundary in one
+/// place: `public.md` shows image X, `shared.md` (sealed) shows the same X,
+/// and `private.md` (sealed) shows image Y that nothing public references.
+fn asset_fixture() -> TempDir {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let images = dir.path().join("img");
+    std::fs::create_dir(&images).expect("create image directory");
+    std::fs::write(images.join("x.svg"), X_IMAGE).expect("write X");
+    std::fs::write(images.join("y.svg"), Y_IMAGE).expect("write Y");
+
+    for (name, body) in [
+        ("public.md", "# Public\n\n![x](img/x.svg)\n".to_string()),
+        (
+            "shared.md",
+            "---\nencrypt: true\n---\n\n# Shared\n\n![x](img/x.svg)\n".to_string(),
+        ),
+        (
+            "private.md",
+            "---\nencrypt: true\n---\n\n# Private\n\n![y](img/y.svg)\n".to_string(),
+        ),
+    ] {
+        std::fs::write(dir.path().join(name), body).expect("write fixture");
+    }
+
+    dir
+}
+
+/// Build `dir` into `out` with `format`, sealing with `--password`, and
+/// return the summary line.
+fn build_asset_site(dir: &TempDir, out: &Path, format: &str) -> String {
+    let output = wikicc()
+        .arg(dir.path())
+        .args(["--out", &path_string(out), "--format", format])
+        .args(["--password", PASSWORD])
+        .output()
+        .expect("run wikicc");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("stdout is utf-8")
+}
+
+/// Bytes of every regular file under `root`, recursively, in walk order.
+fn artifact_bytes(root: &Path) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry.expect("walk the artifact");
+        if entry.file_type().is_file() {
+            bytes.extend(std::fs::read(entry.path()).expect("read artifact file"));
+        }
+    }
+
+    bytes
+}
+
+/// Whether `haystack` contains `needle` as a byte substring.
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+/// File names directly inside `dir`, sorted.
+fn asset_names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .expect("the asset directory exists")
+        .map(|entry| {
+            entry
+                .expect("read a directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+
+    names
+}
+
+/// The boundary holds in the two formats that write assets as files: the
+/// shared image is published for its public reference, the sealed-only image
+/// is not published at all, and the summary and the payload stats follow.
+#[test]
+fn a_sealed_only_asset_is_not_written_and_the_counts_follow() {
+    let x_file = format!("{}.svg", wikicc::asset_hash(X_IMAGE));
+    let y_file = format!("{}.svg", wikicc::asset_hash(Y_IMAGE));
+    let favicon_file = format!("{}.svg", wikicc::asset_hash(wikicc::DEFAULT_FAVICON));
+
+    for format in ["html-dir", "pages"] {
+        let dir = asset_fixture();
+        let out = dir.path().join(format);
+        let summary = build_asset_site(&dir, &out, format);
+
+        assert!(
+            summary.starts_with("compiled 3 documents, 2 assets -> "),
+            "{format}: {summary}"
+        );
+
+        let names = asset_names(&out.join("assets"));
+        assert!(
+            names.contains(&x_file) && names.contains(&favicon_file),
+            "{format}: the shared image and the favicon are written: {names:?}"
+        );
+        assert!(
+            !names.contains(&y_file),
+            "{format}: the sealed-only image is not written: {names:?}"
+        );
+
+        // The whole artifact carries Y's bytes nowhere in the clear — not
+        // raw, not base64-encoded.
+        let bytes = artifact_bytes(&out);
+        assert!(
+            !bytes_contain(&bytes, Y_IMAGE),
+            "{format}: the sealed-only image leaks as raw bytes"
+        );
+        assert!(
+            !bytes_contain(&bytes, STANDARD.encode(Y_IMAGE).as_bytes()),
+            "{format}: the sealed-only image leaks as base64"
+        );
+
+        // Both shells carry the same stats: X and the favicon, not Y.
+        let page = std::fs::read_to_string(out.join("index.html")).expect("read shell");
+        assert_eq!(shell_payload(&page)["stats"]["assets"], 2, "{format}");
+    }
+}
+
+/// `single-html` inlines what the artifact addresses and nothing else: the
+/// shared image travels for its public reference, the sealed-only image only
+/// inside the ciphertext.
+#[test]
+fn single_html_does_not_leak_a_sealed_only_asset() {
+    let dir = asset_fixture();
+    let out = dir.path().join("single");
+    let summary = build_asset_site(&dir, &out, "single-html");
+
+    assert!(
+        summary.starts_with("compiled 3 documents, 2 assets -> "),
+        "{summary}"
+    );
+
+    let page = std::fs::read(out.join("index.html")).expect("read artifact");
+    assert!(
+        !bytes_contain(&page, Y_IMAGE),
+        "the sealed-only image leaks as raw bytes"
+    );
+    assert!(
+        !bytes_contain(&page, STANDARD.encode(Y_IMAGE).as_bytes()),
+        "the sealed-only image leaks as base64"
+    );
+    assert!(
+        bytes_contain(&page, STANDARD.encode(X_IMAGE).as_bytes()),
+        "the shared image is inlined for its public reference"
+    );
+
+    let payload = shell_payload(std::str::from_utf8(&page).expect("the page is utf-8"));
+    assert_eq!(payload["stats"]["assets"], 2);
+}
+
+/// Unlocking seals the deal the other way round: the decrypted bodies render
+/// their images natively as data URIs instead of dead placeholders.
+#[test]
+fn the_unlocked_bodies_render_their_images_as_data_uris() {
+    let dir = asset_fixture();
+    let out = dir.path().join("single");
+    build_asset_site(&dir, &out, "single-html");
+
+    let page = std::fs::read_to_string(out.join("index.html")).expect("read artifact");
+    let payload = shell_payload(&page);
+
+    let private_plain = opens_with(
+        &payload_doc(&payload, "private.md")["enc"],
+        PASSWORD,
+        "private.md",
+    )
+    .expect("the global password opens the sealed body");
+    let private: Value = serde_json::from_slice(&private_plain).expect("canonical JSON");
+    let html = private["html"].as_str().expect("html");
+    assert!(
+        html.contains(&format!(
+            "data:image/svg+xml;base64,{}",
+            STANDARD.encode(Y_IMAGE)
+        )),
+        "the sealed-only image travels as a data URI: {html}"
+    );
+    assert!(
+        !html.contains("wikicc-asset:"),
+        "no dead placeholder survives the seal: {html}"
+    );
+
+    let shared_plain = opens_with(
+        &payload_doc(&payload, "shared.md")["enc"],
+        PASSWORD,
+        "shared.md",
+    )
+    .expect("the global password opens the sealed body");
+    let shared: Value = serde_json::from_slice(&shared_plain).expect("canonical JSON");
+    assert!(
+        shared["html"].as_str().expect("html").contains(&format!(
+            "data:image/svg+xml;base64,{}",
+            STANDARD.encode(X_IMAGE)
+        )),
+        "the shared image travels as a data URI too"
+    );
+}

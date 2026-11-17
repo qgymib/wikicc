@@ -174,6 +174,20 @@ impl AssetTable {
 
         hash
     }
+
+    /// Keep only the assets `keep` accepts, dropping the rest.
+    ///
+    /// The caller owns the reference policy — the sealing pass keeps what
+    /// public documents and the favicon still address — and the table never
+    /// decides. A path cache entry that pointed at a dropped hash is removed
+    /// with it, so both indexes keep describing the same set of assets and a
+    /// re-registered path is read from disk instead of resurrecting a dropped
+    /// asset.
+    pub fn retain(&mut self, keep: impl Fn(&str) -> bool) {
+        self.by_hash.retain(|hash, _| keep(hash));
+        self.by_path
+            .retain(|_, hash| self.by_hash.contains_key(hash));
+    }
 }
 
 /// Content address of `bytes`: the first [`HASH_HEX_LEN`] hex characters of the
@@ -423,5 +437,63 @@ mod tests {
             "image/svg+xml",
             "the first reference decides the MIME type"
         );
+    }
+
+    #[test]
+    fn retain_keeps_the_accepted_assets_and_drops_the_rest() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut table = AssetTable::new();
+        let first = table
+            .insert_file(&write(dir.path(), "a.svg", b"<svg>a</svg>"))
+            .expect("read a");
+        let second = table
+            .insert_file(&write(dir.path(), "b.svg", b"<svg>b</svg>"))
+            .expect("read b");
+
+        table.retain(|hash| hash == first.as_str());
+
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.get(&second), None, "the unaccepted asset is gone");
+        assert_eq!(table.get(&first).expect("kept").bytes, b"<svg>a</svg>");
+        assert_eq!(table.total_bytes(), 12);
+    }
+
+    #[test]
+    fn retain_drops_the_path_cache_entries_of_the_dropped_hashes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write(dir.path(), "b.svg", b"<svg>b</svg>");
+        let mut table = AssetTable::new();
+        let kept = table
+            .insert_file(&write(dir.path(), "a.svg", b"<svg>a</svg>"))
+            .expect("read a");
+        let dropped = table.insert_file(&path).expect("read b");
+
+        table.retain(|hash| hash == kept.as_str());
+
+        // A stale path cache entry would resurrect the dropped asset without
+        // ever reading the file again.
+        let again = table.insert_file(&path).expect("re-read b");
+
+        assert_eq!(again, dropped, "the same content is the same asset");
+        assert_eq!(table.len(), 2, "the dropped asset was re-read from disk");
+        assert_eq!(table.get(&dropped).expect("asset").bytes, b"<svg>b</svg>");
+    }
+
+    #[test]
+    fn retain_keeping_everything_changes_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut table = AssetTable::new();
+        table
+            .insert_file(&write(dir.path(), "a.svg", b"<svg>a</svg>"))
+            .expect("read a");
+        table
+            .insert_file(&write(dir.path(), "b/copy.svg", b"<svg>b</svg>"))
+            .expect("read b");
+
+        let bytes = table.total_bytes();
+        table.retain(|_| true);
+
+        assert_eq!(table.len(), 2);
+        assert_eq!(table.total_bytes(), bytes);
     }
 }

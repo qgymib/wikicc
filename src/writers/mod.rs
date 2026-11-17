@@ -292,6 +292,38 @@ fn hash_at(html: &str, start: usize) -> Option<&str> {
     Some(&rest[..HASH_HEX_LEN])
 }
 
+/// Hashes of every complete asset placeholder in `html`, in occurrence order.
+///
+/// This is the scan half of [`expand_placeholders`]: the same prefix-plus-hash
+/// rule decides what counts, and the same cursor guard keeps a match that
+/// starts inside an already reported placeholder from being seen again, so
+/// what a collector gathers is exactly what an expansion would replace. A
+/// truncated hash is ordinary document text and contributes nothing.
+///
+/// The sealing pass uses this to find the assets the public documents still
+/// address after the sealed ones have been emptied.
+pub fn placeholder_hashes(html: &str) -> Vec<&str> {
+    let mut hashes = Vec::new();
+    let mut cursor = 0;
+
+    for (start, _) in html.match_indices(ASSET_PLACEHOLDER_PREFIX) {
+        // Mirrors `expand_placeholders`: a prefix that ends inside an already
+        // reported placeholder is skipped, so both passes stay in step.
+        if start < cursor {
+            continue;
+        }
+
+        let Some(hash) = hash_at(html, start + ASSET_PLACEHOLDER_PREFIX.len()) else {
+            continue;
+        };
+
+        hashes.push(hash);
+        cursor = start + ASSET_PLACEHOLDER_PREFIX.len() + hash.len();
+    }
+
+    hashes
+}
+
 /// Entries directly inside `dir`, sorted by path so removal is deterministic.
 fn read_entries(dir: &Path) -> Result<Vec<PathBuf>> {
     let entries = std::fs::read_dir(dir)
@@ -457,6 +489,48 @@ mod tests {
         .expect("expand");
 
         assert_eq!(replacements, 1);
+    }
+
+    #[test]
+    fn placeholder_hashes_reports_every_complete_placeholder() {
+        let (table, hash) = table_with("logo.svg", b"<svg/>");
+        let html = format!("a wikicc-asset:{hash} b wikicc-asset:{hash} c");
+
+        let hashes = placeholder_hashes(&html);
+
+        assert_eq!(hashes, [hash.as_str(), hash.as_str()]);
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn placeholder_hashes_skips_truncated_and_absent_mentions() {
+        let (_table, _) = table_with("logo.svg", b"<svg/>");
+
+        for html in [
+            "wikicc-asset:",
+            "wikicc-asset:abc",
+            "wikicc-asset:zzzz",
+            "no placeholders here",
+        ] {
+            assert!(
+                placeholder_hashes(html).is_empty(),
+                "{html} contributes no hash"
+            );
+        }
+    }
+
+    #[test]
+    fn placeholder_hashes_sees_exactly_what_the_expansion_replaces() {
+        let (table, hash) = table_with("logo.svg", b"<svg/>");
+        let html = format!(
+            "see <code>wikicc-asset:&lt;hash&gt;</code> and <img src=\"wikicc-asset:{hash}\">"
+        );
+
+        let hashes = placeholder_hashes(&html);
+        let (_, replacements) = expand_placeholders(&html, &table, mark).expect("expand");
+
+        assert_eq!(hashes, [hash.as_str()]);
+        assert_eq!(hashes.len(), replacements);
     }
 
     #[test]

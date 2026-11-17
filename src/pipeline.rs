@@ -141,8 +141,12 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
     // Documents whose front matter declares encryption are sealed here, after
     // assembly and before anything is reported or written: a missing password
     // or a broken directive is a hard error that leaves no output behind,
-    // whatever `--strict` says.
-    encrypt::seal_bundle(&mut build, options.password.as_deref())?;
+    // whatever `--strict` says. Sealing also closes the asset boundary: the
+    // sealed body carries its own assets as data URIs inside the ciphertext,
+    // and the assets only sealed documents referenced are pruned from the
+    // table, so no writer publishes them in the clear. The favicon
+    // placeholder rides along because the prune could not know it otherwise.
+    encrypt::seal_bundle(&mut build, options.password.as_deref(), &favicon_href)?;
 
     // Diagnostics always reach stderr; `--quiet` only silences the summary
     // line. Scan messages come first, then the configuration problems, then

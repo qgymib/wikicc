@@ -951,7 +951,7 @@ mod tests {
             "---\nencrypt: true\n---\n\n# A\n\nsecret body\n",
         )];
         let mut build = build_site("Site", dir.path(), &docs);
-        crate::encrypt::seal_bundle(&mut build, Some("global secret")).expect("seals");
+        crate::encrypt::seal_bundle(&mut build, Some("global secret"), FAVICON).expect("seals");
         let rendered = render_pages(&build.bundle, FAVICON).expect("render");
 
         // The manifest marks the lock beside the reference.

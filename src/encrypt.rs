@@ -26,14 +26,30 @@
 //! reader shows anyway. A document that declares encryption without any
 //! available password is a hard error naming the document, whatever
 //! `--strict` says.
+//!
+//! The asset boundary is sealed with the body. Before a document is
+//! encrypted, its own asset placeholders — in `html` and in every chapter
+//! block — are expanded into `data:` URIs built from the asset table's MIME
+//! type and bytes, the construction the single-html writer inlines with, so
+//! a decrypted article renders its images natively and nothing has to
+//! resolve a placeholder outside the artifact. After all documents are
+//! sealed, the asset table is pruned to what the public documents and the
+//! favicon still address: an asset only sealed documents referenced travels
+//! inside the ciphertext and is not written to the artifact, and `stats`
+//! follows the table.
+
+use std::collections::BTreeSet;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_yaml::Value;
 
+use crate::assets::ASSET_PLACEHOLDER_PREFIX;
 use crate::crypto;
 use crate::error::{Error, Result};
 use crate::markdown::{sections::Block, toc::TocEntry};
 use crate::site::{EncryptedBlob, SiteBuild};
+use crate::writers::single_html::write_data_uri;
+use crate::writers::{expand_placeholders, placeholder_hashes};
 
 /// What a document's front matter asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,10 +122,25 @@ struct PlainBody<'a> {
 ///
 /// The document's own password wins over the global one. For each sealed
 /// document the body is emptied and `enc` carries the ciphertext beside the
-/// public title; `edges` and `stats` are untouched. The salt and the nonce
-/// are fresh random bytes of every call, so two builds of the same site
-/// never produce the same sealed bytes.
-pub fn seal_bundle(build: &mut SiteBuild, global_password: Option<&str>) -> Result<()> {
+/// public title; `edges` and the rest of the metadata are untouched. The
+/// salt and the nonce are fresh random bytes of every call, so two builds of
+/// the same site never produce the same sealed bytes.
+///
+/// `favicon` is the placeholder the favicon registration returned. The
+/// favicon is addressed by the rendered head rather than by any document, so
+/// the prune below could not know to keep it otherwise.
+///
+/// Before a document is encrypted, its own asset placeholders — in `html`
+/// and in every chapter block — are expanded into `data:` URIs built from
+/// the asset table's MIME type and bytes, so the sealed body renders its
+/// images natively once unlocked. After all documents are sealed, the asset
+/// table is pruned to what the public documents and the favicon still
+/// address, and `stats` follows.
+pub fn seal_bundle(
+    build: &mut SiteBuild,
+    global_password: Option<&str>,
+    favicon_placeholder: &str,
+) -> Result<()> {
     for (index, doc) in build.bundle.docs.iter_mut().enumerate() {
         let Some(raw) = build.front_matters.get(index).and_then(Option::as_deref) else {
             continue;
@@ -129,6 +160,24 @@ pub fn seal_bundle(build: &mut SiteBuild, global_password: Option<&str>) -> Resu
                 doc.id
             )));
         };
+
+        // The sealed body must render after an unlock, so its own asset
+        // references travel inside the ciphertext as data URIs. An unknown
+        // placeholder is the same internal contract break it is at write
+        // time — a document cannot carry one, because the resolve stage
+        // leaves the original text and a warning for an asset it could not
+        // read — and aborts the build before anything is reported or written.
+        let mut scratch: Vec<u8> = Vec::new();
+        let (html, _) = expand_placeholders(&doc.html, &build.assets, |asset, sink| {
+            write_data_uri(asset, sink, &mut scratch)
+        })?;
+        doc.html = html;
+        for block in &mut doc.blocks {
+            let (html, _) = expand_placeholders(&block.html, &build.assets, |asset, sink| {
+                write_data_uri(asset, sink, &mut scratch)
+            })?;
+            block.html = html;
+        }
 
         let plain = serde_json::to_vec(&PlainBody {
             html: &doc.html,
@@ -155,13 +204,44 @@ pub fn seal_bundle(build: &mut SiteBuild, global_password: Option<&str>) -> Resu
         doc.enc = Some(blob);
     }
 
+    prune_assets(build, favicon_placeholder);
+
     Ok(())
+}
+
+/// Drop every asset the artifact no longer addresses, after all sealing.
+///
+/// The sealed bodies carry their assets inside the ciphertext, so the
+/// artifact needs exactly the assets the public documents' `html` and
+/// chapter blocks still address, plus the favicon entry the rendered head
+/// carries. The counters are decremented per dropped entry — the way the
+/// favicon registration incremented them per added one — so they keep
+/// describing the assets the artifact actually carries.
+fn prune_assets(build: &mut SiteBuild, favicon_placeholder: &str) {
+    let favicon_hash = favicon_placeholder
+        .strip_prefix(ASSET_PLACEHOLDER_PREFIX)
+        .unwrap_or(favicon_placeholder);
+    let mut keep: BTreeSet<&str> = BTreeSet::new();
+    keep.insert(favicon_hash);
+
+    for doc in build.bundle.docs.iter().filter(|doc| doc.enc.is_none()) {
+        keep.extend(placeholder_hashes(&doc.html));
+        for block in &doc.blocks {
+            keep.extend(placeholder_hashes(&block.html));
+        }
+    }
+
+    let (assets_before, bytes_before) = (build.assets.len(), build.assets.total_bytes());
+    build.assets.retain(|hash| keep.contains(hash));
+    build.bundle.stats.assets -= assets_before - build.assets.len();
+    build.bundle.stats.asset_bytes -= bytes_before - build.assets.total_bytes();
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::Value as Json;
 
+    use crate::assets::asset_hash;
     use crate::crypto::{SealedRef, open};
     use crate::scan::SourceDoc;
     use crate::site::build_site;
@@ -170,8 +250,17 @@ mod tests {
 
     const GLOBAL: &str = "global secret";
 
+    /// Image shared between a public and a sealed document.
+    const X_MARK: &[u8] = b"<svg>shared image</svg>";
+
+    /// Image referenced only by a sealed document.
+    const Y_MARK: &[u8] = b"<svg>sealed-only image</svg>";
+
     /// Build a one-document site whose source carries `front` as the front
     /// matter and seal it with `global`.
+    ///
+    /// The favicon is registered first, the way the pipeline does, so the
+    /// prune below sees the same shape a real build hands over.
     fn sealed(text: &str, global: Option<&str>) -> Result<crate::site::SiteBuild> {
         let dir = tempfile::tempdir().expect("temp dir");
         let docs = [SourceDoc {
@@ -181,7 +270,8 @@ mod tests {
             text: text.to_string(),
         }];
         let mut build = build_site("Site", dir.path(), &docs);
-        seal_bundle(&mut build, global)?;
+        let favicon = build.register_favicon("logo.svg", b"<svg/>");
+        seal_bundle(&mut build, global, &favicon)?;
         Ok(build)
     }
 
@@ -346,7 +436,8 @@ mod tests {
             text: "---\nencrypt: true\n---\n\n# A\n\n## Section\n\nbody text\n".to_string(),
         }];
         let mut build = build_site("Site", dir.path(), &docs);
-        seal_bundle(&mut build, Some(GLOBAL)).expect("seals");
+        let favicon = build.register_favicon("logo.svg", b"<svg/>");
+        seal_bundle(&mut build, Some(GLOBAL), &favicon).expect("seals");
 
         let blob = build.bundle.docs[0].enc.as_ref().expect("sealed");
         let plain = open(
@@ -440,6 +531,184 @@ mod tests {
         assert!(
             !json.contains("encrypt: true"),
             "the front matter never reaches the payload"
+        );
+    }
+
+    // The sealed asset boundary.
+
+    /// Open the sealed body of `id` with the global password and parse the
+    /// canonical JSON.
+    fn opened(build: &crate::site::SiteBuild, id: &str) -> Json {
+        let doc = build.bundle.doc(id).expect("the document is in the bundle");
+        let blob = doc.enc.as_ref().expect("the document is sealed");
+        let plain = open(
+            SealedRef {
+                salt: &STANDARD.decode(&blob.salt).expect("salt decodes"),
+                nonce: &STANDARD.decode(&blob.nonce).expect("nonce decodes"),
+                ct: &STANDARD.decode(&blob.ct).expect("ct decodes"),
+            },
+            GLOBAL,
+            id.as_bytes(),
+        )
+        .expect("the global password opens the body");
+
+        serde_json::from_slice(&plain).expect("canonical JSON")
+    }
+
+    /// A site with the asset-boundary shape: `public.md` shows image X,
+    /// `shared.md` (sealed) shows the same X, and `private.md` (sealed)
+    /// shows image Y that nothing public references. Sealed with the global
+    /// password; returns the build, X's and Y's hashes and the favicon
+    /// placeholder.
+    fn asset_site() -> (crate::site::SiteBuild, String, String, String) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let images = dir.path().join("img");
+        std::fs::create_dir(&images).expect("create image directory");
+        std::fs::write(images.join("x.svg"), X_MARK).expect("write X");
+        std::fs::write(images.join("y.svg"), Y_MARK).expect("write Y");
+
+        let docs = [
+            SourceDoc {
+                id: "public.md".to_string(),
+                path: dir.path().join("public.md"),
+                title: "Public".to_string(),
+                text: "# Public\n\n![x](img/x.svg)\n".to_string(),
+            },
+            SourceDoc {
+                id: "shared.md".to_string(),
+                path: dir.path().join("shared.md"),
+                title: "Shared".to_string(),
+                text: "---\nencrypt: true\n---\n\n# Shared\n\n## Part\n\n![x](img/x.svg)\n"
+                    .to_string(),
+            },
+            SourceDoc {
+                id: "private.md".to_string(),
+                path: dir.path().join("private.md"),
+                title: "Private".to_string(),
+                text: "---\nencrypt: true\n---\n\n# Private\n\n## Part\n\n![y](img/y.svg)\n"
+                    .to_string(),
+            },
+        ];
+        let mut build = build_site("Site", dir.path(), &docs);
+        let favicon = build.register_favicon("logo.svg", b"<svg/>");
+        seal_bundle(&mut build, Some(GLOBAL), &favicon).expect("seals");
+
+        (build, asset_hash(X_MARK), asset_hash(Y_MARK), favicon)
+    }
+
+    #[test]
+    fn a_sealed_body_carries_its_assets_as_data_uris() {
+        let (build, _, _, _) = asset_site();
+        let x_uri = STANDARD.encode(X_MARK);
+        let y_uri = STANDARD.encode(Y_MARK);
+
+        let shared = opened(&build, "shared.md");
+        let html = shared["html"].as_str().expect("html");
+        assert!(
+            html.contains(&format!("data:image/svg+xml;base64,{x_uri}")),
+            "the image travels as a data URI: {html}"
+        );
+        assert!(
+            !html.contains("wikicc-asset:"),
+            "no placeholder survives the seal: {html}"
+        );
+        // The chapter block that shows the image carries the same URI, so a
+        // block reference previews it too.
+        let block = shared["blocks"][1]["html"].as_str().expect("block html");
+        assert!(
+            block.contains(&format!("data:image/svg+xml;base64,{x_uri}")),
+            "the block travels with its image: {block}"
+        );
+        assert!(!block.contains("wikicc-asset:"));
+
+        let private = opened(&build, "private.md");
+        let html = private["html"].as_str().expect("html");
+        assert!(
+            html.contains(&format!("data:image/svg+xml;base64,{y_uri}")),
+            "the sealed-only image travels too: {html}"
+        );
+        assert!(!html.contains("wikicc-asset:"));
+        assert!(
+            !html.contains(&format!("data:image/svg+xml;base64,{x_uri}")),
+            "no other document's asset leaks into the body"
+        );
+    }
+
+    #[test]
+    fn a_sealed_only_asset_is_pruned_and_the_stats_follow() {
+        let (build, x, y, favicon) = asset_site();
+        let favicon_hash = favicon
+            .strip_prefix(crate::ASSET_PLACEHOLDER_PREFIX)
+            .expect("a favicon placeholder");
+
+        assert_eq!(build.assets.len(), 2, "X and the favicon survive");
+        assert!(
+            build.assets.get(&x).is_some(),
+            "the shared asset survives for its public reference"
+        );
+        assert!(
+            build.assets.get(&y).is_none(),
+            "the sealed-only asset is pruned"
+        );
+        assert!(
+            build.assets.get(favicon_hash).is_some(),
+            "the favicon entry survives the prune"
+        );
+        assert_eq!(build.bundle.stats.assets, 2);
+        assert_eq!(build.bundle.stats.asset_bytes, build.assets.total_bytes());
+        assert_eq!(build.assets.len(), build.bundle.stats.assets);
+
+        // The public document still addresses X by placeholder for the
+        // writers to expand.
+        let public = &build.bundle.doc("public.md").expect("public document").html;
+        assert!(
+            public.contains(&format!("wikicc-asset:{x}")),
+            "the public document keeps its placeholder: {public}"
+        );
+
+        // Y reaches the payload only as ciphertext bytes.
+        let json = build.bundle.to_json();
+        assert!(
+            !json.contains(std::str::from_utf8(Y_MARK).expect("utf-8")),
+            "the sealed-only image never appears in the clear"
+        );
+    }
+
+    #[test]
+    fn an_unsealed_site_prunes_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let images = dir.path().join("img");
+        std::fs::create_dir(&images).expect("create image directory");
+        std::fs::write(images.join("x.svg"), X_MARK).expect("write X");
+        let docs = [SourceDoc {
+            id: "public.md".to_string(),
+            path: dir.path().join("public.md"),
+            title: "Public".to_string(),
+            text: "# Public\n\n![x](img/x.svg)\n".to_string(),
+        }];
+        let mut build = build_site("Site", dir.path(), &docs);
+        let favicon = build.register_favicon("logo.svg", b"<svg/>");
+        let stats = build.bundle.stats;
+        let assets = build.assets.clone();
+
+        seal_bundle(&mut build, Some(GLOBAL), &favicon).expect("no sealed document");
+
+        assert_eq!(
+            build.bundle.stats, stats,
+            "no sealed document, no counter moves"
+        );
+        assert_eq!(
+            build.assets, assets,
+            "no sealed document, no asset is dropped"
+        );
+        assert!(
+            build
+                .bundle
+                .doc("public.md")
+                .expect("public document")
+                .html
+                .contains(&format!("wikicc-asset:{}", asset_hash(X_MARK))),
+            "the placeholder stays for the writers to expand"
         );
     }
 }

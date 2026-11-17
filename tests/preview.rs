@@ -320,8 +320,8 @@ fn sealed_reported_site() -> (tempfile::TempDir, SiteBuild) {
 
     let report = scan(dir.path(), &dir.path().join("dist")).expect("scan");
     let mut build = build_site(SITE_TITLE, dir.path(), &report.docs);
-    build.register_favicon(DEFAULT_FAVICON_NAME, DEFAULT_FAVICON);
-    wikicc::encrypt::seal_bundle(&mut build, Some(SEALED_PASSWORD)).expect("seals");
+    let favicon = build.register_favicon(DEFAULT_FAVICON_NAME, DEFAULT_FAVICON);
+    wikicc::encrypt::seal_bundle(&mut build, Some(SEALED_PASSWORD), &favicon).expect("seals");
 
     (dir, build)
 }

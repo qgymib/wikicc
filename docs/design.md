@@ -436,7 +436,16 @@ through the configuration file, whose values are read verbatim.
 The sealing pass runs on the assembled bundle, after the favicon registration
 and before the diagnostics are reported. It empties the four content fields
 of a sealed `DocModel`, writes the blob into its `enc` field, and leaves
-`edges`, `stats` and every public metadata alone. A document that declares
+`edges` and every public metadata alone. The asset boundary is sealed with
+the body: before a document is encrypted, its own asset placeholders — in
+the body and in every chapter block — are expanded into `data:` URIs built
+from the asset table's MIME type and bytes, the construction the
+`single-html` writer inlines with, so the sealed body is self-contained and
+renders its images natively once unlocked. After all documents are sealed,
+the asset table is pruned to what the public documents and the favicon still
+address, and `stats.assets` and `stats.asset_bytes` are decremented to
+match: an asset referenced only by sealed documents travels inside the
+ciphertext and is not written to the artifact. A document that declares
 encryption and finds no password anywhere is a hard error — exit code 1, the
 message on stderr names the document, and no artifact is written — whatever
 `--strict` says.
@@ -468,9 +477,12 @@ scheme needs no JavaScript fallback — verified headless against a real
 
 ### Known boundary
 
-Local assets a sealed document references are sealed with it: the
-`wikicc-asset:` placeholders travel inside the ciphertext, so an image the
-article shows becomes visible only after the document is unlocked.
+A sealed document is self-contained: before the body is encrypted, its own
+asset placeholders are expanded into `data:` URIs, so the images travel
+inside the ciphertext and render natively once the document is unlocked. An
+asset referenced only by sealed documents is not written to the artifact at
+all; an asset shared with a public document is written once, for the public
+reference, and the decrypted body carries its own embedded copy besides.
 
 ## 9. Testing
 
