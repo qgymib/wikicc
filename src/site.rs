@@ -52,7 +52,8 @@ pub struct DocModel {
     /// future slug-based identifier can differ from the source path without
     /// breaking the payload shape.
     pub path: String,
-    /// First level-one heading, else the file stem.
+    /// Front matter `title` when it is usable text, else the first level-one
+    /// heading, else the file stem.
     pub title: String,
     /// Rendered body HTML, with links rewritten to hash routes and assets
     /// addressed by their opaque placeholder.

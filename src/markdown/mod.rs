@@ -52,6 +52,7 @@ use std::collections::BTreeMap;
 use ast::{OwnKind, OwnNode};
 use markdown::mdast::Node;
 use sections::Block;
+use serde_yaml::Value;
 use toc::{Heading, collect_headings};
 
 pub use links::{
@@ -178,14 +179,106 @@ pub fn sections_of(source: &str) -> Vec<String> {
     headings.into_iter().map(|heading| heading.id).collect()
 }
 
-/// The text of the first level-one heading, if the document has one.
+/// The title a document asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DocTitle {
+    /// The title to use: the front matter `title` when it is usable text,
+    /// else the first level-one heading. `None` leaves the scan to the file
+    /// stem and `Untitled`.
+    pub title: Option<String>,
+    /// A `title` key existed but its value cannot become a title; the scan
+    /// reports that and falls back.
+    pub rejected: bool,
+}
+
+/// The title a document asks for: the front matter `title` when it is usable
+/// text, else the first level-one heading.
 ///
-/// Used by the scan for a document's title. Inline markup is stripped the
-/// way the outline strips it, except that raw HTML contributes nothing: a
-/// title is metadata, and markup fragments have no business in it. A `#`
-/// inside a fenced code block is never mistaken for a heading.
-pub(crate) fn first_h1(source: &str) -> Option<String> {
-    let tree = prepare(source);
+/// Used by the scan for a document's title. The heading text is collected
+/// from the parsed tree, so inline markup (`**bold**`, `` `code` ``, links)
+/// is stripped for free and a `#` inside a fenced code block is never
+/// mistaken for a heading. Raw HTML contributes nothing: a title is
+/// metadata, and markup fragments have no business in it.
+///
+/// The front matter `title` wins when it turns into text: a non-empty string
+/// (trimmed), a number or a boolean is read as written, and an explicit tag
+/// (`!!str 123`) speaks through the value it labels. A key that is missing,
+/// `null`, sits in a front matter that is not a mapping, or in YAML that
+/// does not parse falls back to the heading silently — broken YAML is the
+/// encrypt stage's error, and one diagnostic per problem is enough. A value
+/// that exists but cannot become a title — an empty or whitespace string, a
+/// sequence, a mapping — sets [`DocTitle::rejected`] so the scan can warn.
+pub(crate) fn document_title(source: &str) -> DocTitle {
+    // One parse serves the front matter and the heading scan: the raw YAML
+    // text is taken off the engine tree before the own-layer conversion
+    // drops it.
+    let parsed = parse::parse_document(source);
+    let mut rejected = false;
+    if let Some(raw) = front_matter_text(&parsed) {
+        match front_matter_title(&raw) {
+            FrontMatterTitle::Text(text) => {
+                return DocTitle {
+                    title: Some(text),
+                    rejected: false,
+                };
+            }
+            FrontMatterTitle::Rejected => rejected = true,
+            FrontMatterTitle::Absent => {}
+        }
+    }
+
+    let tree = prepare_tree(&parsed);
+    DocTitle {
+        title: first_h1_in_tree(&tree),
+        rejected,
+    }
+}
+
+/// What a document's front matter `title` value comes to.
+enum FrontMatterTitle {
+    /// No usable value spoke: the heading decides, without a warning.
+    Absent,
+    /// The value became title text.
+    Text(String),
+    /// A `title` key existed but the value cannot become a title.
+    Rejected,
+}
+
+/// The `title` value of the raw front matter text.
+///
+/// A front matter that is not a mapping — a bare scalar, a list, nothing at
+/// all — names no `title` key: the front matter is not ours to judge.
+fn front_matter_title(raw: &str) -> FrontMatterTitle {
+    let Ok(value) = serde_yaml::from_str::<Value>(raw) else {
+        return FrontMatterTitle::Absent;
+    };
+    let Value::Mapping(mapping) = value else {
+        return FrontMatterTitle::Absent;
+    };
+
+    match mapping.get(Value::from("title")) {
+        None | Some(Value::Null) => FrontMatterTitle::Absent,
+        Some(value) => title_text(value),
+    }
+}
+
+/// Turn one `title` value into text, or say why it cannot become a title.
+fn title_text(value: &Value) -> FrontMatterTitle {
+    match value {
+        Value::String(text) => match text.trim() {
+            "" => FrontMatterTitle::Rejected,
+            trimmed => FrontMatterTitle::Text(trimmed.to_string()),
+        },
+        Value::Number(number) => FrontMatterTitle::Text(number.to_string()),
+        Value::Bool(flag) => FrontMatterTitle::Text(flag.to_string()),
+        Value::Tagged(tagged) => title_text(&tagged.value),
+        _ => FrontMatterTitle::Rejected,
+    }
+}
+
+/// The text of the first level-one heading in a prepared tree, if the
+/// document has one.
+fn first_h1_in_tree(tree: &OwnNode) -> Option<String> {
     let OwnKind::Root(children) = &tree.kind else {
         return None;
     };
@@ -387,6 +480,91 @@ mod tests {
 
         assert_eq!(doc.front_matter, None);
         assert!(doc.html.contains("<hr />"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn document_title_prefers_the_front_matter_title() {
+        let found = document_title("---\ntitle: From the matter\n---\n\n# Heading\n");
+
+        assert_eq!(found.title.as_deref(), Some("From the matter"));
+        assert!(!found.rejected);
+    }
+
+    #[test]
+    fn document_title_uses_the_front_matter_without_a_heading() {
+        let found = document_title("---\ntitle: Named\n---\n\nno heading\n");
+
+        assert_eq!(found.title.as_deref(), Some("Named"));
+        assert!(!found.rejected);
+    }
+
+    #[test]
+    fn document_title_trims_the_front_matter_value() {
+        let quoted = document_title("---\ntitle: \"  Spaced  \"\n---\n\n# Heading\n");
+        let block = document_title("---\ntitle: |\n  Block title\n---\n\n# Heading\n");
+
+        assert_eq!(quoted.title.as_deref(), Some("Spaced"));
+        assert_eq!(block.title.as_deref(), Some("Block title"));
+    }
+
+    #[test]
+    fn document_title_reads_numbers_and_booleans_as_text() {
+        for (raw, expected) in [
+            ("title: 123", "123"),
+            ("title: 1.5", "1.5"),
+            ("title: -7", "-7"),
+            ("title: true", "true"),
+            ("title: false", "false"),
+        ] {
+            let found = document_title(&format!("---\n{raw}\n---\n\n# Heading\n"));
+
+            assert_eq!(found.title.as_deref(), Some(expected), "raw: {raw}");
+            assert!(!found.rejected, "raw: {raw}");
+        }
+    }
+
+    #[test]
+    fn document_title_unwraps_a_tagged_title() {
+        let found = document_title("---\ntitle: !!str 42\n---\n\n# Heading\n");
+
+        assert_eq!(found.title.as_deref(), Some("42"));
+        assert!(!found.rejected);
+    }
+
+    #[test]
+    fn document_title_rejects_values_that_cannot_become_text() {
+        for raw in [
+            "title: \"\"",
+            "title: \"   \"",
+            "title: [a, b]",
+            "title: {a: b}",
+        ] {
+            let found = document_title(&format!("---\n{raw}\n---\n\n# Heading\n"));
+
+            assert_eq!(found.title.as_deref(), Some("Heading"), "raw: {raw}");
+            assert!(found.rejected, "raw: {raw}");
+        }
+    }
+
+    #[test]
+    fn document_title_falls_back_to_the_heading_silently() {
+        for matter in [
+            "encrypt: true",
+            "other: value",
+            "title: null",
+            "title:",
+            "- one\n- two",
+            "title: [unclosed",
+        ] {
+            let found = document_title(&format!("---\n{matter}\n---\n\n# Heading\n"));
+
+            assert_eq!(found.title.as_deref(), Some("Heading"), "matter: {matter}");
+            assert!(!found.rejected, "matter: {matter}");
+        }
+
+        let no_front_matter = document_title("# Heading\n");
+        assert_eq!(no_front_matter.title.as_deref(), Some("Heading"));
+        assert!(!no_front_matter.rejected);
     }
 
     #[test]

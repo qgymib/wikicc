@@ -189,6 +189,85 @@ fn documents_carry_id_title_text_and_path() {
 }
 
 #[test]
+fn the_front_matter_title_names_the_document() {
+    let dir = site(&[(
+        "guide/intro.md",
+        "---\ntitle: From the matter\n---\n\n# Heading\n",
+    )]);
+
+    let report = scan(dir.path(), &dir.path().join("dist")).expect("scan");
+
+    assert_eq!(report.docs[0].title, "From the matter");
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+}
+
+#[test]
+fn the_front_matter_title_travels_into_the_payload() {
+    let dir = site(&[(
+        "guide/intro.md",
+        "---\ntitle: From the matter\n---\n\n# Heading\n",
+    )]);
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .arg("--out")
+        .arg(&out)
+        .arg("--title")
+        .arg("Site")
+        .assert()
+        .success();
+
+    let artifact = std::fs::read_to_string(out.join("index.html")).expect("artifact");
+    assert!(
+        artifact.contains(r#""title":"From the matter""#),
+        "the document title comes from the front matter"
+    );
+}
+
+#[test]
+fn an_unusable_front_matter_title_warns_and_the_artifact_keeps_the_heading() {
+    let dir = site(&[("intro.md", "---\ntitle: [a, b]\n---\n\n# Heading\n")]);
+    let out = dir.path().join("dist");
+
+    wikicc()
+        .arg(dir.path())
+        .arg("--out")
+        .arg(&out)
+        .arg("--title")
+        .arg("Site")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: 'intro.md': front matter title cannot be turned into text; \
+             the heading or the file name decides",
+        ));
+
+    let artifact = std::fs::read_to_string(out.join("index.html")).expect("artifact");
+    assert!(
+        artifact.contains(r#""title":"Heading""#),
+        "the heading decides when the title cannot become text"
+    );
+}
+
+#[test]
+fn strict_treats_an_unusable_front_matter_title_as_an_error() {
+    let dir = site(&[("intro.md", "---\ntitle: [a, b]\n---\n\n# Heading\n")]);
+
+    wikicc()
+        .arg(dir.path())
+        .arg("--strict")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "warning: 'intro.md': front matter title cannot be turned into text",
+        ))
+        .stderr(predicate::str::contains(
+            "1 warning treated as an error (--strict)",
+        ));
+}
+
+#[test]
 fn diagnostics_expose_their_severity() {
     let dir = site(&[("intro.md", "# Intro\n"), ("logo.png", "png")]);
 

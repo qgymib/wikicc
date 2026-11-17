@@ -37,6 +37,11 @@ their chapter outline.
 ### Markdown support
 
 - GitHub-flavored Markdown: tables, task lists, strikethrough and footnotes.
+- Front matter title: a `title` key in the front matter names the document
+  wherever the reader shows a title — the sidebar, the link graph, search,
+  the lock page and the browser tab — while the body keeps its headings.
+  Numbers and booleans are read as text; a value that cannot become a title
+  warns at build time and the first heading (else the file name) decides.
 - Nested chapters with stable, Unicode-aware heading anchors, so CJK headings
   keep their text.
 - Chapter links: `[label](path/to/doc.md#chapter)` addresses one chapter of

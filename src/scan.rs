@@ -26,7 +26,8 @@ pub const MARKDOWN_EXTENSIONS: [&str; 2] = ["md", "markdown"];
 /// Directory names that are never scanned, on top of every dot-directory.
 pub const SKIPPED_DIR_NAMES: [&str; 2] = [".git", "node_modules"];
 
-/// Title used when a document has neither a heading nor a usable file stem.
+/// Title used when neither the front matter, the first heading nor the file
+/// stem names a document.
 pub const FALLBACK_DOC_TITLE: &str = "Untitled";
 
 /// Diagnostic emitted when the input folder holds no Markdown document.
@@ -97,7 +98,8 @@ pub struct SourceDoc {
     pub id: String,
     /// Path as discovered, i.e. rooted at the input directory.
     pub path: PathBuf,
-    /// First level-one heading text, else the file stem, else `Untitled`.
+    /// Front matter `title` when it is usable text, else the first level-one
+    /// heading text, else the file stem, else `Untitled`.
     pub title: String,
     /// Raw Markdown source.
     pub text: String,
@@ -239,7 +241,10 @@ pub fn scan_with(input: &Path, out: &Path, excludes: &[String]) -> Result<ScanRe
             }
         };
 
-        let title = extract_title(&text, entry.path());
+        let (title, title_warning) = extract_title(&text, &id, entry.path());
+        if let Some(warning) = title_warning {
+            diagnostics.push(warning);
+        }
         docs.push(SourceDoc {
             id,
             path: entry.path().to_path_buf(),
@@ -315,14 +320,25 @@ pub fn document_id(root: &Path, path: &Path) -> Option<String> {
     if id.is_empty() { None } else { Some(id) }
 }
 
-/// Document title: first level-one heading text, else the file stem, else
+/// Document title: the front matter `title` when it is usable text, else the
+/// first level-one heading text, else the file stem, else
 /// [`FALLBACK_DOC_TITLE`].
 ///
 /// The heading text is collected from the parsed tree, so inline markup
 /// (`**bold**`, `` `code` ``, links) is stripped for free and a `#` inside a
-/// fenced code block is never mistaken for a heading.
-pub fn extract_title(text: &str, path: &Path) -> String {
-    crate::markdown::first_h1(text).unwrap_or_else(|| fallback_title(path))
+/// fenced code block is never mistaken for a heading. A front matter `title`
+/// that cannot become a title — an empty or whitespace string, a list, a
+/// mapping — becomes a warning naming the document, and the heading decides.
+pub fn extract_title(text: &str, id: &str, path: &Path) -> (String, Option<Diagnostic>) {
+    let found = crate::markdown::document_title(text);
+    let title = found.title.unwrap_or_else(|| fallback_title(path));
+    let warning = found.rejected.then(|| {
+        Diagnostic::warning(format!(
+            "'{id}': front matter title cannot be turned into text; \
+             the heading or the file name decides"
+        ))
+    });
+    (title, warning)
 }
 
 /// File stem, or [`FALLBACK_DOC_TITLE`] when there is none.
@@ -521,16 +537,30 @@ mod tests {
         assert_eq!(document_id(Path::new("docs"), Path::new("docs")), None);
     }
 
+    /// The title half of [`extract_title`], with the id the scan would give
+    /// the path.
+    fn title_of(text: &str, path: &Path) -> String {
+        extract_title(text, &id_of(path), path).0
+    }
+
+    /// The warning half of [`extract_title`], with the id the scan would
+    /// give the path.
+    fn title_warning_of(text: &str, path: &Path) -> Option<Diagnostic> {
+        extract_title(text, &id_of(path), path).1
+    }
+
+    /// The document id the scan would give a test path.
+    fn id_of(path: &Path) -> String {
+        document_id(Path::new(""), path).unwrap_or_default()
+    }
+
     #[test]
     fn title_uses_the_first_level_one_heading() {
         let path = Path::new("intro.md");
-        assert_eq!(extract_title("# Hello\n\nbody\n", path), "Hello");
+        assert_eq!(title_of("# Hello\n\nbody\n", path), "Hello");
+        assert_eq!(title_of("intro\n\n# Later\n\n## Section\n", path), "Later");
         assert_eq!(
-            extract_title("intro\n\n# Later\n\n## Section\n", path),
-            "Later"
-        );
-        assert_eq!(
-            extract_title("## Section\n\n# Title\n", path),
+            title_of("## Section\n\n# Title\n", path),
             "Title",
             "a lower-level heading must not win"
         );
@@ -540,22 +570,10 @@ mod tests {
     fn title_strips_inline_markup() {
         let path = Path::new("intro.md");
 
-        assert_eq!(
-            extract_title("# **Bold** and `code`\n", path),
-            "Bold and code"
-        );
-        assert_eq!(
-            extract_title("# [Guide](guide.md) intro\n", path),
-            "Guide intro"
-        );
-        assert_eq!(
-            extract_title("# ~~Old~~ *new* title\n", path),
-            "Old new title"
-        );
-        assert_eq!(
-            extract_title("# Title <span>raw</span>\n", path),
-            "Title raw"
-        );
+        assert_eq!(title_of("# **Bold** and `code`\n", path), "Bold and code");
+        assert_eq!(title_of("# [Guide](guide.md) intro\n", path), "Guide intro");
+        assert_eq!(title_of("# ~~Old~~ *new* title\n", path), "Old new title");
+        assert_eq!(title_of("# Title <span>raw</span>\n", path), "Title raw");
     }
 
     #[test]
@@ -563,7 +581,7 @@ mod tests {
         let path = Path::new("intro.md");
         let text = "```\n# Not a title\n```\n\n# Real title\n";
 
-        assert_eq!(extract_title(text, path), "Real title");
+        assert_eq!(title_of(text, path), "Real title");
     }
 
     #[test]
@@ -571,7 +589,7 @@ mod tests {
         let path = Path::new("intro.md");
 
         assert_eq!(
-            extract_title("Setext title\n============\n", path),
+            title_of("Setext title\n============\n", path),
             "Setext title"
         );
     }
@@ -580,19 +598,19 @@ mod tests {
     fn title_keeps_unicode_text() {
         let path = Path::new("intro.md");
 
-        assert_eq!(extract_title("# 第一章 概述\n", path), "第一章 概述");
-        assert_eq!(extract_title("# 中文**加粗**标题\n", path), "中文加粗标题");
+        assert_eq!(title_of("# 第一章 概述\n", path), "第一章 概述");
+        assert_eq!(title_of("# 中文**加粗**标题\n", path), "中文加粗标题");
     }
 
     #[test]
     fn title_falls_back_to_the_file_stem() {
         assert_eq!(
-            extract_title("no heading here\n", Path::new("guide/getting-started.md")),
+            title_of("no heading here\n", Path::new("guide/getting-started.md")),
             "getting-started"
         );
-        assert_eq!(extract_title("", Path::new("notes.markdown")), "notes");
+        assert_eq!(title_of("", Path::new("notes.markdown")), "notes");
         assert_eq!(
-            extract_title("#\n\nbody\n", Path::new("empty-heading.md")),
+            title_of("#\n\nbody\n", Path::new("empty-heading.md")),
             "empty-heading",
             "an empty heading must not become the title"
         );
@@ -600,9 +618,85 @@ mod tests {
 
     #[test]
     fn title_falls_back_to_untitled() {
+        assert_eq!(title_of("no heading\n", Path::new("")), FALLBACK_DOC_TITLE);
+    }
+
+    #[test]
+    fn title_prefers_the_front_matter_title() {
+        let path = Path::new("intro.md");
+
         assert_eq!(
-            extract_title("no heading\n", Path::new("")),
-            FALLBACK_DOC_TITLE
+            title_of("---\ntitle: From the matter\n---\n\n# Heading\n", path),
+            "From the matter"
+        );
+        assert_eq!(
+            title_of("---\ntitle: Named\n---\n\nno heading\n", path),
+            "Named",
+            "the front matter names a document without a heading too"
+        );
+        assert_eq!(
+            title_of("---\ntitle: \"  Spaced  \"\n---\n\n# Heading\n", path),
+            "Spaced"
+        );
+        for (value, expected) in [
+            ("123", "123"),
+            ("1.5", "1.5"),
+            ("true", "true"),
+            ("!!str 42", "42"),
+        ] {
+            let text = format!("---\ntitle: {value}\n---\n\n# Heading\n");
+
+            assert_eq!(title_of(&text, path), expected, "value: {value}");
+            assert!(title_warning_of(&text, path).is_none(), "value: {value}");
+        }
+    }
+
+    #[test]
+    fn title_falls_back_silently_without_a_usable_title_value() {
+        let path = Path::new("intro.md");
+
+        for matter in [
+            "encrypt: true",
+            "other: value",
+            "title: null",
+            "title:",
+            "- one\n- two",
+            "title: [unclosed",
+        ] {
+            let text = format!("---\n{matter}\n---\n\n# Heading\n");
+
+            assert_eq!(title_of(&text, path), "Heading", "matter: {matter}");
+            assert!(title_warning_of(&text, path).is_none(), "matter: {matter}");
+        }
+    }
+
+    #[test]
+    fn an_unusable_front_matter_title_warns_and_falls_back() {
+        let path = Path::new("intro.md");
+
+        for value in ["\"\"", "\"   \"", "[a, b]", "{a: b}"] {
+            let text = format!("---\ntitle: {value}\n---\n\n# Heading\n");
+
+            assert_eq!(title_of(&text, path), "Heading", "value: {value}");
+            assert_eq!(
+                title_warning_of(&text, path)
+                    .map(|warning| warning.to_string())
+                    .as_deref(),
+                Some(
+                    "warning: 'intro.md': front matter title cannot be turned into text; \
+                     the heading or the file name decides"
+                ),
+                "value: {value}"
+            );
+        }
+
+        assert_eq!(
+            title_of(
+                "---\ntitle: [a, b]\n---\n\nno heading\n",
+                Path::new("notes.md")
+            ),
+            "notes",
+            "without a heading the file stem decides"
         );
     }
 
