@@ -22,15 +22,16 @@
 //! count are public by nature; the security of a sealed document rests on the
 //! password alone.
 //!
-//! Randomness comes from the operating system (`rand_core::OsRng`), so every
+//! Randomness comes from the operating system (`getrandom::SysRng`), so every
 //! sealing operation produces its own salt and nonce — the same document
 //! sealed twice never produces the same bytes, which is what keeps two
 //! encryptions of the same plaintext unlinkable.
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
+use getrandom::SysRng;
 use pbkdf2::pbkdf2_hmac;
-use rand_core::{OsRng, RngCore};
+use rand_core::{Rng, UnwrapErr};
 use sha2::Sha256;
 
 /// Length of the per-document random salt, in bytes.
@@ -106,10 +107,11 @@ impl core::fmt::Display for OpenError {
 /// The salt and the nonce are fresh random bytes of every call; the returned
 /// ciphertext carries the tag appended, ready to be encoded into an artifact.
 pub fn seal(plaintext: &[u8], password: &str, aad: &[u8]) -> SealedBytes {
+    let mut rng = UnwrapErr(SysRng);
     let mut salt = [0u8; SALT_LEN];
-    OsRng.fill_bytes(&mut salt);
+    rng.fill_bytes(&mut salt);
     let mut nonce = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce);
+    rng.fill_bytes(&mut nonce);
 
     let key = derive_key(password, &salt);
     let ct = encrypt(&key, &nonce, plaintext, aad);
@@ -130,13 +132,13 @@ pub fn open(sealed: SealedRef<'_>, password: &str, aad: &[u8]) -> Result<Vec<u8>
 
     let salt: [u8; SALT_LEN] = sealed.salt.try_into().expect("length checked above");
     let nonce: [u8; NONCE_LEN] = sealed.nonce.try_into().expect("length checked above");
-    let nonce = Nonce::from_slice(&nonce);
+    let nonce = Nonce::from(nonce);
     let key = derive_key(password, &salt);
     let cipher = Aes256Gcm::new_from_slice(&key).expect("the key length is fixed");
 
     cipher
         .decrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: sealed.ct,
                 aad,
@@ -155,11 +157,11 @@ fn derive_key(password: &str, salt: &[u8; SALT_LEN]) -> [u8; KEY_LEN] {
 /// Encrypt under the derived key; AES-GCM cannot fail for these parameters.
 fn encrypt(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], plaintext: &[u8], aad: &[u8]) -> Vec<u8> {
     let cipher = Aes256Gcm::new_from_slice(key).expect("the key length is fixed");
-    let nonce = Nonce::from_slice(nonce);
+    let nonce = Nonce::from(*nonce);
 
     cipher
         .encrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: plaintext,
                 aad,
