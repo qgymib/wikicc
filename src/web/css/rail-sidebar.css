@@ -1,0 +1,232 @@
+/* ---------- rail and sidebar ---------- */
+
+/* The rail and the list share one surface: the leftmost strip of chrome and
+   the column beside it read as one panel family, divided by their rules. */
+.rail,
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(17, 23, 31, 0.92), rgba(11, 15, 20, 0.88));
+  backdrop-filter: blur(16px);
+}
+
+.rail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  height: 100vh;
+  padding: 14px 0 12px;
+  z-index: 10;
+}
+
+/* The right rail is the left one mirrored: the same strip, closing the grid
+   at the far edge. Its rule runs on its left — the side that faces the page —
+   and its column is named, so the placement does not lean on the markup
+   order the auto-placement would otherwise read. */
+.rail-end {
+  grid-column: 4;
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+.sidebar {
+  position: sticky;
+  /* Nothing is above the sidebar in its own column, so it owns the full
+     height of the viewport. */
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100vh;
+  padding: 18px 14px 12px;
+  z-index: 10;
+}
+
+:root[data-theme="light"] .rail,
+:root[data-theme="light"] .sidebar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .rail,
+  :root:not([data-theme="dark"]) .sidebar {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
+  }
+}
+
+/* The sidebar is one column with two views: the document list and the
+   chapter outline. The rail's switches trade them through a body attribute —
+   the list is what a page shows before any switch is pressed, so the outline
+   is the view that has to be asked for, and asking for it hides the list
+   with it. Whichever view shows takes the column's height, under the same
+   header. */
+.sidebar .toc-panel {
+  display: none;
+}
+
+.side-docs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+body[data-side-view="outline"] .side-docs {
+  display: none;
+}
+
+body[data-side-view="outline"] .sidebar .toc-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 2px 0;
+}
+
+.site-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-hover);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.icon-button:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+/* Open is a state, not a hover: the button says the thing it controls is up. */
+.icon-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.icon-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#theme-toggle .icon-sun {
+  display: none;
+}
+
+:root[data-theme="light"] #theme-toggle .icon-sun {
+  display: block;
+}
+
+:root[data-theme="light"] #theme-toggle .icon-moon {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) #theme-toggle .icon-sun {
+    display: block;
+  }
+
+  :root:not([data-theme="dark"]) #theme-toggle .icon-moon {
+    display: none;
+  }
+}
+
+.doc-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0 -4px;
+  padding: 0 4px 8px;
+  overflow-y: auto;
+}
+
+.doc-group + .doc-group {
+  margin-top: 10px;
+}
+
+.doc-group-title {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: 6px 8px 5px;
+  background: linear-gradient(180deg, var(--bg-elevated) 60%, transparent);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.doc-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.doc-link {
+  display: block;
+  padding: 7px 10px 7px 11px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 13.5px;
+  line-height: 1.4;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.doc-link:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+  transform: translateX(2px);
+}
+
+.doc-link[aria-current="page"] {
+  color: var(--text);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+
+.doc-empty {
+  margin: 12px 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+

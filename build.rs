@@ -12,7 +12,9 @@
 //! script writes LF-normalized copies into `OUT_DIR`, so the embedded bytes
 //! never depend on how Git checked the sources out (a CRLF checkout must not
 //! leak carriage returns into the template, the sheet, the favicon or the page
-//! built from them).
+//! built from them). The stylesheet is a concatenation of the ordered layer
+//! files under `src/web/css` ([`CSS_LAYERS`]); the sequence is the cascade,
+//! so a file the list does not declare is refused outright.
 //!
 //! The script has a second, independent job: Windows executables show an icon
 //! in the file explorer, and that icon lives in the PE resource section. The
@@ -135,17 +137,52 @@ const FONT_URL_MARKER: &str = "url(fonts/";
 
 /// Text resources staged into `OUT_DIR` with normalized line endings.
 ///
-/// The page skeleton and the shell stylesheet are consumed by `src/render.rs`
-/// with `include_str!`, the default favicon by `src/favicon.rs` with
-/// `include_bytes!`; all three copy the staged bytes verbatim. A checkout that
-/// Git smudges to CRLF must not leak carriage returns into any of them — the
-/// favicon's bytes decide the asset hash every build derives from them — so
-/// the staged copies are the only bytes the compile sees.
-const STAGED_TEXT_ASSETS: [(&str, &str); 3] = [
+/// The page skeleton is consumed by `src/render.rs` with `include_str!` and
+/// the default favicon by `src/favicon.rs` with `include_bytes!`; both copy
+/// the staged bytes verbatim. The reader stylesheet travels the same road
+/// through [`stage_shell_css`], which joins its layers in the declared
+/// order. A checkout that Git smudges to CRLF must not leak carriage returns
+/// into any of them — the favicon's bytes decide the asset hash every build
+/// derives from them — so the staged copies are the only bytes the compile
+/// sees.
+const STAGED_TEXT_ASSETS: [(&str, &str); 2] = [
     ("src/web/index.html.tmpl", "vendor/index.html.tmpl"),
-    ("src/web/css/app.css", "vendor/app.css"),
     ("docs/logo.svg", "vendor/logo.svg"),
 ];
+
+/// Ordered layer files the reader stylesheet is concatenated from, relative
+/// to [`CSS_SOURCE_DIR`].
+///
+/// The sheet is split at its historical section boundaries, and the cascade
+/// settles specificity by source order, so the concatenation is only the
+/// stylesheet the reader has always seen if it follows this exact, declared
+/// sequence. The split itself is purely mechanical: no rule moved relative
+/// to any other, and joining the layers reproduces the single-file sheet's
+/// bytes.
+const CSS_LAYERS: [&str; 16] = [
+    "base.css",
+    "shell.css",
+    "rail-sidebar.css",
+    "sealed-documents.css",
+    "content.css",
+    "chapter-folding.css",
+    "code-block-copying.css",
+    "mermaid-diagrams.css",
+    "table-sorting-filtering.css",
+    "column-filter-panel.css",
+    "block-reference-preview.css",
+    "missing-chapter-banner.css",
+    "lock-page-form.css",
+    "inspector.css",
+    "search-panel.css",
+    "responsive.css",
+];
+
+/// Directory holding the stylesheet layers, relative to the crate root.
+const CSS_SOURCE_DIR: &str = "src/web/css";
+
+/// Staged reader stylesheet inside `OUT_DIR`, consumed by `src/render.rs`.
+const CSS_STAGED: &str = "vendor/app.css";
 
 /// Marker of a diagram chunk that esbuild failed to inline.
 ///
@@ -198,6 +235,11 @@ fn main() {
 
     if let Err(message) = stage_text_assets(root) {
         eprintln!("error: cannot stage the shell resources: {message}");
+        exit(1);
+    }
+
+    if let Err(message) = stage_shell_css(root) {
+        eprintln!("error: cannot stage the reader stylesheet: {message}");
         exit(1);
     }
 
@@ -308,6 +350,63 @@ fn stage_text_assets(root: &Path) -> Result<(), String> {
         fs::write(&path, normalized)
             .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     }
+
+    Ok(())
+}
+
+/// Stage the reader stylesheet: the declared layers, joined in order.
+///
+/// The cascade settles specificity by source order, so the staged bytes are
+/// only the stylesheet the reader has always seen if the layers are
+/// concatenated in exactly the declared sequence. Each layer is
+/// LF-normalized before the join, so — like the other staged text assets —
+/// the embedded sheet never depends on the checkout's line endings.
+///
+/// The declared list is also an assertion about the directory: a layer
+/// written without declaring it would be silently dropped from every page,
+/// and a declared name missing on disk would fail the build in a less
+/// readable place, so a mismatch between the two is refused here with the
+/// actionable names.
+fn stage_shell_css(root: &Path) -> Result<(), String> {
+    let dir = root.join(CSS_SOURCE_DIR);
+
+    let mut found: Vec<String> = fs::read_dir(&dir)
+        .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_file())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "css"))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+
+    let mut declared: Vec<&str> = CSS_LAYERS.to_vec();
+    declared.sort();
+
+    if found.iter().map(String::as_str).collect::<Vec<_>>() != declared {
+        return Err(format!(
+            "{CSS_SOURCE_DIR} does not hold exactly the declared layers: found \
+             {found:?}, declared {CSS_LAYERS:?}; every `.css` file must be listed \
+             in `CSS_LAYERS` exactly once"
+        ));
+    }
+
+    let mut css = String::new();
+    for layer in CSS_LAYERS {
+        let source = dir.join(layer);
+        let text = fs::read_to_string(&source)
+            .map_err(|error| format!("cannot read {}: {error}", source.display()))?;
+        css.push_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+    }
+
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").map_err(|error| format!("OUT_DIR is not set: {error}"))?);
+    let path = out_dir.join(CSS_STAGED);
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    fs::write(&path, css).map_err(|error| format!("cannot write {}: {error}", path.display()))?;
 
     Ok(())
 }

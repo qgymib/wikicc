@@ -11,9 +11,10 @@
 //! The skeleton in `web/index.html.tmpl` is rendered with `minijinja`, so the
 //! page markup stays in HTML and escaping is the engine's job:
 //!
-//! - `{{ css|safe }}` is `web/css/app.css`, followed by the theme CSS the
-//!   build-time highlighter generates and the math renderer's sheet with its
-//!   fonts embedded;
+//! - `{{ css|safe }}` is the shell stylesheet — the ordered layers under
+//!   `web/css/` that `build.rs` concatenates in a declared sequence —
+//!   followed by the theme CSS the build-time highlighter generates and the
+//!   math renderer's sheet with its fonts embedded;
 //! - `{{ js|safe }}` is the single IIFE bundle that `build.rs` produces with
 //!   esbuild from `web/js/main.js` (the reader modules plus the npm-installed
 //!   engine), so the page needs no module loader and resolves nothing at
@@ -587,6 +588,50 @@ mod tests {
         // these constants, must not depend on the platform's line endings.
         for (name, text) in [("template", SHELL_TEMPLATE), ("styles", SHELL_CSS)] {
             assert!(!text.contains('\r'), "{name} carries a carriage return");
+        }
+    }
+
+    #[test]
+    fn the_shell_layers_keep_their_declared_order() {
+        // `build.rs` concatenates the layers under `src/web/css` in a fixed,
+        // declared order, and the cascade settles specificity by that order:
+        // every layer's section marker must appear in the staged sheet
+        // strictly after the previous one. A reordered declaration fails
+        // here; a layer the declaration misses fails the build itself.
+        const LAYER_MARKERS: [&str; 16] = [
+            "/* wikicc reader shell", // base.css carries no section marker
+            "/* ---------- shell ---------- */",
+            "/* ---------- rail and sidebar ---------- */",
+            "/* ---------- sealed documents ---------- */",
+            "/* ---------- content ---------- */",
+            "/* ---------- chapter folding ---------- */",
+            "/* ---------- code block copying ---------- */",
+            "/* ---------- mermaid diagrams ---------- */",
+            "/* ---------- table sorting and filtering ---------- */",
+            "/* ---------- column filter panel ---------- */",
+            "/* ---------- block-reference preview ---------- */",
+            "/* ---------- missing-chapter banner ---------- */",
+            "/* ---------- lock page form ---------- */",
+            "/* ---------- inspector ---------- */",
+            "/* ---------- search panel ---------- */",
+            "/* ---------- responsive ---------- */",
+        ];
+
+        let css = shell_css();
+        let at = |marker: &str| {
+            css.find(marker)
+                .unwrap_or_else(|| panic!("the layer marker `{marker}` is missing"))
+        };
+        // The base layer opens the sheet, so its marker needs only to exist;
+        // every later one must follow the previous.
+        let mut previous = at(LAYER_MARKERS[0]);
+        for marker in &LAYER_MARKERS[1..] {
+            let current = at(marker);
+            assert!(
+                current > previous,
+                "the layer marker `{marker}` sits out of the declared order"
+            );
+            previous = current;
         }
     }
 

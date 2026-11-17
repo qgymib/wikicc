@@ -1,0 +1,82 @@
+/* ---------- sealed documents ---------- */
+
+/* A sealed document has no body to show: the page keeps the path and the
+   title where every document's are — full measure, left-aligned — and hands
+   the space below them to the lock. The hint ends the upper half and the
+   password field owns the middle of what the title leaves, so the field the
+   reader types into sits centered between the title and the bottom of the
+   screen, with the hint hanging right over it.
+
+   The exactness is bought the same way as before: the margins hand the
+   container's paddings back, so the box spans the viewport exactly, and the
+   box's own paddings are symmetric (the top's, not the container's deeper
+   bottom comfort), so the space the 1fr rows split is centered on the
+   viewport itself — with nothing left over to scroll. */
+.doc-locked-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /* Five rows: the path, the title, the upper half, the form, the lower
+     half — the two halves equal, so the form row lands on the middle of
+     the space the title leaves. */
+  grid-template-rows: auto auto 1fr auto 1fr;
+  justify-items: center;
+  min-height: 100vh;
+  margin: calc(-1 * var(--content-pad-top)) 0 calc(-1 * var(--content-pad-bottom));
+  padding: var(--content-pad-top) 0 var(--content-pad-top);
+}
+
+/* The headline reads as it does on any page: full measure, left-aligned,
+   the path's rule under it. */
+.doc-locked-page > .doc-path,
+.doc-locked-page > .doc-locked-title {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: stretch;
+  text-align: left;
+}
+
+.doc-locked-page > .doc-locked-title {
+  grid-row: 2;
+}
+
+/* The hint ends the upper half, so it hangs right over the field. */
+.doc-locked-page > .doc-locked {
+  grid-column: 1;
+  grid-row: 3;
+  align-self: end;
+}
+
+.doc-locked-page > .doc-locked-form {
+  grid-column: 1;
+  grid-row: 4;
+}
+
+.doc-locked-title {
+  margin: 0 0 14px;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+/* The lock's one sentence is a badge, not a paragraph lost in the column: a
+   pill raised a step above the paper, rounded to say "notice", and as wide
+   as its own line. */
+.doc-locked {
+  margin: 0 0 20px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.sidebar-footer {
+  padding: 10px 4px 2px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+

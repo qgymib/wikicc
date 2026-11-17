@@ -1,0 +1,95 @@
+/* ---------- inspector ---------- */
+
+/* The graph's panels live in a floating window, not in a column of the
+   grid: the window hangs above the page at the top right, anchored just
+   inside the right rail, and is out of the grid's flow entirely — showing
+   it or putting it away never moves the article, the list or a rail. Its
+   height follows what the view it holds needs, capped below the viewport,
+   and the window scrolls under its own surface when a picture outgrows
+   the cap. */
+.inspector {
+  position: fixed;
+  top: 12px;
+  right: calc(var(--rail-width) + 12px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(760px, calc(100vw - 2 * var(--rail-width) - 24px));
+  max-height: 80vh;
+  /* The window opens with the same 14px rhythm the panels are held apart
+     by, and keeps the article's 16px axis on its right edge. */
+  padding: 14px 16px 18px;
+  border: 1px solid var(--shell-line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--shell-top), var(--shell-bottom));
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  /* A classic scrollbar steals 8px of the panels' right edge only when the
+     content overflows, so the edge would drift as documents change height.
+     A stable gutter pins the panels at their scrolled position in every
+     state. */
+  scrollbar-gutter: stable;
+}
+
+.panel {
+  padding: 13px 14px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  backdrop-filter: blur(12px);
+}
+
+.panel-heading {
+  margin: 0 0 10px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.panel-header .panel-heading {
+  /* The heading takes the free space, so the controls line up on the right
+     however many of them a panel has. */
+  margin: 0 auto 0 0;
+}
+
+.panel-action {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+
+.panel-action:hover,
+.panel-action:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* Two panels, one at a time: the body attribute `data-graph-view` picks the
+   view the column shows, and the other panel steps out of the flow. The
+   attribute is absent from the page's own markup — the local view is the
+   state a reader starts in — so the rule that hides the global panel reads
+   the negation. */
+body[data-graph-view="global"] #graph-local-panel {
+  display: none;
+}
+
+body:not([data-graph-view="global"]) #graph-global-panel {
+  display: none;
+}
+

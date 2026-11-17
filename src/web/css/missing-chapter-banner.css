@@ -1,0 +1,136 @@
+/* ---------- missing-chapter banner ---------- */
+
+/* A block reference to a chapter the document does not have still opens the
+   document; the banner is what explains why it opened at the top.
+
+   It is an overlay, not a paragraph: it is absolutely positioned against
+   `.content` and inset by the article's own horizontal padding, so it is
+   exactly as wide as the article, but it is out of the flow and animated with
+   opacity alone. Showing or hiding it therefore never reflows the document,
+   which is what makes a navigation to a chapter that does not exist look the
+   same as one that does. */
+.doc-alert {
+  position: absolute;
+  /* The article's column, inset by its own horizontal padding. */
+  top: 12px;
+  left: 34px;
+  right: 34px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid rgba(240, 160, 64, 0.45);
+  border-left: 3px solid rgba(240, 160, 64, 0.85);
+  border-radius: var(--radius-sm);
+  background: rgba(24, 20, 14, 0.94);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  backdrop-filter: blur(8px);
+}
+
+:root[data-theme="light"] .doc-alert {
+  background: rgba(255, 249, 240, 0.96);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .doc-alert {
+    background: rgba(255, 249, 240, 0.96);
+  }
+}
+
+/* `[hidden]` removes the banner from the layout; `[data-open]` is what the
+   reader toggles, so the transition still runs before the element is hidden. */
+.doc-alert[hidden] {
+  display: none;
+}
+
+.doc-alert[data-open] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.doc-alert-icon {
+  display: inline-flex;
+  flex: none;
+  color: rgba(240, 160, 64, 0.95);
+}
+
+.doc-alert-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.doc-alert-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.doc-alert-code {
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  background: rgba(240, 160, 64, 0.16);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.doc-alert-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.doc-alert-close:hover,
+.doc-alert-close:focus-visible {
+  color: var(--text);
+  background: rgba(240, 160, 64, 0.18);
+  outline: none;
+}
+
+.doc-alert-close:focus-visible {
+  box-shadow: 0 0 0 2px rgba(240, 160, 64, 0.55);
+}
+
+.doc-alert-close svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+/* The banner arrives while a document is being read, so it must not move for
+   anyone who asked the platform for less motion — it fades only. */
+@media (prefers-reduced-motion: reduce) {
+  .doc-alert {
+    transform: none;
+    transition: opacity 180ms ease;
+  }
+}
+

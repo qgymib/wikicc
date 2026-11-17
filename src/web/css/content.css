@@ -1,0 +1,242 @@
+/* ---------- content ---------- */
+
+.content {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  padding: var(--content-pad-top) 34px var(--content-pad-bottom);
+  outline: none;
+}
+
+.doc-path {
+  margin: 0 0 22px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+
+.doc-body > :first-child {
+  margin-top: 0;
+}
+
+.doc-body h1,
+.doc-body h2,
+.doc-body h3,
+.doc-body h4,
+.doc-body h5,
+.doc-body h6 {
+  margin: 2em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  scroll-margin-top: 24px;
+}
+
+.doc-body h1 {
+  margin-top: 0;
+  font-size: 28px;
+}
+
+.doc-body h2 {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 21px;
+}
+
+.doc-body h3 {
+  font-size: 17px;
+}
+
+.doc-body h4 {
+  font-size: 15px;
+  color: var(--text-dim);
+}
+
+.doc-body p {
+  margin: 0 0 1.1em;
+}
+
+.doc-body a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(76, 141, 255, 0.35);
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.doc-body a:hover {
+  color: var(--accent-cyan);
+  border-bottom-color: currentColor;
+}
+
+/* A block reference whose chapter its document does not have. The build knows
+   this, so the reader must not pretend the link is ordinary: the dotted rule
+   says "this target is not what the label promises" before the pointer ever
+   arrives, and the colour separates it from every working link around it.
+   Hovering answers the question where the pointer is, with a notice in the
+   preview panel; clicking navigates, and the banner explains the navigation. */
+.doc-body a.doc-link-missing,
+.doc-body a.doc-link-missing:hover {
+  color: rgba(240, 160, 64, 0.95);
+  border-bottom: 1px dashed currentColor;
+  text-decoration: underline dotted rgba(240, 160, 64, 0.55);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.doc-body a.doc-link-missing:hover {
+  border-bottom-style: solid;
+}
+
+.doc-body strong {
+  font-weight: 600;
+}
+
+.doc-body ul,
+.doc-body ol {
+  margin: 0 0 1.1em;
+  padding-left: 1.4em;
+}
+
+.doc-body li {
+  margin: 0.25em 0;
+}
+
+.doc-body li > ul,
+.doc-body li > ol {
+  margin: 0.25em 0;
+}
+
+.doc-body .task-list-item {
+  list-style: none;
+}
+
+.doc-body .task-list-item input {
+  margin-right: 0.5em;
+}
+
+.doc-body blockquote {
+  margin: 1.3em 0;
+  padding: 4px 0 4px 16px;
+  border-left: 2px solid var(--accent-alt);
+  color: var(--text-dim);
+}
+
+.doc-body blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+/* Obsidian callouts. The build turns a block quote whose first line is a
+   `[!kind]` marker into a titled aside; the kind only decides the accent, so
+   an unknown kind is still a readable callout in the default colour. */
+.doc-body .callout {
+  margin: 1.3em 0;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-alt);
+  border-radius: 10px;
+  background: var(--bg-hover);
+}
+
+.doc-body .callout-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.doc-body .callout-content > :first-child {
+  margin-top: 0;
+}
+
+.doc-body .callout-content > :last-child {
+  margin-bottom: 0;
+}
+
+.doc-body .callout[data-callout="tip"],
+.doc-body .callout[data-callout="success"] {
+  border-left-color: #4ea72e;
+}
+
+.doc-body .callout[data-callout="warning"],
+.doc-body .callout[data-callout="caution"] {
+  border-left-color: #d9a441;
+}
+
+.doc-body .callout[data-callout="danger"],
+.doc-body .callout[data-callout="error"] {
+  border-left-color: #d9534f;
+}
+
+.doc-body .callout[data-callout="example"],
+.doc-body .callout[data-callout="quote"] {
+  border-left-color: #9b7fd4;
+}
+
+/* Obsidian tags (`#tag`) and Typora math, both own-layer constructs. The tag
+   reads as a small chip; the math elements are placeholders the reader's
+   bundled math engine typesets in the browser — until it has (or when it
+   fails on a formula) they read as code, which is the documented fallback. */
+.doc-body .doc-tag {
+  color: var(--accent-alt);
+  font-weight: 500;
+}
+
+.doc-body .math-inline,
+.doc-body pre.math {
+  font-family: var(--font-mono);
+}
+
+.doc-body pre.math {
+  margin: 1.3em 0;
+  padding: 12px 15px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-code);
+  overflow-x: auto;
+}
+
+/* A typeset formula sheds the code look of its placeholder element: the
+   engine's own fonts and sizes take over, and the display block sits flush
+   inside the box the placeholder keeps. */
+.doc-body code.math-inline:has(.katex) {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 1em;
+}
+
+.doc-body pre.math .katex-display {
+  margin: 0;
+}
+
+.doc-body code {
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.doc-body pre {
+  margin: 1.3em 0;
+  padding: 15px 17px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-code);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.doc-body pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.doc-body pre.code {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+

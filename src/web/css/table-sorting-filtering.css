@@ -1,0 +1,111 @@
+/* ---------- table sorting and filtering ---------- */
+
+/* A measured table pins the column widths the auto layout chose at the last
+   layout-affecting moment — the table landing on screen, a window resize, a
+   first filter on a table enhanced offscreen. Hiding rows for a filter is not
+   one of those moments: the fixed layout reads the pin and ignores the body,
+   so the columns hold still while the reader narrows the table. */
+.doc-body table[data-wikicc-locked-widths] {
+  table-layout: fixed;
+}
+
+.doc-body thead th.table-sortable {
+  /* Room for the sort arrow and the funnel button on the right edge. */
+  padding-right: 46px;
+  cursor: pointer;
+  user-select: none;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.doc-body thead th.table-sortable:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.doc-body thead th.table-sortable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The direction indicator is drawn by CSS so the header text is untouched. It
+   is positioned rather than inline, because the filter button is a real child
+   element and a generated `::after` would otherwise render behind it. */
+.doc-body thead th.table-sortable::after {
+  position: absolute;
+  top: 50%;
+  right: 28px;
+  margin: 0;
+  font-size: 8px;
+  line-height: 1;
+  transform: translateY(-50%);
+  opacity: 0.75;
+  content: "";
+}
+
+.doc-body thead th.table-sortable[data-sort="asc"]::after {
+  content: "▲";
+}
+
+.doc-body thead th.table-sortable[data-sort="desc"]::after {
+  content: "▼";
+}
+
+/* The funnel button: quiet until hovered, accent-coloured while filtering. */
+.doc-body .table-filter-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0.45;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.doc-body .table-filter-toggle:hover,
+.doc-body .table-filter-toggle:focus-visible {
+  opacity: 1;
+  color: var(--text);
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.doc-body .table-filter-toggle:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.doc-body .table-filter-toggle.is-filtered {
+  opacity: 1;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.doc-body .table-filter-toggle svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.doc-body tbody tr[hidden] {
+  display: none;
+}
+
+.doc-body tbody tr.table-empty-row td {
+  padding: 14px 12px;
+  color: var(--text-dim);
+  font-style: italic;
+  text-align: center;
+}
+

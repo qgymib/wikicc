@@ -1,0 +1,56 @@
+/* ---------- shell ---------- */
+
+/* One row of columns, side by side: nothing lies over any region of the
+   reader, so the article starts at the very top of the page. */
+.app {
+  display: grid;
+  /* The two rails bookend the page: the left one carries the sidebar's
+     switches, the right one the reader's app-level controls and the graph's.
+     The middle grid keeps the list's two columns — and the rightmost names
+     the rail again, so a fourth item cannot spill past it. The graph's
+     panels take no column of their own: they hang above this grid as a
+     floating window (see `.inspector`), so showing or hiding them moves
+     nothing here. */
+  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
+  align-items: start;
+  min-height: 100vh;
+}
+
+/* The rail switches all start hidden: the width that has a use for one
+   brings it back — the drawer's toggle on the phone, the collapse switch on
+   the wider layouts, the outline's switch on both, and the graph's two
+   switches on the wider layouts alone. */
+#sidebar-toggle,
+#sidebar-collapse,
+#graph-local-toggle,
+#graph-global-toggle,
+#outline-toggle {
+  display: none;
+}
+
+.skip-link {
+  position: fixed;
+  top: -60px;
+  left: 16px;
+  z-index: 60;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  text-decoration: none;
+  transition: top 160ms ease;
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
+.noscript {
+  margin: 0;
+  padding: 14px 20px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+

@@ -1,0 +1,293 @@
+/* ---------- responsive ---------- */
+
+/* Putting the sidebar away is available at every width where it is a column
+   of the grid; the phone's drawer below has its own switches. The switch
+   lives in the rail, the leftmost strip, which stays put whether the sidebar
+   is out or not: the attribute narrows the shared `--sidebar-width` to
+   nothing, so the grid gives the sidebar's room back by one move. The
+   sidebar folds with `visibility`,
+   not `display`, so it keeps the grid cell it was already placed in — the
+   article slides into the room without the placement of everything else
+   around it having to be spelled out.
+
+   The graph's switch answers for the floating window instead: the attribute
+   folds the window itself, which is no part of the grid, so nothing of the
+   page's layout answers to it. The switches live wherever the layout has
+   rails. */
+@media (min-width: 641px) {
+  #sidebar-collapse,
+  #graph-local-toggle,
+  #graph-global-toggle,
+  #outline-toggle {
+    display: inline-flex;
+  }
+
+  body[data-sidebar="hidden"] {
+    --sidebar-width: 0px;
+  }
+
+  body[data-sidebar="hidden"] .sidebar {
+    visibility: hidden;
+    padding: 0;
+    border-right: 0;
+  }
+
+  /* Both graph panels live in the one floating window, so the switch folds
+     the window itself. Out of the grid's flow, the fold moves nothing. */
+  body[data-graph="hidden"] .inspector {
+    display: none;
+  }
+
+  /* Before the script runs the body carries no graph view, and the window
+     would hang an empty picture over the article: the window waits for the
+     view attribute the reader's first render writes. */
+  body:not([data-graph-view]) .inspector {
+    display: none;
+  }
+}
+
+/* The dialog follows the screen down: a fixed margin rather than a share of
+   the viewport, so the smaller the window the closer the dialog is to
+   filling it. The reading line is already one column with the list a third
+   of it and the document two, so nothing here has to restack — only the
+   width the columns of a result row are given tightens below. */
+@media (max-width: 900px) {
+  .search-panel {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+  }
+
+  /* The passage is what the row is for, so the document column gives way
+     first: it keeps enough width for a title to be readable at a glance and
+     the ellipsis does the rest. */
+  .search-result {
+    grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
+  }
+}
+
+@media (max-width: 640px) {
+  /* The phone keeps both rails, one button wide each: the left one carries
+     the drawer's toggle and the outline's switch, the right one the
+     app-level controls. The graph's switch stays wide-screen furniture — a
+     phone shows the graph and answers to no switch for it. */
+  .app {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--rail-width);
+  }
+
+  /* The drawer's toggle and the outline's switch live in the left rail at
+     this width: the drawer is the phone's sidebar, and the two switches
+     trade its contents. */
+  #sidebar-toggle,
+  #outline-toggle {
+    display: inline-flex;
+  }
+
+  .rail-end {
+    grid-row: 1;
+    grid-column: 3;
+  }
+
+  /* A drawer, so it is positioned against the viewport and keeps the height a
+     fixed box already has: neither the sticky offset nor the viewport height
+     the wider layout gives it applies here. */
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    top: 0;
+    width: 84vw;
+    max-width: 320px;
+    height: 100%;
+    transform: translateX(-102%);
+    transition: transform 200ms ease;
+  }
+
+  body[data-drawer="open"] .sidebar {
+    transform: none;
+    box-shadow: var(--shadow);
+  }
+
+  .drawer-backdrop:not([hidden]) {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: block;
+    background: rgba(4, 7, 10, 0.62);
+  }
+
+  /* The reading column's paddings are the phone's, so the centered lock
+     page follows without its own numbers. */
+  :root {
+    --content-pad-top: 26px;
+    --content-pad-bottom: 90px;
+  }
+
+  .content {
+    padding: var(--content-pad-top) 18px var(--content-pad-bottom);
+  }
+
+  /* The floating window comes back down to earth on the phone: the graph is
+     a section under the article again, inside the grid's flow, where it
+     covers nothing and answers to no switch. The window's frame — the full
+     border, the corners, the shadow — belongs to the floating form alone. */
+  .inspector {
+    position: static;
+    grid-row: auto;
+    /* The row stops short of the right rail's column, so the panels do not
+       run underneath the strip that stands there. */
+    grid-column: 1 / -2;
+    width: auto;
+    height: auto;
+    max-height: none;
+    padding: 14px 14px 24px;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    box-shadow: none;
+    z-index: auto;
+    /* The section no longer scrolls — the page does — so a reserved gutter
+       would just be an empty strip on its right edge. */
+    scrollbar-gutter: auto;
+  }
+
+  /* The dialog keeps one margin step on each side and sheds the corners the
+   desktop panel rounds. The two halves keep their 1:2 split here too: a phone
+   reads the same document, so the page still gets twice the height of the
+   list above it. */
+  .search-panel {
+    width: calc(100vw - 12px);
+    height: calc(100dvh - 12px);
+    border-radius: 12px;
+  }
+
+  /* A phone's row has no width to spare: the margin comes in and the document
+    column with it, leaving the passage the line it needs. */
+  .search-result {
+    column-gap: 10px;
+    padding: 8px 12px 8px 16px;
+  }
+
+  /* The narrowest screen gives the reading column back its margin. */
+  .search-preview .doc-body {
+    padding: 14px 14px 20px;
+  }
+
+
+  /* `.content` narrows its padding, so the banner follows it to stay exactly
+     as wide as the article. */
+  .doc-alert {
+    top: 8px;
+    left: 18px;
+    right: 18px;
+  }
+
+  /* The reading column narrows to a 20px gutter and the article's own margin
+     down to 18px, so the arrow steps back a little less: still inside the
+     margin, still clear of the text on a phone. */
+  .doc-body.chapter-collapsible {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .doc-body.chapter-collapsible .chapter-toggle {
+    left: -16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+
+  .table-filter-panel,
+  .preview-popover {
+    animation: none;
+  }
+
+  /* An infinite rotation under the compression above becomes a per-frame
+     jump: the spinner seems to spin wildly instead of slowly, which is worse
+     than no spin at all. The arc is held still — it still says loading,
+     without the motion the reader asked the page to spare them. */
+  .preview-loading::before {
+    animation: none;
+  }
+
+  /* The diagram engine measures its own geometry while its transitions run: a
+     duration that is merely tiny still creates a transition and the
+     measurement comes back distorted (a three-node flowchart laid out 2 500px
+     tall). Removing the transitions outright is both the intended reduced
+     motion and the only value that keeps the layout intact. */
+  .mermaid,
+  .mermaid *,
+  .mermaid *::before,
+  .mermaid *::after {
+    transition: none !important;
+  }
+}
+
+@media print {
+  .sidebar,
+  .inspector,
+  .search-panel,
+  .skip-link {
+    display: none;
+  }
+
+  /* The dim is keyed on the panel being open, and a reader can print with the
+     panel open: taking the pseudo-element away is what keeps the dim from
+     printing over the page. */
+  .app:has(.search-panel:not([hidden]))::after {
+    content: none;
+  }
+
+  .app {
+    display: block;
+  }
+
+  .content {
+    padding: 0;
+  }
+
+  .doc-body .table-filter-toggle,
+  .table-filter-panel,
+  .preview-popover {
+    display: none;
+  }
+
+  /* A printed page cannot be folded, so the arrows are not furniture on it —
+     and a page printed from a folded document keeps the chapter it shows:
+     paper has no pointer to unfold one. */
+  .chapter-toggle {
+    display: none;
+  }
+
+  /* Paper cannot take a copy back either: the buttons are screen furniture,
+     and a printed page carries the code alone. */
+  .code-copy {
+    display: none;
+  }
+
+  .doc-body thead th.table-sortable {
+    padding-right: 12px;
+  }
+
+  .doc-body thead th.table-sortable::after {
+    content: "";
+  }
+
+  /* The pin is a screen agreement about widths the viewport chose; a sheet
+     reflows from the content, so the fixed layout and its colgroup step
+     aside and the printout lays the columns out as if never measured. */
+  .doc-body table[data-wikicc-locked-widths] {
+    table-layout: auto;
+  }
+
+  .doc-body table[data-wikicc-locked-widths] colgroup {
+    display: none;
+  }
+}

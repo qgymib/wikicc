@@ -1,0 +1,125 @@
+/* ---------- lock page form ---------- */
+
+/* The form the lock page answers in: the same shapes the hover preview's
+   locked panel carries, in the article's measure — the reader who lands on
+   a sealed page types where they stand, and a wrong password is retried in
+   the field it was typed in. The centered page sizes it, so the form only
+   promises a width of its own. */
+.doc-locked-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  width: min(420px, 100%);
+}
+
+.doc-locked-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+/* The label names the field for the reader who cannot see it; the page's
+   note already says in the open what the field is for. */
+.doc-locked-label-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.doc-locked-input {
+  flex: 1;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.doc-locked-input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.doc-locked-input:disabled {
+  opacity: 0.6;
+}
+
+.doc-locked-submit {
+  flex: none;
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.doc-locked-submit:hover {
+  background: #6ba1ff;
+}
+
+.doc-locked-submit:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.doc-locked-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.doc-locked-error {
+  flex: 1 1 100%;
+  margin: 0;
+  color: rgba(240, 160, 64, 0.95);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+@media print {
+  .doc-alert {
+    display: none;
+  }
+
+  /* A printed lock page has no password to type, and the form has no
+     business on paper: the title and the note are the only things worth
+     ink. The page reads as a plain note, too — there is no screen to find
+     a middle of. */
+  .doc-locked-page {
+    display: block;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+  }
+
+  .doc-locked-form {
+    display: none;
+  }
+
+  /* A printed reference cannot be hovered or clicked, and the muted orange
+     reads as an error on paper; the dotted rule is enough to say the chapter
+     is not there. */
+  .doc-body a.doc-link-missing,
+  .doc-body a.doc-link-missing:hover {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px dotted currentColor;
+  }
+}
+
