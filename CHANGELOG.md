@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Entries describe what a user of the binary can observe, not how the change was
 implemented; the rules behind them live in `docs/design.md`.
 
+## [2.2.0] - 2026-11-17
+
+Builds run in parallel across the machine's cores, a front matter title
+can name the document, and a sealed document carries its assets with it.
+
+### Added
+
+- Parallel compilation. The per-document work — rendering each document's
+  Markdown, resolving its links and assets, sealing the documents marked
+  `encrypt` — runs across the machine's cores and is merged in scan order,
+  so the worker count changes how long a build takes, never the bytes.
+  `--jobs N` caps the worker threads (`--jobs 1` keeps the parallel stages
+  effectively sequential); the setting takes the same three sources as
+  every other one — `--jobs` over `WIKICC_JOBS` over the configuration
+  file's `jobs` key — and without any of them the build uses every
+  available core. A value below 1 fails the build.
+- A front matter `title` names the document wherever the reader shows a
+  title — the sidebar, the link graph, search, the lock page and the
+  browser tab — while the body keeps its headings. Numbers and booleans
+  are read as text; a value that cannot become a title warns at build
+  time and the first heading (else the file name) decides.
+- The payload the reader loads carries a format version, and the reader
+  refuses a payload whose version it does not know.
+
+### Fixed
+
+- Assets a sealed document references are expanded into data URIs before
+  sealing, so images inside encrypted documents render in the single
+  file, and assets used only by sealed documents are pruned from the site.
+
 ## [2.1.0] - 2026-11-16
 
 A document can be sealed with a password, settings can come from
