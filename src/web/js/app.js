@@ -32,20 +32,8 @@ import * as DiagramView from "./diagram-view.js";
 import * as PreviewView from "./preview-view.js";
 import * as Anchor from "./anchor.js";
 import * as Banner from "./banner.js";
-import * as Lock from "./lock.js";
+import * as Session from "./session.js";
 import * as LockView from "./lock-view.js";
-
-/** `localStorage` key holding the explicit theme choice. */
-var THEME_KEY = "wikicc.theme";
-
-/** `localStorage` key holding the sidebar's visibility. */
-var SIDEBAR_KEY = "wikicc.sidebar";
-
-/**
- * `localStorage` key holding which sidebar view is showing: the document
- * list or the chapter outline.
- */
-var SIDE_VIEW_KEY = "wikicc.side-view";
 
 /** The media query below which the document list is a drawer, not a column. */
 var DRAWER_QUERY = "(max-width: 640px)";
@@ -90,60 +78,6 @@ export function systemTheme() {
   return "dark";
 }
 
-/** Explicit theme choice, or `null` when the reader should follow the OS. */
-function storedTheme() {
-  try {
-    var value = globalThis.localStorage.getItem(THEME_KEY);
-    return value === "light" || value === "dark" ? value : null;
-  } catch (_error) {
-    return null;
-  }
-}
-
-function storeTheme(theme) {
-  try {
-    globalThis.localStorage.setItem(THEME_KEY, theme);
-  } catch (_error) {
-    /* Storage can be disabled; the theme still applies for this page. */
-  }
-}
-
-/** Whether the sidebar was put away on an earlier visit. */
-function storedSidebar() {
-  try {
-    return globalThis.localStorage.getItem(SIDEBAR_KEY) === "hidden";
-  } catch (_error) {
-    return false;
-  }
-}
-
-function storeSidebar(hidden) {
-  try {
-    globalThis.localStorage.setItem(SIDEBAR_KEY, hidden ? "hidden" : "visible");
-  } catch (_error) {
-    /* Storage can be disabled; the sidebar still hides for this page. */
-  }
-}
-
-/** The sidebar view that was left showing on an earlier visit. */
-function storedSideView() {
-  try {
-    return globalThis.localStorage.getItem(SIDE_VIEW_KEY) === "outline"
-      ? "outline"
-      : "docs";
-  } catch (_error) {
-    return "docs";
-  }
-}
-
-function storeSideView(view) {
-  try {
-    globalThis.localStorage.setItem(SIDE_VIEW_KEY, view);
-  } catch (_error) {
-    /* Storage can be disabled; the view still switches for this page. */
-  }
-}
-
 /** Theme currently in effect: the explicit choice, or the system preference. */
 function currentTheme() {
   return document.documentElement.getAttribute("data-theme") || systemTheme();
@@ -179,12 +113,23 @@ export function start() {
   var store = DocStore.createDocStore(bundle);
 
   /**
-   * The passwords this session has seen, and the answer the lock page's
-   * form asks for. Both live here rather than in the view: the table is
-   * the session's memory — page-lifetime, memory-only, never written to
-   * any storage — and the answer only reports what a password did.
+   * The session: the passwords this visit has seen, the documents they
+   * opened, and the preferences the reader left behind on an earlier one.
+   * The store decrypts; the session remembers — the table is memory-only,
+   * never written to any storage, and the door only reports what a
+   * password did.
    */
-  var unlockPasswords = Lock.createSessionPasswords();
+  var session = Session.createSession({
+    decrypt: function (id, password) {
+      return store.decrypt(id, password);
+    },
+    // A navigation away from a document stops its silent attempts: the
+    // reader is elsewhere, and the queue would only spend derivations on
+    // a page nobody is reading.
+    isActive: function (id) {
+      return currentId === id;
+    },
+  });
 
   /**
    * Try `password` on the sealed document `sealed`.
@@ -197,14 +142,17 @@ export function start() {
     if (!sealed || !sealed.id) {
       return Promise.resolve(false);
     }
-    return store.decrypt(sealed.id, password).then(function (unlocked) {
-      if (!unlocked) {
-        return false;
-      }
-      unlockPasswords.remember(sealed.id, password);
-      return true;
+    return session.unlock(sealed.id, password).then(function (unlocked) {
+      return !!unlocked;
     });
   }
+
+  // The store announces every decryption it performs; the session keeps the
+  // map of what a password has opened, and the listeners below hear about
+  // each one from the session rather than from the store.
+  store.onDecrypted(function (unlocked) {
+    session.recordDecrypted(unlocked);
+  });
 
   // An unlock anywhere in the reader re-renders the document the reader is
   // looking at: the sealed placeholder they saw is the full body now. The
@@ -212,7 +160,7 @@ export function start() {
   // arrival that carried a chapter finally reaches it here. A navigation
   // away leaves the other document untouched, and the unlock still stands:
   // its password is in the session, so coming back is a quiet success.
-  store.onDecrypted(function (unlocked) {
+  session.onDecrypted(function (unlocked) {
     if (!currentId || currentId !== unlocked.id) {
       return;
     }
@@ -250,17 +198,6 @@ export function start() {
   var corpusDocs = store.isLazy() ? null : docs.slice();
   var globalIndexPromise = null;
 
-  /**
-   * The documents a password has opened this session, by id.
-   *
-   * A decryption is the one event that changes what search knows, and it can
-   * land before or after the corpus that names the document was fetched: the
-   * listener below writes here and updates an index that already exists, and
-   * the corpus build merges from here when the file arrives after the
-   * password did.
-   */
-  var decryptedDocs = new Map();
-
   /** The whole-site index, fetching the corpus first when it is separate. */
   function ensureGlobalIndex() {
     if (index) {
@@ -276,7 +213,7 @@ export function start() {
         // file as its public title alone; the model the password opened
         // stands in for it here.
         corpusDocs = records.map(function (record) {
-          return decryptedDocs.get(record.id) || record;
+          return session.decryptedDoc(record.id) || record;
         });
         index = Search.createSearch(corpusDocs);
       }
@@ -343,19 +280,15 @@ export function start() {
     // opened its document is remembered for the session by the same hand,
     // so the next sealed page — or this one again — never asks twice.
     onUnlock: function (docId, password) {
-      return store.decrypt(docId, password).then(function (unlocked) {
-        if (!unlocked) {
-          return false;
-        }
-        unlockPasswords.remember(docId, password);
-        return true;
+      return session.unlock(docId, password).then(function (unlocked) {
+        return !!unlocked;
       });
     },
     // The quiet attempt reads the same session table, so a site whose
     // articles share one password asks for it once, wherever the reader
     // first typed it.
     passwordCandidates: function (docId) {
-      return unlockPasswords.candidates(docId);
+      return session.candidates(docId);
     },
   });
 
@@ -905,49 +838,6 @@ export function start() {
   }
 
   /**
-   * The passwords this session holds, tried quietly, one attempt at a time.
-   *
-   * A sealed document whose password the reader already entered — for this
-   * document, or for any other the site seals under the same one — opens
-   * without the reader typing a word: the attempt starts as soon as the
-   * lock page paints, and the answer re-renders through the store's
-   * notification. One attempt per document runs at a time; a navigation
-   * away abandons the rest of the queue, and nothing here ever writes the
-   * passwords anywhere but memory.
-   */
-  var silentUnlocks = new Map();
-
-  function attemptSilentUnlock(doc) {
-    if (silentUnlocks.has(doc.id)) {
-      return;
-    }
-    var passwords = unlockPasswords.candidates(doc.id);
-    if (!passwords.length) {
-      return;
-    }
-
-    var attempt = passwords.reduce(function (chain, password) {
-      return chain.then(function (opened) {
-        if (opened || currentId !== doc.id) {
-          return opened;
-        }
-        return store.decrypt(doc.id, password).then(function (result) {
-          if (result) {
-            unlockPasswords.remember(doc.id, password);
-          }
-          return result;
-        });
-      });
-    }, Promise.resolve(null));
-
-    silentUnlocks.set(doc.id, attempt);
-    var forget = function () {
-      silentUnlocks.delete(doc.id);
-    };
-    attempt.then(forget, forget);
-  }
-
-  /**
    * Show the title of a sealed document and the one field its page answers
    * in.
    *
@@ -1063,7 +953,7 @@ export function start() {
         renderLocked(doc);
         // A password the session already holds is tried before the reader
         // has to ask: one that fits re-renders through the notification.
-        attemptSilentUnlock(doc);
+        session.attemptSilentUnlock(doc);
       } else {
         renderDocument(doc);
       }
@@ -1228,13 +1118,13 @@ export function start() {
 
   /* ---------- theme ---------- */
 
-  applyTheme(storedTheme(), themeToggle);
+  applyTheme(session.theme(), themeToggle);
 
   if (themeToggle) {
     themeToggle.addEventListener("click", function () {
       var next = currentTheme() === "light" ? "dark" : "light";
       applyTheme(next, themeToggle);
-      storeTheme(next);
+      session.setTheme(next);
       // Diagram colours are baked into the SVG, so they need a re-render — in
       // the document and in an open preview alike.
       refreshDiagrams();
@@ -1262,14 +1152,12 @@ export function start() {
    * title, and nothing else — so the model the password returned is written
    * over its record in both, and the local index is dropped outright: it is
    * cached by id, and the id did not change, so the empty body it indexed
-   * would keep answering after the unlock. The map the corpus build merges
-   * from keeps the two orders honest when the file arrives after the
-   * password did. Nothing here touches storage: the passwords and the
-   * plaintext live in memory alone.
+   * would keep answering after the unlock. The session's map of what a
+   * password has opened keeps the two orders honest when the file arrives
+   * after the password did. Nothing here touches storage: the passwords and
+   * the plaintext live in memory alone.
    */
-  store.onDecrypted(function (unlocked) {
-    decryptedDocs.set(unlocked.id, unlocked);
-
+  session.onDecrypted(function (unlocked) {
     if (corpusDocs) {
       var at = -1;
       for (var i = 0; i < corpusDocs.length; i += 1) {
@@ -1439,7 +1327,7 @@ export function start() {
         return;
       }
       setSideView(view);
-      storeSideView(view);
+      session.setSideView(view);
       setDrawer(true);
       return;
     }
@@ -1447,13 +1335,13 @@ export function start() {
     var visible = document.body.getAttribute("data-sidebar") !== "hidden";
     if (currentSideView() === view && visible) {
       setSidebarHidden(true);
-      storeSidebar(true);
+      session.setSidebarHidden(true);
       return;
     }
     setSideView(view);
-    storeSideView(view);
+    session.setSideView(view);
     setSidebarHidden(false);
-    storeSidebar(false);
+    session.setSidebarHidden(false);
   }
 
   if (sidebarToggle) {
@@ -1560,8 +1448,8 @@ export function start() {
   // across a reload: every visit starts with nothing showing and the local
   // view selected.
   setDrawer(false);
-  setSideView(storedSideView());
-  setSidebarHidden(storedSidebar());
+  setSideView(session.sideView());
+  setSidebarHidden(session.sidebarHidden());
   setGraphView("local");
   hideGraph();
   render();

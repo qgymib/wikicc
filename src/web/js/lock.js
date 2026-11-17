@@ -16,14 +16,14 @@
  * Web Crypto. The salt, the nonce and the iteration count are public by
  * nature; the security of a sealed document rests on the password alone.
  *
- * Two pieces of session state live here, both memory-only. Derived keys are
+ * One piece of state lives here, and it is memory-only: derived keys are
  * remembered by the exact inputs that produced them, so unlocking the same
  * document twice (a silent retry, a re-render) does not pay for another
  * key-derivation pass; the per-document salt of the build means a shared
  * password still derives once per document, which is the price the
- * unlinkability of two sealed documents asks. And the passwords a reader has
- * entered are kept in a plain `Map` — never in `localStorage`,
- * `sessionStorage` or a cookie — so a refresh forgets them all.
+ * unlinkability of two sealed documents asks. The passwords a reader has
+ * entered, and what they opened, live in the session (`session.js`), not
+ * here.
  *
  * Pure: no DOM. Node's own Web Crypto answers `node --test`, which is what
  * keeps the interop with the build side tested without a browser.
@@ -207,39 +207,4 @@ export function unlock(blob, password, docId) {
       }
       return JSON.parse(new TextDecoder().decode(new Uint8Array(plaintext)));
     });
-}
-
-/**
- * The passwords of one reading session, remembered in memory alone.
- *
- * `remember` files the password that opened a document; `passwordFor` reads
- * it back; `candidates` lists what a silent attempt should try for `id` —
- * its own password first, then every other password of the session, newest
- * first, so a site whose articles share one password asks for it once. The
- * table answers to nothing outside the page: a refresh starts empty.
- */
-export function createSessionPasswords() {
-  var byId = new Map();
-  var recent = [];
-
-  return {
-    remember: function (id, password) {
-      byId.set(String(id), String(password));
-      var index = recent.indexOf(password);
-      if (index !== -1) {
-        recent.splice(index, 1);
-      }
-      recent.unshift(password);
-    },
-    passwordFor: function (id) {
-      return byId.has(String(id)) ? byId.get(String(id)) : null;
-    },
-    candidates: function (id) {
-      var own = byId.has(String(id)) ? [byId.get(String(id))] : [];
-      var rest = recent.filter(function (value) {
-        return own.indexOf(value) === -1;
-      });
-      return own.concat(rest);
-    },
-  };
 }

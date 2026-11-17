@@ -14,8 +14,8 @@
  * a mismatched document id and altered bytes answer `null` — one answer,
  * the same one the build side gives — while parameters the reader cannot
  * fix by retyping are rejections that name the problem. The derived-key
- * cache hands back the derivation it already started, and the session
- * password table is a plain in-memory map that never touches storage.
+ * cache hands back the derivation it already started; the session password
+ * table lives in `session.js` now, with its own tests.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -236,33 +236,4 @@ test("a derivation is shared by the inputs that asked for it", async () => {
   const key = await first;
   const again = await Lock.deriveKey("same password", salt, 1000);
   assert.equal(key, again, "the resolved key is remembered too");
-});
-
-test("the session password table answers to the document and the order", () => {
-  const session = Lock.createSessionPasswords();
-
-  assert.equal(session.passwordFor("a.md"), null, "the session starts empty");
-  assert.deepEqual(session.candidates("a.md"), [], "nothing to try silently");
-
-  session.remember("a.md", "first");
-  session.remember("b.md", "second");
-  session.remember("a.md", "revised");
-
-  assert.equal(session.passwordFor("a.md"), "revised");
-  assert.equal(session.passwordFor("b.md"), "second");
-  assert.deepEqual(
-    session.candidates("b.md"),
-    ["second", "revised", "first"],
-    "its own password first, then the others newest first",
-  );
-  assert.deepEqual(
-    session.candidates("c.md"),
-    ["revised", "second", "first"],
-    "a stranger document tries the session newest first",
-  );
-  assert.deepEqual(
-    session.candidates("a.md"),
-    ["revised", "second", "first"],
-    "the document's own password is never tried twice",
-  );
 });
