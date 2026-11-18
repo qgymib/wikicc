@@ -193,6 +193,9 @@ export function start() {
   var graphLocalToggle = document.getElementById("graph-local-toggle");
   var graphGlobalToggle = document.getElementById("graph-global-toggle");
   var outlineToggle = document.getElementById("outline-toggle");
+  // The floating window the graph's two panels live in: a press outside it
+  // folds the window (see `createPanels`).
+  var inspector = document.getElementById("inspector");
 
   // The navigation and the search controller answer each other — the cycle
   // hands every arrival to the search's marks, and a result hands its jump
@@ -350,6 +353,7 @@ export function start() {
     graphGlobalToggle: graphGlobalToggle,
     session: session,
     globalGraph: globalGraph,
+    inspector: inspector,
   });
 
   navigation = createNavigation({

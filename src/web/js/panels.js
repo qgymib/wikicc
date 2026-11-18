@@ -24,6 +24,7 @@ export function createPanels(deps) {
   var graphGlobalToggle = deps.graphGlobalToggle;
   var session = deps.session;
   var globalGraph = deps.globalGraph;
+  var inspector = deps.inspector;
 
   function setDrawer(open) {
     document.body.setAttribute("data-drawer", open ? "open" : "closed");
@@ -212,6 +213,72 @@ export function createPanels(deps) {
   }
 
   /**
+   * Whether a press landed inside the floating window.
+   *
+   * A press on the window belongs to the graph — a node's gesture, a pan, the
+   * Fit control — and never to whatever sits behind it. `contains` is the
+   * browser's own answer over the subtree; a synthetic node without it can
+   * only be the window itself.
+   */
+  function insideInspector(node) {
+    if (!node || !inspector) {
+      return false;
+    }
+    if (typeof inspector.contains === "function") {
+      return inspector.contains(node);
+    }
+    return node === inspector;
+  }
+
+  /**
+   * Whether a press landed on one of the rail's graph switches.
+   *
+   * The switches toggle the window through their own `click`, so a press on
+   * them is the reader asking for that toggle, not a press outside the
+   * window: folding here would race the click and leave the window stuck
+   * open — the same exclusion the search panel's dialog keeps.
+   */
+  function insideGraphToggle(node) {
+    if (!node) {
+      return false;
+    }
+    if (
+      graphLocalToggle &&
+      typeof graphLocalToggle.contains === "function" &&
+      graphLocalToggle.contains(node)
+    ) {
+      return true;
+    }
+    return Boolean(
+      graphGlobalToggle &&
+        typeof graphGlobalToggle.contains === "function" &&
+        graphGlobalToggle.contains(node),
+    );
+  }
+
+  /**
+   * Fold the window when a press lands outside it.
+   *
+   * The press is what dismisses the window, not the click that follows it —
+   * the press is the moment the reader has moved on, and the one gesture
+   * nothing sitting between the window and the page can swallow. The
+   * listener stays for the page's life; while the window is folded, the
+   * `graphVisible` guard makes every press a no-op.
+   */
+  function onDocumentPointerDown(event) {
+    if (!graphVisible()) {
+      return;
+    }
+
+    var node = event && event.target;
+    if (insideInspector(node) || insideGraphToggle(node)) {
+      return;
+    }
+
+    hideGraph();
+  }
+
+  /**
    * One gesture for the side switches: the switch selects the view it names,
    * and pressed again while that view is up, puts the sidebar away — the way
    * an activity bar folds its panel. Which way the gesture answers depends
@@ -293,6 +360,8 @@ export function createPanels(deps) {
       selectGraph("global");
     });
   }
+
+  document.addEventListener("pointerdown", onDocumentPointerDown, true);
 
   /**
    * The state the reader starts in.

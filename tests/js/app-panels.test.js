@@ -14,6 +14,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createFakeElement } from "./helpers/dom.js";
 import { withSession, startSession } from "./helpers/app-fixture.js";
 
 test("the toggle puts the document list away and brings it back", async () => {
@@ -375,5 +376,131 @@ test("the graph's switches keep no record of the fold", async () => {
       "hidden",
       "the fold holds for this visit only",
     );
+  });
+});
+
+test("a press outside the graph's window folds it", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const local = session.shell.get("graph-local-toggle");
+    const global = session.shell.get("graph-global-toggle");
+
+    local.fire("click");
+    assert.equal(body.getAttribute("data-graph"), null);
+
+    // The article sits nowhere near the floating window, so a press there is
+    // the reader moving on: the press is what folds the window, and the
+    // switches follow the fold they did not drive.
+    session.doc.fireEvent("pointerdown", {
+      target: session.shell.get("doc-article"),
+    });
+
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(
+      body.getAttribute("data-graph-view"),
+      "local",
+      "the selected view stays selected while the window is away",
+    );
+    assert.equal(local.getAttribute("aria-expanded"), "false");
+    assert.equal(local.getAttribute("aria-label"), "Show local graph");
+    assert.equal(global.getAttribute("aria-expanded"), "false");
+    assert.equal(global.getAttribute("aria-label"), "Show global graph");
+  });
+});
+
+test("a press inside the graph's window is the window's own", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const local = session.shell.get("graph-local-toggle");
+    const inspector = session.shell.get("inspector");
+
+    local.fire("click");
+
+    // A press on something the window carries — a control of its header, a
+    // node of the graph — is the graph's own gesture, not a press outside
+    // the window, and it must not fold what the reader is using.
+    const inside = createFakeElement("button");
+    inspector.appendChild(inside);
+    session.doc.fireEvent("pointerdown", { target: inside });
+
+    assert.equal(body.getAttribute("data-graph"), null, "the window stays up");
+    assert.equal(local.getAttribute("aria-expanded"), "true");
+  });
+});
+
+test("a press on a graph switch is left to the switch's own click", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const local = session.shell.get("graph-local-toggle");
+
+    local.fire("click");
+    assert.equal(body.getAttribute("data-graph"), null);
+
+    // Folding on the press would race the switch's own click, which would
+    // then find a folded window and bring it straight back.
+    session.doc.fireEvent("pointerdown", { target: local });
+    assert.equal(
+      body.getAttribute("data-graph"),
+      null,
+      "the press alone does nothing",
+    );
+
+    local.fire("click");
+    assert.equal(
+      body.getAttribute("data-graph"),
+      "hidden",
+      "the click folds it",
+    );
+  });
+});
+
+test("a press outside changes nothing while the window is folded", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+
+    // The session starts with the window folded away; a press outside it is
+    // one the folded window never sees.
+    session.doc.fireEvent("pointerdown", {
+      target: session.shell.get("doc-article"),
+    });
+
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(
+      session.shell.get("graph-local-toggle").getAttribute("aria-expanded"),
+      "false",
+    );
+  });
+});
+
+test("the global view's window folds on a press outside it too", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const global = session.shell.get("graph-global-toggle");
+
+    global.fire("click");
+    assert.equal(body.getAttribute("data-graph"), null);
+
+    session.doc.fireEvent("pointerdown", {
+      target: session.shell.get("doc-article"),
+    });
+
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(
+      body.getAttribute("data-graph-view"),
+      "global",
+      "the view stays selected",
+    );
+    assert.equal(global.getAttribute("aria-expanded"), "false");
+    assert.equal(global.getAttribute("aria-label"), "Show global graph");
   });
 });
