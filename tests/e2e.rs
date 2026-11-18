@@ -943,6 +943,66 @@ fn the_viewer_window_shares_the_dialog_size() {
 }
 
 #[test]
+fn the_mermaid_frame_answers_to_hover_and_keyboard_focus() {
+    // Closing the viewer hands the focus back inside the diagram block: the
+    // toolbar's button after a keyboard session, the block itself after a
+    // pointer one. A `:focus-within` frame would answer both and stay lit
+    // forever — the pointer cannot clear a focus state. Keyboard focus
+    // still has to light the frame; a pointer session's focus on the block
+    // itself must not, and `:focus-visible` — a state only the button can
+    // carry there — draws exactly that line.
+    let css = SHELL_CSS;
+
+    let frame = rule_of(
+        css,
+        r#".doc-body pre.mermaid[data-processed="true"]:hover,"#,
+    );
+    assert_eq!(
+        declaration(frame, "border-color"),
+        Some("var(--border)"),
+        "the hover keeps framing the diagram"
+    );
+    assert!(
+        frame.contains(":has(:focus-visible)"),
+        "keyboard focus frames the diagram; a mouse-driven refocus must not"
+    );
+    assert!(
+        !frame.contains("focus-within"),
+        "a focus-within frame would stay lit after the viewer closes"
+    );
+
+    let toolbar = rule_of(css, ".doc-body pre.mermaid:hover .viewer-hover,");
+    assert_eq!(
+        declaration(toolbar, "opacity"),
+        Some("1"),
+        "the hover reveals the toolbar"
+    );
+    assert_eq!(
+        declaration(toolbar, "pointer-events"),
+        Some("auto"),
+        "the revealed toolbar answers to a press"
+    );
+    assert!(
+        toolbar.contains(":has(:focus-visible)"),
+        "keyboard focus reveals the toolbar on the same terms as the frame"
+    );
+    assert!(
+        !toolbar.contains("focus-within"),
+        "the toolbar follows the frame's focus rule"
+    );
+
+    // The host block holds the focus of a pointer session quietly: it is
+    // never in the tab order, so the browser's outline there would be a
+    // ring nothing on the page asked for.
+    let host = rule_of(css, ".viewer-host:focus,");
+    assert_eq!(
+        declaration(host, "outline"),
+        Some("none"),
+        "the host's quiet focus carries no ring of its own"
+    );
+}
+
+#[test]
 fn the_search_panel_stacks_the_list_over_the_document_it_opens() {
     // The list is how the reader navigates; the preview is what they came to
     // read, and it holds the whole document rather than a paragraph cut out

@@ -34,6 +34,13 @@ export var HOVER_TOOLBAR_CLASS = "viewer-hover";
 /** Extra class of the hover button that opens the viewer. */
 export var OPEN_BUTTON_CLASS = "viewer-open";
 
+/**
+ * Class of the block a pointer session leaves the focus on: focusable
+ * without joining the tab order, and carrying no focus indicator of its
+ * own — the stylesheet answers to it.
+ */
+export var HOST_CLASS = "viewer-host";
+
 /** Class of the lightbox backdrop the viewer mounts on the body. */
 export var BACKDROP_CLASS = "viewer-backdrop";
 

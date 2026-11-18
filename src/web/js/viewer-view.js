@@ -20,10 +20,14 @@
  * exactly the state the reader opened — not to a bare identity transform
  * that would leave a wide diagram cropped.
  *
- * Opening remembers the trigger so closing can hand the focus back, and
- * locks the page scroll through one body attribute the stylesheet answers
- * to. Escape is taken on the capture phase while the viewer is up: the
- * topmost surface answers first, ahead of the search dialog and the drawer.
+ * Opening remembers how it was driven and where the focus came from, so
+ * closing can hand the focus back: the toolbar's button after a keyboard
+ * session, the block itself after a pointer one — a button focus the
+ * pointer did not earn would keep the frame lit and the button highlighted
+ * with nothing for the reader to clear it with. The scroll locks through
+ * one body attribute the stylesheet answers to. Escape is taken on the
+ * capture phase while the viewer is up: the topmost surface answers first,
+ * ahead of the search dialog and the drawer.
  *
  * The mermaid provider is registered here, beside the view that hosts it: it
  * clones the rendered SVG — with its baked theme colours and its internal
@@ -269,6 +273,13 @@ export function createViewerView(options) {
     }
     removeExistingToolbar(element);
 
+    // A mouse-driven session hands the focus back to the block itself on
+    // close, so the block must be able to take it: focusable without
+    // joining the tab order, and carrying no focus indicator of its own —
+    // the stylesheet answers to the host class for that.
+    element.setAttribute("tabindex", "-1");
+    element.classList.add(Viewer.HOST_CLASS);
+
     var toolbar = document.createElement("div");
     toolbar.className = Viewer.HOVER_TOOLBAR_CLASS;
     toolbar.appendChild(makeOpenButton(provider, element));
@@ -300,8 +311,8 @@ export function createViewerView(options) {
     if (icon) {
       button.appendChild(icon);
     }
-    button.addEventListener("click", function () {
-      openFor(element);
+    button.addEventListener("click", function (event) {
+      openFor(element, event);
     });
     return button;
   }
@@ -315,8 +326,15 @@ export function createViewerView(options) {
    * nothing. A provider whose mount yields nothing leaves the page exactly
    * as it was; the viewer is an enhancement, and must never break a page
    * because one clone could not be made.
+   *
+   * `event` is the click that opened the viewer, when it came from the
+   * toolbar's button. Its `detail` tells the two ways a reader opens this:
+   * a pointer press answers 1 or more, a keyboard Enter answers 0. The
+   * session remembers which it was, because the browser cannot later tell
+   * a pointer reader who pressed Escape from a keyboard reader — and where
+   * the focus goes on close depends on exactly that.
    */
-  function openFor(element) {
+  function openFor(element, event) {
     if (active) {
       return null;
     }
@@ -325,6 +343,7 @@ export function createViewerView(options) {
       return null;
     }
 
+    var mouseDriven = Boolean(event) && Number(event.detail) > 0;
     var trigger = document.activeElement || null;
     var lightbox = buildLightbox(provider, element);
     var content = provider.mount(element);
@@ -343,6 +362,8 @@ export function createViewerView(options) {
       backdrop: lightbox.backdrop,
       engine: engine,
       trigger: trigger,
+      container: element,
+      mouseDriven: mouseDriven,
     };
 
     lightbox.backdrop.addEventListener("click", onBackdropClick);
@@ -518,9 +539,10 @@ export function createViewerView(options) {
 
   /**
    * Put the viewer away: the engine's listeners go with it, the body
-   * attribute releases the scroll, and the focus returns to the element
-   * that opened the viewer — the button on the toolbar, in the usual case —
-   * if it is still in the document.
+   * attribute releases the scroll, and the focus returns to where the
+   * session came from — the toolbar's button when the reader opened the
+   * viewer from the keyboard, the diagram block itself when they opened it
+   * with the pointer — if it is still in the document.
    */
   function close() {
     if (!active) {
@@ -537,21 +559,30 @@ export function createViewerView(options) {
       current.backdrop.parentNode.removeChild(current.backdrop);
     }
     document.body.removeAttribute(Viewer.OPEN_ATTRIBUTE);
-    restoreFocus(current.trigger);
+    restoreFocus(current);
   }
 
-  /** Give the focus back to `trigger`, if it can still take it. */
-  function restoreFocus(trigger) {
-    if (!trigger || typeof trigger.focus !== "function") {
+  /**
+   * Give the focus back to where the session came from, if it can still
+   * take it.
+   *
+   * A pointer session returns the focus to the block itself: the button
+   * would keep a visible focus indicator no pointer gesture can clear —
+   * the lit frame and the highlighted button the Escape press left behind.
+   * The block holds the focus quietly instead, so the reader's place is
+   * not lost and nothing on the page stays lit. A keyboard session returns
+   * the focus to the button, whose indicator is then the reader's only
+   * landmark — the dialog pattern's own gesture.
+   */
+  function restoreFocus(session) {
+    var target = session.mouseDriven ? session.container : session.trigger;
+    if (!target || typeof target.focus !== "function") {
       return;
     }
-    if (
-      typeof document.contains === "function" &&
-      !document.contains(trigger)
-    ) {
+    if (typeof document.contains === "function" && !document.contains(target)) {
       return;
     }
-    trigger.focus();
+    target.focus();
   }
 
   return {

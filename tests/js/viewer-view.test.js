@@ -7,7 +7,8 @@
  * pointer plumbing of a real page. Everything else runs the shipped code:
  * the arming, the mermaid provider's clone, the actions, the Escape taken on
  * the capture phase, the body attribute that locks the scroll and the focus
- * that returns to the trigger. The fit arithmetic itself is the pure
+ * that returns to where the session came from. The fit arithmetic itself is
+ * the pure
  * module's to prove; here the page's fakes carry no geometry, so the open
  * viewer starts at scale 1 — which is what the shipped fallback answers when
  * nothing has been laid out yet.
@@ -138,6 +139,12 @@ test("arming a rendered diagram hangs one corner button on it", () => {
   assert.equal(button.children.length, 1);
   assert.equal(button.children[0].tagName, "SVG");
   assert.ok(button.children[0].children[0].getAttribute("d").length > 0);
+
+  // The block itself takes the focus back on close of a pointer session,
+  // so arming makes it focusable without joining the tab order, and marks
+  // it as the viewer's host for the stylesheet to quiet.
+  assert.equal(diagram.pre.getAttribute("tabindex"), "-1");
+  assert.equal(diagram.pre.className, "mermaid viewer-host");
 });
 
 test("arming again replaces the toolbar instead of stacking one", () => {
@@ -333,6 +340,33 @@ test("Escape closes the viewer and hands the focus back to the trigger", () => {
     assert.deepEqual(page.engines[0].calls, ["destroy"]);
     assert.equal(trigger.focused, true);
     assert.deepEqual(page.doc.listeners.keydown, []);
+  });
+});
+
+test("a pointer session hands the focus back to the block, not the button", () => {
+  const page = makePage();
+  const diagram = makeDiagram("0 0 800 400");
+
+  withGlobals({ document: page.doc }, function () {
+    page.view.armHover([diagram.pre]);
+    const trigger = diagram.pre.children[0].children[0];
+    page.doc.activeElement = trigger;
+    // A pointer press answers detail 1; a keyboard Enter answers 0.
+    trigger.fire("click", { detail: 1 });
+    assert.equal(page.view.isOpen(), true);
+
+    page.doc.fire("keydown", {
+      key: "Escape",
+      stopPropagation: function () {},
+    });
+
+    // The button would keep a visible focus indicator no pointer gesture
+    // can clear: the lit frame and the highlighted corner button an
+    // Escape press leaves behind. The block holds the focus quietly.
+    assert.equal(page.view.isOpen(), false);
+    assert.equal(diagram.pre.focused, true);
+    assert.ok(!trigger.focused, "the button is not focused");
+    assert.equal(page.doc.body.children.length, 0);
   });
 });
 

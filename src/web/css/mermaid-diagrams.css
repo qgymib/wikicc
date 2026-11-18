@@ -20,8 +20,16 @@
    context for the corner toolbar, and a block whose rule line returns on
    hover — the picture the reader is pointing at, framed while they are
    pointing at it. The toolbar is a descendant, so the hover and the
-   focus-within that show it follow the block itself, the way a pointer
-   moving onto the button is still a hover over the diagram. */
+   focus-visible focus that show it follow the block itself, the way a
+   pointer moving onto the button is still a hover over the diagram.
+   Keyboard focus lights the frame through `:has(:focus-visible)` rather
+   than `:focus-within`: closing the viewer hands the focus back inside
+   this block — the toolbar's button after a keyboard session, the block
+   itself after a pointer one — and a `:focus-within` frame would answer
+   both, staying lit with nothing the pointer could clear. A keyboard
+   session's focus on the button is exactly what `:focus-visible` lights;
+   the block's own quiet focus sits on the block itself, which `:has()` —
+   a search over the descendants — never reads. */
 .doc-body pre.mermaid[data-processed="true"] {
   padding: 0;
   border-color: transparent;
@@ -31,7 +39,7 @@
 }
 
 .doc-body pre.mermaid[data-processed="true"]:hover,
-.doc-body pre.mermaid[data-processed="true"]:focus-within {
+.doc-body pre.mermaid[data-processed="true"]:has(:focus-visible) {
   border-color: var(--border);
 }
 
@@ -43,7 +51,8 @@
 /* The viewer's corner toolbar: one button that lifts the diagram into the
    lightbox. It takes no room in the flow and answers to no press while it
    is invisible, so a reader crossing the diagram with the pointer never
-   lands on a button they cannot see; hover and focus bring it back. */
+   lands on a button they cannot see; hover and keyboard focus bring it
+   back, on the same terms the frame is drawn. */
 .viewer-hover {
   position: absolute;
   top: 8px;
@@ -54,7 +63,7 @@
 }
 
 .doc-body pre.mermaid:hover .viewer-hover,
-.doc-body pre.mermaid:focus-within .viewer-hover {
+.doc-body pre.mermaid:has(:focus-visible) .viewer-hover {
   opacity: 1;
   pointer-events: auto;
 }
@@ -64,6 +73,17 @@
 .viewer-open {
   background: var(--bg-elevated);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+/* The host block a pointer session leaves the focus on. It is focusable
+   only so the viewer can give the focus back to it — it never joins the
+   tab order, so no keyboard reader will ever land on it — and the
+   browser's own outline would draw a ring around the diagram that nothing
+   on the page asked for. Keyboard sessions focus the toolbar's button
+   instead, whose indicator stays. */
+.viewer-host:focus,
+.viewer-host:focus-visible {
+  outline: none;
 }
 
 .doc-body table {
