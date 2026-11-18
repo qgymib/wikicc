@@ -14,7 +14,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { PIN_ATTRIBUTE } from "../../src/web/js/preview-view.js";
-import { DOC_LINK_ATTRIBUTE, MISSING_CLASS } from "../../src/web/js/links.js";
+import {
+  DOC_LINK_ATTRIBUTE,
+  INVALID_ATTRIBUTE,
+  MISSING_CLASS,
+} from "../../src/web/js/links.js";
 import {
   brokenLink,
   clickInside,
@@ -270,5 +274,67 @@ test("a broken reference still reports its chapter and keeps the route in the re
       { docId: "guide/intro.md", anchor: "1.4 配色与字体" },
     ]);
     assert.deepEqual(navigations, [{ id: "guide/intro.md", anchor: null }]);
+  });
+});
+
+/* ---------- clicking a link the build marked as dead ---------- */
+
+/* A dead link is one whose destination names nothing the site compiled — a
+   missing document, a missing asset, a path out of the input folder. The
+   build marks it; the reader's only job is to keep the click from leaving
+   the page, because following the href can only end in a browser error. */
+
+test("clicking a link with no target never navigates", () => {
+  setup(function ({ view, content, navigations }) {
+    const anchor = link("missing.md", { [INVALID_ATTRIBUTE]: "" });
+    anchor.__content = content;
+    content.appendChild(anchor);
+    view.tag(content);
+
+    const prevented = click(anchor);
+
+    assert.equal(
+      prevented,
+      true,
+      "the browser must not follow the href of a dead link",
+    );
+    assert.deepEqual(navigations, [], "the dead end stays where the reader is");
+    assert.equal(view.isOpen(), false);
+  });
+});
+
+test("a modified click on a dead link is stopped as well", () => {
+  setup(function ({ view, content, navigations }) {
+    const anchor = link("missing.md", { [INVALID_ATTRIBUTE]: "" });
+    anchor.__content = content;
+    content.appendChild(anchor);
+    view.tag(content);
+
+    assert.equal(click(anchor, { metaKey: true }), true);
+    assert.equal(
+      click(anchor, { button: 1 }),
+      true,
+      "a middle click would open the same dead end elsewhere",
+    );
+    assert.deepEqual(navigations, []);
+  });
+});
+
+test("clicking a dead link dismisses an unpinned preview", () => {
+  setup(function (ctx) {
+    const { view, content } = ctx;
+    openPreview(ctx);
+    assert.equal(view.isOpen(), true);
+
+    const dead = link("missing.md", { [INVALID_ATTRIBUTE]: "" });
+    dead.__content = content;
+    content.appendChild(dead);
+
+    assert.equal(click(dead), true);
+    assert.equal(
+      view.isOpen(),
+      false,
+      "a dead link is still a click on the document, so the notice goes",
+    );
   });
 });

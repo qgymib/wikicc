@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 
 import {
   DOC_LINK_ATTRIBUTE,
+  INVALID_ATTRIBUTE,
   MISSING_ANCHOR_ATTRIBUTE,
   MISSING_CLASS,
   isBlockReference,
@@ -75,6 +76,10 @@ test("the missing-anchor attribute is the build's contract with the reader", () 
 
 test("the missing class matches what the build writes", () => {
   assert.equal(MISSING_CLASS, "doc-link-missing");
+});
+
+test("the invalid attribute matches what the build writes", () => {
+  assert.equal(INVALID_ATTRIBUTE, "data-wikicc-invalid");
 });
 
 test("a link the build marked missing reports the chapter the author wrote", () => {

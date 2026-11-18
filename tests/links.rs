@@ -106,13 +106,21 @@ fn the_link_matrix_rewrites_each_destination_kind() {
 }
 
 #[test]
-fn unresolvable_targets_keep_their_destination() {
+fn unresolvable_targets_keep_their_destination_and_are_marked_invalid() {
     let site = build(&fixture_root());
     let readme = &site.html["README.md"];
 
     assert!(
         readme.contains("href=\"missing.md\""),
         "an unknown document stays as written\nhtml: {readme}"
+    );
+    assert!(
+        readme.contains(
+            "<a href=\"missing.md\" class=\"doc-link-invalid\" data-wikicc-invalid \
+             aria-disabled=\"true\" title=\"link target not found: &#39;missing.md&#39;\">"
+        ),
+        "an unknown document must be marked so the reader shows the dead end \
+         and stops the click\nhtml: {readme}"
     );
     assert!(
         readme.contains("src=\"../outside.png\""),
@@ -196,6 +204,11 @@ fn a_missing_chapter_is_marked_so_the_reader_can_report_it() {
              <a href=\"#/doc/guide/intro.md#getting-started\">chapter</a>"
         ),
         "a chapter that exists must stay unmarked\nhtml: {readme}"
+    );
+    assert!(
+        !readme.contains("href=\"#/doc/guide/intro.md\" class=\"doc-link-invalid\""),
+        "a chapter mismatch is not a dead end: the document still resolves, \
+         so the link stays clickable\nhtml: {readme}"
     );
 }
 
@@ -351,8 +364,12 @@ fn definition_destinations_are_resolved_like_inline_links() {
         "an external web page opens in a new tab\nhtml: {html}"
     );
     assert!(
-        html.contains("<a href=\"missing.md\">missing.md</a>"),
-        "an unresolvable definition keeps its destination\nhtml: {html}"
+        html.contains(
+            "<a href=\"missing.md\" class=\"doc-link-invalid\" data-wikicc-invalid \
+             aria-disabled=\"true\" title=\"link target not found: &#39;missing.md&#39;\">\
+             missing.md</a>"
+        ),
+        "an unresolvable definition keeps its destination and is marked\nhtml: {html}"
     );
 
     let missing_line = line_containing(root, "source.md", "[4]:");

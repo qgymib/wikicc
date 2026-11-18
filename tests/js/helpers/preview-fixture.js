@@ -20,6 +20,8 @@ import {
 import {
   DOC_LINK_ATTRIBUTE,
   DOC_LINK_SELECTOR,
+  INVALID_ATTRIBUTE,
+  INVALID_SELECTOR,
   MISSING_ANCHOR_ATTRIBUTE,
 } from "../../../src/web/js/links.js";
 import {
@@ -68,11 +70,16 @@ export function fakeElement(tagName) {
   });
 
   // A click inside the panel arrives with one of its descendants as the
-  // target; the two selectors the handlers find their marks by are the link
-  // mark and the head's buttons, and anything else stays unmatched.
+  // target; the selectors the handlers find their marks by are the link
+  // mark, the dead-link mark and the head's buttons, and anything else
+  // stays unmatched.
   element.closest = function (selector) {
     if (selector === "button") {
       return element.tagName === "BUTTON" ? element : null;
+    }
+    if (selector === INVALID_SELECTOR) {
+      const dead = Object.hasOwn(element.attributes, INVALID_ATTRIBUTE);
+      return element.tagName === "A" && dead ? element : null;
     }
     if (selector !== DOC_LINK_SELECTOR) {
       return null;

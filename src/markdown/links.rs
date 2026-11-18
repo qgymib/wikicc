@@ -9,9 +9,15 @@
 //! | --- | --- | --- |
 //! | [`LinkClass::External`] | unchanged; a web page (`http`/`https`/`//host`) also marks [`LinkTarget::new_tab`] | — |
 //! | [`LinkClass::Anchor`] | unchanged | — |
-//! | [`LinkClass::InternalDoc`] | `#/doc/<percent-encoded id>[#<anchor>]` | warning, unchanged |
-//! | [`LinkClass::LocalAsset`] | `wikicc-asset:<hash>` | warning, unchanged |
-//! | [`LinkClass::Missing`] | unchanged | warning |
+//! | [`LinkClass::InternalDoc`] | `#/doc/<percent-encoded id>[#<anchor>]` | warning, marked invalid |
+//! | [`LinkClass::LocalAsset`] | `wikicc-asset:<hash>` | warning, marked invalid |
+//! | [`LinkClass::Missing`] | unchanged | warning, marked invalid |
+//!
+//! A failure other than a chapter mismatch leaves the destination untouched
+//! in the `href` but marks the target [`invalid`](LinkTarget::invalid) with
+//! the warning's own words: the target is not in the site, so the reader
+//! shows the dead end and stops the click instead of navigating into a
+//! browser error.
 //!
 //! A chapter mismatch is the one failure whose route still resolves: the
 //! document exists, so the destination is rewritten as a route to it, and the
@@ -126,6 +132,14 @@ pub struct LinkTarget {
     /// `data`, …) hand over to the browser or the operating system as they
     /// always have, and every destination inside the site stays in this tab.
     pub new_tab: bool,
+    /// Why the destination can never resolve, in the build's own words.
+    ///
+    /// `Some` marks a link the reader must not follow: the target is not in
+    /// the site, so following the `href` can only end in a browser error.
+    /// The message is the same warning the build reports, quoted in the
+    /// `title` attribute so hovering explains the dead end. A chapter
+    /// mismatch never sets it — that failure still resolves to its document.
+    pub invalid: Option<String>,
 }
 
 impl LinkTarget {
@@ -135,6 +149,7 @@ impl LinkTarget {
             dest: dest.into(),
             missing_anchor: None,
             new_tab: false,
+            invalid: None,
         }
     }
 
@@ -144,6 +159,7 @@ impl LinkTarget {
             dest: dest.into(),
             missing_anchor: None,
             new_tab: true,
+            invalid: None,
         }
     }
 
@@ -153,6 +169,17 @@ impl LinkTarget {
             dest: dest.into(),
             missing_anchor: Some(anchor.into()),
             new_tab: false,
+            invalid: None,
+        }
+    }
+
+    /// This destination, plus the reason it can never resolve.
+    pub fn invalid(dest: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            dest: dest.into(),
+            missing_anchor: None,
+            new_tab: false,
+            invalid: Some(message.into()),
         }
     }
 }
@@ -192,6 +219,40 @@ pub const MISSING_LINK_CLASS: &str = "doc-link-missing";
 /// it. Must stay in step with `MISSING_ANCHOR_ATTRIBUTE` in
 /// `src/web/js/links.js`.
 pub const MISSING_ANCHOR_ATTRIBUTE: &str = "data-wikicc-missing-anchor";
+
+/// Class of a link whose target does not exist inside the site.
+///
+/// Unlike a chapter mismatch, such a link has nowhere to go at all: no
+/// document and no asset was compiled under the address it names, so the
+/// stylesheet shows the dead end and the reader stops the click. Must stay
+/// in step with `INVALID_CLASS` in `src/web/js/links.js`.
+pub const INVALID_LINK_CLASS: &str = "doc-link-invalid";
+
+/// Attribute marking a link whose target does not exist inside the site.
+///
+/// The reader matches it to stop the click — following the `href` can only
+/// end in a browser error, because nothing was compiled under the address it
+/// names. Must stay in step with `INVALID_ATTRIBUTE` in
+/// `src/web/js/links.js`.
+pub const INVALID_LINK_ATTRIBUTE: &str = "data-wikicc-invalid";
+
+/// Opening-tag attributes for a link whose target does not exist.
+///
+/// The class carries the look, the bare attribute lets the reader stop the
+/// click, `aria-disabled` says so to assistive technology, and the `title`
+/// quotes the same reason the build warned about. Built from escaped parts,
+/// so the reason cannot terminate the attribute it is written into.
+pub(crate) fn invalid_link_attributes(message: &str) -> String {
+    let mut attributes = String::with_capacity(message.len() + 96);
+    attributes.push_str(" class=\"");
+    attributes.push_str(INVALID_LINK_CLASS);
+    attributes.push_str("\" ");
+    attributes.push_str(INVALID_LINK_ATTRIBUTE);
+    attributes.push_str(" aria-disabled=\"true\" title=\"");
+    escape_into(&mut attributes, message);
+    attributes.push('"');
+    attributes
+}
 
 /// Attributes a web-page link carries so the reader opens it in a new tab.
 ///
@@ -504,9 +565,12 @@ impl LinkResolver<'_> {
     /// Final addressing form of `destination`, reporting anything that cannot
     /// be resolved as a warning while leaving the destination untouched.
     ///
+    /// A destination whose target is not in the site keeps its `href` but
+    /// comes back marked [`invalid`](LinkTarget::invalid) with the warning's
+    /// own words, so the reader can show the dead end and stop the click.
     /// The returned [`LinkTarget`] additionally says whether the destination
-    /// named a chapter its document does not have, which is the one failure the
-    /// reader can still explain: the document itself did resolve.
+    /// named a chapter its document does not have, which is the one failure
+    /// the reader can still explain: the document itself did resolve.
     pub fn resolve(&mut self, destination: &str, line: usize) -> LinkTarget {
         match classify(destination) {
             LinkClass::External if opens_in_new_tab(destination) => {
@@ -518,8 +582,9 @@ impl LinkResolver<'_> {
             }
             LinkClass::LocalAsset { path } => self.resolve_asset(destination, line, &path),
             LinkClass::Missing { reason } => {
-                self.report(line, missing_message(reason, destination));
-                LinkTarget::new(destination)
+                let message = missing_message(reason, destination);
+                self.report(line, message.clone());
+                LinkTarget::invalid(destination, message)
             }
         }
     }
@@ -546,19 +611,15 @@ impl LinkResolver<'_> {
         anchor: Option<&str>,
     ) -> LinkTarget {
         let Some(id) = join_relative(doc_dir(&self.doc_id), path) else {
-            self.report(
-                line,
-                missing_message(MissingReason::EscapesRoot, destination),
-            );
-            return LinkTarget::new(destination);
+            let message = missing_message(MissingReason::EscapesRoot, destination);
+            self.report(line, message.clone());
+            return LinkTarget::invalid(destination, message);
         };
 
         if !self.docs.contains(&id) {
-            self.report(
-                line,
-                missing_message(MissingReason::UnknownDocument, destination),
-            );
-            return LinkTarget::new(destination);
+            let message = missing_message(MissingReason::UnknownDocument, destination);
+            self.report(line, message.clone());
+            return LinkTarget::invalid(destination, message);
         }
 
         self.targets.push(id.clone());
@@ -594,11 +655,9 @@ impl LinkResolver<'_> {
 
     fn resolve_asset(&mut self, destination: &str, line: usize, path: &str) -> LinkTarget {
         let Some(relative) = join_relative(doc_dir(&self.doc_id), path) else {
-            self.report(
-                line,
-                missing_message(MissingReason::EscapesRoot, destination),
-            );
-            return LinkTarget::new(destination);
+            let message = missing_message(MissingReason::EscapesRoot, destination);
+            self.report(line, message.clone());
+            return LinkTarget::invalid(destination, message);
         };
 
         // `relative` is root-relative and free of `..`, so the joined path
@@ -620,8 +679,8 @@ impl LinkResolver<'_> {
                         missing_message(MissingReason::UnreadableAsset, destination)
                     ),
                 };
-                self.report(line, message);
-                LinkTarget::new(destination)
+                self.report(line, message.clone());
+                LinkTarget::invalid(destination, message)
             }
         }
     }
@@ -1387,6 +1446,64 @@ mod tests {
             messages[0]
         );
         assert!(context.assets().is_empty());
+    }
+
+    #[test]
+    fn unresolvable_destinations_carry_their_warning_as_data() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut context = context(dir.path(), &["a.md"]);
+
+        let mut resolver = context.for_doc("a.md");
+        let document = resolver.resolve("missing.md", 1);
+        let asset = resolver.resolve("img/missing.png", 2);
+        let absolute = resolver.resolve("/etc/passwd", 3);
+        let escaping = resolver.resolve("../outside.md", 4);
+        let chapter = resolver.resolve("a.md#no-such-chapter", 5);
+        let sound = resolver.resolve("a.md", 6);
+        drop(resolver);
+
+        assert_eq!(
+            document.invalid.as_deref(),
+            Some("link target not found: 'missing.md'"),
+            "an unknown document carries its warning"
+        );
+        assert_eq!(
+            asset.invalid.as_deref(),
+            Some("asset not found: 'img/missing.png'"),
+            "an unknown asset carries its warning"
+        );
+        assert_eq!(
+            absolute.invalid.as_deref(),
+            Some("link target is not relative to the input directory: '/etc/passwd'"),
+            "a root-absolute destination carries its warning"
+        );
+        assert_eq!(
+            escaping.invalid.as_deref(),
+            Some("link target escapes the input directory: '../outside.md'"),
+            "an escaping destination carries its warning"
+        );
+        assert_eq!(chapter.invalid, None, "a chapter mismatch still resolves");
+        assert_eq!(sound.invalid, None, "a sound document is unmarked");
+        assert_eq!(
+            document.dest, "missing.md",
+            "the destination stays as written"
+        );
+    }
+
+    #[test]
+    fn invalid_link_attributes_escape_the_message() {
+        assert_eq!(
+            invalid_link_attributes("link target not found: 'missing.md'"),
+            " class=\"doc-link-invalid\" data-wikicc-invalid \
+             aria-disabled=\"true\" title=\"link target not found: &#39;missing.md&#39;\""
+        );
+        assert_eq!(
+            invalid_link_attributes("asset not found: 'a\"b&c<d>'"),
+            " class=\"doc-link-invalid\" data-wikicc-invalid \
+             aria-disabled=\"true\" title=\"asset not found: \
+             &#39;a&quot;b&amp;c&lt;d&gt;&#39;\"",
+            "the reason cannot terminate the attribute it is written into"
+        );
     }
 
     #[test]

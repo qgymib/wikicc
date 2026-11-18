@@ -26,7 +26,7 @@ use super::links::{LinkClass, classify};
 use super::refdefs::{ReferenceTable, definition_html, definition_text};
 use super::sections;
 use super::toc::Heading;
-use super::{LinkRewriter, missing_link_attributes};
+use super::{LinkRewriter, invalid_link_attributes, missing_link_attributes};
 
 /// Serialise the document root.
 ///
@@ -524,7 +524,7 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
     }
 
     /// Open an `<a>` with the rewritten destination and any extra attributes
-    /// a missing chapter carries.
+    /// a missing chapter or a dead target carries.
     fn open_anchor(&mut self, target: &super::LinkTarget, title: Option<&str>) {
         if let Some(anchor) = &target.missing_anchor {
             self.html.push_str("<span hidden");
@@ -537,7 +537,14 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
         if target.new_tab {
             self.html.push_str(super::NEW_TAB_ATTRIBUTES);
         }
-        if let Some(title) = title {
+        // A destination the build knows cannot resolve is not an ordinary
+        // link: the class carries the look, the bare attribute lets the
+        // reader stop the click, and the title quotes the reason the build
+        // warned about — the one explanation that matters more than any
+        // title the author wrote.
+        if let Some(message) = &target.invalid {
+            self.html.push_str(&invalid_link_attributes(message));
+        } else if let Some(title) = title {
             self.html.push_str(" title=\"");
             escape_into(&mut self.html, title);
             self.html.push('"');

@@ -268,6 +268,24 @@ export function createPreviewView(options) {
   }
 
   function onClick(event) {
+    // A link the build marked as dead has nowhere to go: no document and no
+    // asset was compiled under its address, so following the href can only
+    // end in a browser error. Any click on one is stopped, however it was
+    // clicked — no plain-click check, because a modified click would open
+    // the same dead end elsewhere. It still dismisses an unpinned preview,
+    // like any other click on the document.
+    var dead =
+      event.target &&
+      typeof event.target.closest === "function" &&
+      event.target.closest(Links.INVALID_SELECTOR);
+    if (dead) {
+      event.preventDefault();
+      if (panel.isOpen() && !gestures.isPinned()) {
+        close();
+      }
+      return;
+    }
+
     // A click inside the panel is the reader reading it, not dismissing it; the
     // panel's own handler turns that click into the pin.
     if (panel.isOpen() && event.target && panel.root().contains(event.target)) {

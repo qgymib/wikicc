@@ -56,10 +56,10 @@ use serde_yaml::Value;
 use toc::{Heading, collect_headings};
 
 pub use links::{
-    LinkClass, LinkContext, LinkResolver, LinkRewriter, LinkTarget, MISSING_ANCHOR_ATTRIBUTE,
-    MISSING_LINK_CLASS, NoRewrite, classify,
+    INVALID_LINK_ATTRIBUTE, INVALID_LINK_CLASS, LinkClass, LinkContext, LinkResolver, LinkRewriter,
+    LinkTarget, MISSING_ANCHOR_ATTRIBUTE, MISSING_LINK_CLASS, NoRewrite, classify,
 };
-pub(crate) use links::{NEW_TAB_ATTRIBUTES, missing_link_attributes};
+pub(crate) use links::{NEW_TAB_ATTRIBUTES, invalid_link_attributes, missing_link_attributes};
 pub use sections::Block as ChapterBlock;
 pub use slug::{FALLBACK_SLUG, Slugger, slugify};
 pub use toc::{HeadingText, TocEntry, build_toc, collapse_whitespace};

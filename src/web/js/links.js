@@ -50,6 +50,20 @@ export var MISSING_ANCHOR_ATTRIBUTE = "data-wikicc-missing-anchor";
 export var MISSING_CLASS = "doc-link-missing";
 
 /**
+ * Attribute marking a link whose target does not exist inside the site.
+ *
+ * The build writes it on anchors whose destination names nothing the site
+ * compiled — a missing document, a missing asset, a path that leaves the
+ * input folder. Following such an `href` can only end in a browser error,
+ * so the reader stops the click on it. Must stay in step with
+ * `INVALID_LINK_ATTRIBUTE` in `src/markdown/links.rs`.
+ */
+export var INVALID_ATTRIBUTE = "data-wikicc-invalid";
+
+/** Selector matching a link the build marked as having no target. */
+export var INVALID_SELECTOR = "a[" + INVALID_ATTRIBUTE + "]";
+
+/**
  * Attributes matching the destination prefix the build emits.
  *
  * Used only to tag anchors once, when a document is rendered; the prefix is the

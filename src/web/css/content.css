@@ -92,6 +92,21 @@
   border-bottom-style: solid;
 }
 
+/* A link whose target does not exist at all — no document, no asset, no path
+   inside the input folder. Unlike a chapter mismatch, following it has
+   nowhere to go: the reader stops the click, so the red and the dashed rule
+   say "dead end" before the pointer ever arrives, and the forbidden cursor
+   replaces the pointer where a working link would invite one. The reason the
+   build warned about travels in the link's title attribute. */
+.doc-body a.doc-link-invalid,
+.doc-body a.doc-link-invalid:hover {
+  color: rgba(217, 83, 79, 0.95);
+  border-bottom: 1px dashed currentColor;
+  text-decoration: underline dotted rgba(217, 83, 79, 0.55);
+  text-underline-offset: 3px;
+  cursor: not-allowed;
+}
+
 .doc-body strong {
   font-weight: 600;
 }
