@@ -186,3 +186,98 @@ export function fitScale(
     1,
   );
 }
+
+/**
+ * Which way one `wheel` event steps the scale, as panzoom's own handler
+ * reads it.
+ *
+ * A shift-wheel on a Mac reports the gesture on `deltaX`; a plain wheel or a
+ * touchpad reports `deltaY`. panzoom takes the horizontal axis only when the
+ * vertical one is zero and reads the sign — up zooms in — so the same rule
+ * gives the two paths an identical feel. A gesture without a usable delta
+ * answers 0: nothing to step.
+ */
+function wheelDirection(event) {
+  if (!event) {
+    return 0;
+  }
+  var delta = event.deltaY === 0 && event.deltaX ? event.deltaX : event.deltaY;
+  if (!Number.isFinite(delta)) {
+    return 0;
+  }
+  return delta < 0 ? 1 : -1;
+}
+
+/**
+ * One wheel notch of the transform engine, as pure arithmetic.
+ *
+ * The wheel listener cannot simply hand the event to panzoom's own
+ * `zoomWithWheel`: its focal arithmetic assumes the transformed element rests
+ * against the top-left of its parent, while the stage centres the picture
+ * with flexbox — the anchor then drifts off the cursor by half the slack
+ * between the two boxes on every notch, which the headless repro measured at
+ * tens of pixels. This function derives the anchor from what is actually
+ * true on the page instead. The element's rect centre is its rest centre
+ * `O` — the transform origin — plus `scale * pan`, so
+ * `O = centre - scale * pan` holds whatever the stage's padding, margins or
+ * centering are; and the zoom that pins the point under the cursor is the
+ * one whose focal, in panzoom's `zoom` convention, is the cursor offset from
+ * `O` times the new scale.
+ *
+ * `geometry` carries `rect` (the content's laid-out-and-transformed box),
+ * `pan` and `scale` (the engine's live state), and the `step`, `minScale`
+ * and `maxScale` the engine itself was configured with; `event` carries the
+ * cursor and the wheel deltas. Anything the anchor cannot be derived from —
+ * an unmeasured box, a state the engine does not report, a gesture without
+ * a delta — answers null, so the caller leaves the engine alone rather than
+ * move it on a wrong guess. A cursor that is not on the page still answers
+ * a scale, with `focal` null, for the caller to degrade to a centre zoom.
+ */
+export function wheelZoom(geometry, event) {
+  var box = geometry && geometry.rect;
+  var pan = geometry && geometry.pan;
+  var scale = geometry && geometry.scale;
+  if (
+    !box ||
+    !pan ||
+    !Number.isFinite(box.left) ||
+    !Number.isFinite(box.top) ||
+    !Number.isFinite(box.width) ||
+    !Number.isFinite(box.height) ||
+    !Number.isFinite(pan.x) ||
+    !Number.isFinite(pan.y) ||
+    !Number.isFinite(scale) ||
+    !(scale > 0)
+  ) {
+    return null;
+  }
+  var direction = wheelDirection(event);
+  if (direction === 0) {
+    return null;
+  }
+  var step = Number.isFinite(geometry.step) ? geometry.step : 0.3;
+  var lower = Number.isFinite(geometry.minScale)
+    ? geometry.minScale
+    : -Infinity;
+  var upper = Number.isFinite(geometry.maxScale) ? geometry.maxScale : Infinity;
+  var toScale = Math.min(
+    Math.max(scale * Math.exp((direction * step) / 3), lower),
+    upper,
+  );
+  var origin = {
+    x: box.left + box.width / 2 - scale * pan.x,
+    y: box.top + box.height / 2 - scale * pan.y,
+  };
+  var focal = null;
+  if (
+    event &&
+    Number.isFinite(event.clientX) &&
+    Number.isFinite(event.clientY)
+  ) {
+    focal = {
+      x: (event.clientX - origin.x) * toScale,
+      y: (event.clientY - origin.y) * toScale,
+    };
+  }
+  return { scale: toScale, focal: focal };
+}

@@ -152,6 +152,49 @@ function defaultCreateTransform(content, initial) {
 }
 
 /**
+ * One wheel notch on the stage, anchored at the cursor.
+ *
+ * panzoom's own wheel handler cannot be used as-is: its focal arithmetic
+ * assumes the transformed element rests against the top-left of its parent,
+ * while the stage centres the picture with flexbox — handing the event over
+ * anchors the zoom half a box of slack away from the cursor, which the
+ * headless repro measured at tens of pixels. The pure `wheelZoom` derives
+ * the anchor from the live rect and the engine's own state instead. A notch
+ * it cannot anchor — no geometry, no state to read — leaves the engine
+ * untouched, and a cursor the event does not carry degrades to a centre
+ * zoom.
+ */
+function wheelToScale(content, engine, event) {
+  if (typeof event.preventDefault === "function") {
+    event.preventDefault();
+  }
+  var options =
+    typeof engine.getOptions === "function" ? engine.getOptions() : null;
+  var move = Viewer.wheelZoom(
+    {
+      rect:
+        content && typeof content.getBoundingClientRect === "function"
+          ? content.getBoundingClientRect()
+          : null,
+      pan: typeof engine.getPan === "function" ? engine.getPan() : null,
+      scale: typeof engine.getScale === "function" ? engine.getScale() : null,
+      step: options && Number.isFinite(options.step) ? options.step : undefined,
+      minScale: MIN_SCALE,
+      maxScale: MAX_SCALE,
+    },
+    event,
+  );
+  if (!move) {
+    return;
+  }
+  engine.zoom(move.scale, {
+    animate: false,
+    force: true,
+    focal: move.focal || undefined,
+  });
+}
+
+/**
  * Build one viewer, with its transform engine injectable.
  *
  * The page uses the module-level `viewerView` below; a test hands a
@@ -306,9 +349,11 @@ export function createViewerView(options) {
     document.addEventListener("keydown", onKeyDown, true);
     if (
       typeof lightbox.stage.addEventListener === "function" &&
-      typeof engine.zoomWithWheel === "function"
+      typeof engine.zoom === "function"
     ) {
-      lightbox.stage.addEventListener("wheel", engine.zoomWithWheel);
+      lightbox.stage.addEventListener("wheel", function (event) {
+        wheelToScale(content, engine, event);
+      });
     }
     if (
       lightbox.closeButton &&

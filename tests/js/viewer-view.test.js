@@ -41,20 +41,26 @@ function makeEngine() {
     destroy: function () {
       calls.push("destroy");
     },
-    zoomWithWheel: function () {
-      calls.push("wheel");
+    zoom: function (scale, options) {
+      calls.push({ gesture: "zoom", scale: scale, focal: options.focal });
+    },
+    getScale: function () {
+      return 1;
+    },
+    getPan: function () {
+      return { x: 0, y: 0 };
     },
   };
   return { calls: calls, engine: engine };
 }
 
 /** A fake page: a fresh document, a view over it, the engines it built. */
-function makePage() {
+function makePage(makeEngine_) {
   const doc = createFakeDocument();
   const engines = [];
   const view = createViewerView({
     createTransform: function (content, initial) {
-      const made = makeEngine();
+      const made = (makeEngine_ || makeEngine)();
       engines.push({
         content: content,
         initial: initial,
@@ -210,9 +216,72 @@ test("the corner button opens the lightbox with the diagram inside", () => {
   assert.equal(parts.actions.children[3].focused, true);
 
   assert.equal(page.doc.listeners.keydown.length, 1);
-  assert.deepEqual(parts.stage.listeners.wheel, [
-    page.engines[0].engine.zoomWithWheel,
-  ]);
+  assert.equal(parts.stage.listeners.wheel.length, 1);
+});
+
+test("a wheel notch on the stage zooms anchored at the cursor", () => {
+  const page = makePage();
+  const diagram = makeDiagram("0 0 800 400");
+
+  withGlobals({ document: page.doc }, function () {
+    page.view.armHover([diagram.pre]);
+    diagram.pre.children[0].children[0].fire("click");
+
+    const parts = partsOf(page);
+    const content = parts.stage.children[0];
+    // An 800x400 picture at scale 1 whose rest centre sits at (400, 200) —
+    // what a stage laid out at the page's top-left reports.
+    content.getBoundingClientRect = function () {
+      return { left: 0, top: 0, width: 800, height: 400 };
+    };
+    const prevented = [];
+    parts.stage.fire("wheel", {
+      clientX: 200,
+      clientY: 150,
+      deltaY: -120,
+      preventDefault: function () {
+        prevented.push("wheel");
+      },
+    });
+
+    assert.equal(page.engines[0].calls.length, 1);
+    const call = page.engines[0].calls[0];
+    assert.equal(call.gesture, "zoom");
+    const toScale = Math.exp(0.3 / 3);
+    assert.equal(call.scale, toScale);
+    // The focal pins the point under the cursor: the cursor sits 300 left
+    // of and 50 above the picture's centre, in new-scale units.
+    assert.ok(Math.abs(call.focal.x - (200 - 400) * toScale) < 1e-9);
+    assert.ok(Math.abs(call.focal.y - (150 - 200) * toScale) < 1e-9);
+    assert.deepEqual(prevented, ["wheel"]);
+
+    // A notch the geometry cannot anchor leaves the engine alone.
+    delete content.getBoundingClientRect;
+    parts.stage.fire("wheel", { clientX: 0, clientY: 0, deltaY: -120 });
+    assert.equal(page.engines[0].calls.length, 1);
+  });
+});
+
+test("an engine without zoom takes no wheel listener", () => {
+  const page = makePage(function () {
+    return {
+      calls: [],
+      engine: {
+        zoomIn: function () {},
+        zoomOut: function () {},
+        reset: function () {},
+        destroy: function () {},
+      },
+    };
+  });
+  const diagram = makeDiagram("0 0 800 400");
+
+  withGlobals({ document: page.doc }, function () {
+    page.view.armHover([diagram.pre]);
+    diagram.pre.children[0].children[0].fire("click");
+    assert.equal(page.view.isOpen(), true);
+    assert.equal(partsOf(page).stage.listeners.wheel, undefined);
+  });
 });
 
 test("the standard actions drive the engine, and close drives the viewer", () => {
