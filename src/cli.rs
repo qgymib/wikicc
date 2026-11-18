@@ -20,13 +20,14 @@ use crate::options::{Request, Settings};
     long_about = None
 )]
 pub struct Cli {
-    /// Folder that contains the Markdown documents to compile (required unless `--init-config` was given)
+    /// Folder that contains the Markdown documents to compile [default: the current directory]
     //
     // The value is an `Option` because clap's derive forces a plain
-    // positional to be required, and its debug assertions reject that
-    // alongside a `required_unless*` rule; a one-paragraph doc comment also
-    // keeps the rendered help in its compact layout.
-    #[arg(value_name = "INPUT_DIR", required_unless_present = "init_config")]
+    // positional to be required, which would also reject a bare
+    // `--init-config` invocation; a missing input falls back to the current
+    // directory in `into_request`. A one-paragraph doc comment also keeps
+    // the rendered help in its compact layout.
+    #[arg(value_name = "INPUT_DIR")]
     pub input: Option<PathBuf>,
 
     /// Everything `.wikicc.json` and the WIKICC_* environment variables can
@@ -56,13 +57,11 @@ pub struct Cli {
 impl Cli {
     /// Collect the raw arguments into a [`Request`] (no defaults, no I/O).
     ///
-    /// Only valid for a build invocation: `INPUT_DIR` is missing when
-    /// `--init-config` replaces the build, and the binary dispatches that
-    /// action before reaching here.
+    /// A missing `INPUT_DIR` falls back to the current directory; the
+    /// `--init-config` action never reaches here because the binary
+    /// dispatches it before the first build.
     pub fn into_request(self) -> Request {
-        let input = self
-            .input
-            .expect("INPUT_DIR is set for every build invocation");
+        let input = self.input.unwrap_or_else(|| PathBuf::from("."));
         Request {
             input,
             settings: self.settings,
@@ -220,11 +219,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_input_directory() {
-        let error = parse_error(&["wikicc"]);
+    fn input_defaults_to_the_current_directory() {
+        let cli = parse(&["wikicc"]);
 
-        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
-        assert!(error.to_string().contains("INPUT_DIR"));
+        assert_eq!(cli.input, None);
+        assert_eq!(cli.into_request().input, PathBuf::from("."));
     }
 
     #[test]

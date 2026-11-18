@@ -2389,8 +2389,6 @@ fn strict_mode_fails_on_the_link_fixture_and_writes_nothing() {
 
 #[test]
 fn usage_errors_exit_with_two_and_runtime_errors_with_one() {
-    wikicc().assert().code(2);
-
     let out = tempfile::tempdir().expect("temp dir");
     wikicc()
         .arg(fixture_root())

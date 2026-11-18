@@ -157,6 +157,9 @@ statically, so it does not need the VC++ redistributable.
 ```
 wikicc [OPTIONS] [INPUT_DIR]
 
+  [INPUT_DIR]            Folder that contains the Markdown documents;
+                         defaults to the current directory
+
   -o, --out <DIR>        Output directory [default: <INPUT_DIR>/dist]
       --format <FMT>     single-html | html-dir | pages [default: single-html]
       --title <TITLE>    Site title [default: input folder name]

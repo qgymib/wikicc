@@ -70,7 +70,7 @@ fn help_output_is_pinned_byte_for_byte() {
         "Usage: wikicc [OPTIONS] [INPUT_DIR]",
         "",
         "Arguments:",
-        "  [INPUT_DIR]  Folder that contains the Markdown documents to compile (required unless `--init-config` was given)",
+        "  [INPUT_DIR]  Folder that contains the Markdown documents to compile [default: the current directory]",
         "",
         "Options:",
         "  -o, --out <DIR>            Output directory [default: <INPUT_DIR>/dist]",
@@ -145,11 +145,15 @@ fn unknown_format_exits_with_2() {
 }
 
 #[test]
-fn missing_input_argument_exits_with_2() {
+fn missing_input_argument_builds_the_current_directory() {
+    let dir = fixture();
+    let expected_out = Path::new(".").join("dist");
+
     wikicc()
+        .current_dir(dir.path())
         .assert()
-        .code(2)
-        .stderr(predicate::str::contains("INPUT_DIR"));
+        .success()
+        .stdout(predicate::str::contains(path_string(&expected_out)));
 }
 
 #[test]
