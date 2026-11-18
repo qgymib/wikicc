@@ -12,8 +12,10 @@
 
 :root {
   color-scheme: dark;
-  --font-sans: "Helvetica Neue", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+  --font-sans:
+    "Helvetica Neue", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono:
+    ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
 
   --bg: #0b0f14;
   --bg-elevated: #11171f;
@@ -100,11 +102,20 @@ html {
 body {
   margin: 0;
   background: var(--bg);
-  background-image: radial-gradient(1200px 600px at 12% -10%, rgba(76, 141, 255, 0.09), transparent 70%),
-    radial-gradient(900px 500px at 100% 0%, rgba(124, 92, 255, 0.08), transparent 65%);
+  background-image:
+    radial-gradient(
+      1200px 600px at 12% -10%,
+      rgba(76, 141, 255, 0.09),
+      transparent 70%
+    ),
+    radial-gradient(
+      900px 500px at 100% 0%,
+      rgba(124, 92, 255, 0.08),
+      transparent 65%
+    );
   background-attachment: fixed;
   color: var(--text);
-  font: 400 15px/1.65 var(--font-sans);
+  font: 400 15px / 1.65 var(--font-sans);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
@@ -131,7 +142,6 @@ a {
   background: var(--border-strong);
   border-radius: 8px;
 }
-
 /* ---------- shell ---------- */
 
 /* One row of columns, side by side: nothing lies over any region of the
@@ -145,7 +155,9 @@ a {
      panels take no column of their own: they hang above this grid as a
      floating window (see `.inspector`), so showing or hiding them moves
      nothing here. */
-  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
+  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(
+      --rail-width
+    );
   align-items: start;
   min-height: 100vh;
 }
@@ -187,7 +199,6 @@ a {
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
 }
-
 /* ---------- rail and sidebar ---------- */
 
 /* The rail and the list share one surface: the leftmost strip of chrome and
@@ -195,7 +206,11 @@ a {
 .rail,
 .sidebar {
   border-right: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(17, 23, 31, 0.92), rgba(11, 15, 20, 0.88));
+  background: linear-gradient(
+    180deg,
+    rgba(17, 23, 31, 0.92),
+    rgba(11, 15, 20, 0.88)
+  );
   backdrop-filter: blur(16px);
 }
 
@@ -236,13 +251,21 @@ a {
 
 :root[data-theme="light"] .rail,
 :root[data-theme="light"] .sidebar {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(246, 247, 249, 0.9)
+  );
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .rail,
   :root:not([data-theme="dark"]) .sidebar {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.92),
+      rgba(246, 247, 249, 0.9)
+    );
   }
 }
 
@@ -309,7 +332,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   background: var(--bg-hover);
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 160ms ease, border-color 160ms ease, transform 160ms ease;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
 }
 
 .icon-button:hover {
@@ -399,7 +425,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
 }
 
 .doc-link:hover {
@@ -419,7 +448,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   color: var(--text-dim);
   font-size: 13px;
 }
-
 /* ---------- sealed documents ---------- */
 
 /* A sealed document has no body to show: the page keeps the path and the
@@ -443,7 +471,8 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   grid-template-rows: auto auto 1fr auto 1fr;
   justify-items: center;
   min-height: 100vh;
-  margin: calc(-1 * var(--content-pad-top)) 0 calc(-1 * var(--content-pad-bottom));
+  margin: calc(-1 * var(--content-pad-top)) 0
+    calc(-1 * var(--content-pad-bottom));
   padding: var(--content-pad-top) 0 var(--content-pad-top);
 }
 
@@ -501,7 +530,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font-size: 11.5px;
   letter-spacing: 0.02em;
 }
-
 /* ---------- content ---------- */
 
 .content {
@@ -567,7 +595,9 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   color: var(--accent);
   text-decoration: none;
   border-bottom: 1px solid rgba(76, 141, 255, 0.35);
-  transition: border-color 140ms ease, color 140ms ease;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease;
 }
 
 .doc-body a:hover {
@@ -743,7 +773,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
 .doc-body pre.code {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
-
 /* ---------- chapter folding ---------- */
 
 /* The fold arrows of the article.
@@ -823,7 +852,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
      transition of its own, so an invisible arrow is never a click target. */
   opacity: 0;
   visibility: hidden;
-  transition: opacity 140ms ease, visibility 140ms ease, color 140ms ease,
+  transition:
+    opacity 140ms ease,
+    visibility 140ms ease,
+    color 140ms ease,
     background-color 140ms ease;
 }
 
@@ -895,7 +927,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
     transition: none;
   }
 }
-
 /* ---------- code block copying ---------- */
 
 /* The copy button of the article's code blocks.
@@ -943,7 +974,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
      and this is not one. */
   opacity: 0;
   visibility: hidden;
-  transition: opacity 140ms ease, visibility 140ms ease, color 140ms ease,
+  transition:
+    opacity 140ms ease,
+    visibility 140ms ease,
+    color 140ms ease,
     background-color 140ms ease;
 }
 
@@ -996,7 +1030,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-
 /* ---------- mermaid diagrams ---------- */
 
 /* Until the engine runs, the block is the diagram source: keep it readable and
@@ -1122,7 +1155,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
 .doc-body tbody tr:hover {
   background: var(--bg-hover);
 }
-
 /* ---------- table sorting and filtering ---------- */
 
 /* A measured table pins the column widths the auto layout chose at the last
@@ -1139,7 +1171,9 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   padding-right: 46px;
   cursor: pointer;
   user-select: none;
-  transition: color 140ms ease, background 140ms ease;
+  transition:
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .doc-body thead th.table-sortable:hover {
@@ -1193,7 +1227,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   opacity: 0.45;
   cursor: pointer;
   transform: translateY(-50%);
-  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .doc-body .table-filter-toggle:hover,
@@ -1233,7 +1270,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font-style: italic;
   text-align: center;
 }
-
 /* ---------- column filter panel ---------- */
 
 /* The panel is parented to `body`, not to the header cell: the table clips its
@@ -1278,7 +1314,9 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   color: var(--text);
   font: inherit;
   font-size: 12.5px;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .table-filter-search::placeholder {
@@ -1377,7 +1415,9 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font: inherit;
   font-size: 11.5px;
   cursor: pointer;
-  transition: color 140ms ease, border-color 140ms ease;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
 }
 
 .table-filter-clear:hover,
@@ -1397,7 +1437,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: filter 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  transition:
+    filter 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
 }
 
 .table-filter-confirm:hover {
@@ -1466,7 +1509,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
 .doc-body .link-ref-def a:hover {
   border-bottom-color: currentColor;
 }
-
 /* ---------- block-reference preview ---------- */
 
 /* The panel is parented to `body` and positioned with `position: fixed`, so a
@@ -1638,7 +1680,9 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 140ms ease, background 140ms ease;
+  transition:
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .preview-pin:hover,
@@ -2048,7 +2092,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font-size: 12px;
   line-height: 1.5;
 }
-
 /* ---------- missing-chapter banner ---------- */
 
 /* A block reference to a chapter the document does not have still opens the
@@ -2082,7 +2125,9 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   opacity: 0;
   pointer-events: none;
   transform: translateY(-6px);
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
   backdrop-filter: blur(8px);
 }
 
@@ -2153,7 +2198,9 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 140ms ease, background 140ms ease;
+  transition:
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .doc-alert-close:hover,
@@ -2184,7 +2231,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
     transition: opacity 180ms ease;
   }
 }
-
 /* ---------- lock page form ---------- */
 
 /* The form the lock page answers in: the same shapes the hover preview's
@@ -2254,7 +2300,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
 }
 
 .doc-locked-submit:hover {
@@ -2309,7 +2358,6 @@ body[data-side-view="outline"] .sidebar .toc-panel {
     border-bottom: 1px dotted currentColor;
   }
 }
-
 /* ---------- inspector ---------- */
 
 /* The graph's panels live in a floating window, not in a column of the
@@ -2383,7 +2431,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   font: inherit;
   font-size: 11px;
   cursor: pointer;
-  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
 }
 
 .panel-action:hover,
@@ -2404,7 +2455,6 @@ body[data-graph-view="global"] #graph-local-panel {
 body:not([data-graph-view="global"]) #graph-global-panel {
   display: none;
 }
-
 /* ---------- search panel ---------- */
 
 .search-panel {
@@ -2435,7 +2485,9 @@ body:not([data-graph-view="global"]) #graph-global-panel {
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   background: var(--bg-elevated);
-  box-shadow: var(--shadow), 0 32px 90px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    var(--shadow),
+    0 32px 90px rgba(0, 0, 0, 0.35);
   overflow: hidden;
   /* Opening is a small lift, not a zoom: the dialog arrives from slightly
      above its own centre while the page behind it never moves. */
@@ -2564,7 +2616,9 @@ body:not([data-graph-view="global"]) #graph-global-panel {
   line-height: 1;
   cursor: pointer;
   transform: translateY(-50%);
-  transition: color 140ms ease, background-color 140ms ease;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
 }
 
 /* The cross is drawn from text so the button carries no second glyph. */
@@ -2605,7 +2659,10 @@ body:not([data-graph-view="global"]) #graph-global-panel {
   line-height: 1;
   cursor: pointer;
   transform: translateY(-50%);
-  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
 }
 
 .search-mode:hover,
@@ -2930,7 +2987,9 @@ body:not([data-graph-view="global"]) #graph-global-panel {
   stroke: var(--border-strong);
   stroke-width: 1.1;
   stroke-linecap: round;
-  transition: stroke 150ms ease, opacity 150ms ease;
+  transition:
+    stroke 150ms ease,
+    opacity 150ms ease;
 }
 
 .graph-edge.is-hot {
@@ -2955,7 +3014,10 @@ body:not([data-graph-view="global"]) #graph-global-panel {
   fill: var(--bg-elevated);
   stroke: var(--accent);
   stroke-width: 1.4;
-  transition: fill 150ms ease, stroke 150ms ease, stroke-width 150ms ease;
+  transition:
+    fill 150ms ease,
+    stroke 150ms ease,
+    stroke-width 150ms ease;
 }
 
 .graph-node .graph-label {
@@ -3042,7 +3104,10 @@ body:not([data-graph-view="global"]) #graph-global-panel {
   font-size: 12.8px;
   line-height: 1.45;
   text-decoration: none;
-  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
 }
 
 .toc a:hover {
@@ -3065,7 +3130,6 @@ body:not([data-graph-view="global"]) #graph-global-panel {
 .drawer-backdrop {
   display: none;
 }
-
 /* ---------- content viewer ---------- */
 
 /* The lightbox the hover toolbar opens: a scrim over the whole page and one
@@ -3369,7 +3433,6 @@ body[data-viewer="open"] {
     border: 0;
     border-radius: 0;
   }
-
 
   /* `.content` narrows its padding, so the banner follows it to stay exactly
      as wide as the article. */
