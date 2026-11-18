@@ -749,6 +749,13 @@ fn declaration<'a>(block: &'a str, property: &str) -> Option<&'a str> {
         .next_back()
 }
 
+/// The markup with every run of whitespace collapsed to one space, so a
+/// fragment several attributes long can be matched across the wrapped lines
+/// the template formatter spreads its tags over.
+fn squeezed(html: &str) -> String {
+    html.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[test]
 fn the_panel_window_is_painted_from_the_shared_surface() {
     // The floating window is one surface painted from two stops, and its rule
@@ -1964,8 +1971,7 @@ fn the_page_carries_the_missing_chapter_banner() {
     // does not have: it is built at runtime, so the page only has to carry the
     // slot it fills and the module that fills it.
     assert!(
-        page.html
-            .contains(r#"<div class="doc-alert" id="doc-alert""#),
+        squeezed(&page.html).contains(r#"<div class="doc-alert" id="doc-alert""#),
         "the banner slot must be part of the shell"
     );
     assert!(

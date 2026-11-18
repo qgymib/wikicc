@@ -1,0 +1,27 @@
+# djLint settings for `src/web/index.html.tmpl`, the page skeleton.
+#
+# The file carries minijinja expressions that the build renders into the
+# reader page, so it needs a template-aware checker rather than a plain
+# HTML one. djlint runs through `npm run check` and `npm run format`;
+# see docs/CONTRIBUTING.md for where the gate sits.
+
+# The skeleton speaks jinja ({{ ... }} placeholders), so the jinja
+# profile's lint rules and template parsing must apply even though the
+# extension is .tmpl.
+profile = "jinja"
+
+# Two spaces, matching the indent used across the front-end sources.
+indent = 2
+
+# The placeholders are rendered by minijinja with fixed filters and the
+# renderer owns their exact bytes, so nothing inside {{ ... }} may ever
+# be rewritten by the formatter.
+no_function_formatting = true
+
+# The skeleton is authored with literal characters only, and entity
+# rewriting would silently swap bytes that render.rs embeds verbatim.
+no_entity_formatting = true
+
+# Blank lines are authoring structure in a hand-edited template; the
+# formatter must not collapse them away between edits.
+preserve_blank_lines = true

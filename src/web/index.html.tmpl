@@ -1,21 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
-<meta name="generator" content="wikicc">
-<title>{{ title }}</title>
-<link rel="icon" href="{{ favicon|safe }}">
-<style>
-{{ css|safe }}
-</style>
-</head>
-<body>
-<a class="skip-link" href="#doc-content">Skip to content</a>
-<noscript><p class="noscript">This reader needs JavaScript to display the documents.</p></noscript>
-<div class="app" id="app">
-  <!-- The rail is the page's leftmost strip and never moves: a fixed home for
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <meta name="generator" content="wikicc">
+    <title>{{ title }}</title>
+    <link rel="icon" href="{{ favicon|safe }}">
+    <style>{{ css|safe }}</style>
+  </head>
+  <body>
+    <a class="skip-link" href="#doc-content">Skip to content</a>
+    <noscript>
+      <p class="noscript">This reader needs JavaScript to display the documents.</p>
+    </noscript>
+    <div class="app" id="app">
+      <!-- The rail is the page's leftmost strip and never moves: a fixed home for
        the switches that answer for the sidebar's two views. The drawer's
        toggle and the collapse switch select the document list — the drawer's
        toggle on the phone, where the sidebar is a drawer over the page, the
@@ -23,92 +23,171 @@
        outline's switch under them selects the chapter outline. The views are
        mutually exclusive: one shows at a time, and the switch whose view is
        showing puts the sidebar away when pressed again. -->
-  <div class="rail" id="rail">
-    <button class="icon-button" id="sidebar-toggle" type="button" aria-label="Toggle document list" aria-expanded="false" aria-controls="sidebar">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-    </button>
-    <button class="icon-button" id="sidebar-collapse" type="button" aria-label="Hide document list" aria-expanded="true" aria-controls="sidebar" title="Hide document list">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10v2"/></svg>
-    </button>
-    <button class="icon-button" id="outline-toggle" type="button" aria-label="Show outline panel" aria-expanded="false" aria-controls="toc-panel" title="Show outline panel">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M8 12h12M8 18h8"/></svg>
-    </button>
-  </div>
-  <aside class="sidebar" id="sidebar" aria-label="Document navigation">
-    <header class="sidebar-header">
-      <p class="site-title" title="{{ title }}">{{ title }}</p>
-    </header>
-    <!-- The sidebar shows one view at a time. The list is the site's table of
+      <div class="rail" id="rail">
+        <button class="icon-button"
+                id="sidebar-toggle"
+                type="button"
+                aria-label="Toggle document list"
+                aria-expanded="false"
+                aria-controls="sidebar">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+        <button class="icon-button"
+                id="sidebar-collapse"
+                type="button"
+                aria-label="Hide document list"
+                aria-expanded="true"
+                aria-controls="sidebar"
+                title="Hide document list">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="8" y="8" width="12" height="12" rx="2" />
+            <path d="M4 16V6a2 2 0 0 1 2-2h10v2" />
+          </svg>
+        </button>
+        <button class="icon-button"
+                id="outline-toggle"
+                type="button"
+                aria-label="Show outline panel"
+                aria-expanded="false"
+                aria-controls="toc-panel"
+                title="Show outline panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 6h16M8 12h12M8 18h8" />
+          </svg>
+        </button>
+      </div>
+      <aside class="sidebar" id="sidebar" aria-label="Document navigation">
+        <header class="sidebar-header">
+          <p class="site-title" title="{{ title }}">{{ title }}</p>
+        </header>
+        <!-- The sidebar shows one view at a time. The list is the site's table of
          contents and nothing else: a search field here would be a second way
          in to the same documents, and it cannot show what it found —
          searching lives in the right rail. The outline is the open document's
          chapters. The rail's switches trade one view for the other. -->
-    <div class="side-docs" id="side-docs">
-      <nav class="doc-list" id="doc-list" aria-label="Documents"></nav>
-      <footer class="sidebar-footer" id="stats"></footer>
-    </div>
-    <section class="toc-panel" id="toc-panel" aria-labelledby="toc-heading">
-      <h2 class="panel-heading" id="toc-heading">Outline</h2>
-      <nav class="toc" id="toc" aria-label="Chapter outline"></nav>
-    </section>
-  </aside>
-  <main class="content" id="doc-content" tabindex="-1">
-    <!-- The banner slot is filled once by `banner.js` and only toggled
+        <div class="side-docs" id="side-docs">
+          <nav class="doc-list" id="doc-list" aria-label="Documents">
+          </nav>
+          <footer class="sidebar-footer" id="stats">
+          </footer>
+        </div>
+        <section class="toc-panel" id="toc-panel" aria-labelledby="toc-heading">
+          <h2 class="panel-heading" id="toc-heading">Outline</h2>
+          <nav class="toc" id="toc" aria-label="Chapter outline">
+          </nav>
+        </section>
+      </aside>
+      <main class="content" id="doc-content" tabindex="-1">
+        <!-- The banner slot is filled once by `banner.js` and only toggled
          afterwards, so a message never reflows the article. -->
-    <div class="doc-alert" id="doc-alert" role="status" aria-live="polite" aria-hidden="true" hidden></div>
-    <article class="doc-article" id="doc-article"></article>
-  </main>
-  <aside class="inspector" id="inspector" aria-label="Graph">
-    <!-- One panel per view, and one at a time on screen: the body attribute
+        <div class="doc-alert"
+             id="doc-alert"
+             role="status"
+             aria-live="polite"
+             aria-hidden="true"
+             hidden></div>
+        <article class="doc-article" id="doc-article"></article>
+      </main>
+      <aside class="inspector" id="inspector" aria-label="Graph">
+        <!-- One panel per view, and one at a time on screen: the body attribute
          `data-graph-view` picks which. Each draws from its own container, so
          a picture a reader has arranged survives the other view being shown
          and hiding it again. The panel is a floating window above the page
          rather than a column of the grid: it hangs at the top right, out of
          the page's flow, so opening it never moves the article. -->
-    <section class="panel graph-panel" id="graph-local-panel" aria-labelledby="graph-local-heading">
-      <div class="panel-header">
-        <h2 class="panel-heading" id="graph-local-heading">Local graph</h2>
-        <button class="panel-action" id="graph-fit-local" type="button" title="Fit graph to view" aria-label="Fit graph to view">Fit</button>
-      </div>
-      <div class="graph" id="graph-local"></div>
-    </section>
-    <section class="panel graph-panel" id="graph-global-panel" aria-labelledby="graph-global-heading">
-      <div class="panel-header">
-        <h2 class="panel-heading" id="graph-global-heading">Global graph</h2>
-        <button class="panel-action" id="graph-fit-global" type="button" title="Fit graph to view" aria-label="Fit graph to view">Fit</button>
-      </div>
-      <div class="graph" id="graph-global"></div>
-    </section>
-  </aside>
-  <!-- The right rail mirrors the left one across the page: the same strip of
+        <section class="panel graph-panel"
+                 id="graph-local-panel"
+                 aria-labelledby="graph-local-heading">
+          <div class="panel-header">
+            <h2 class="panel-heading" id="graph-local-heading">Local graph</h2>
+            <button class="panel-action"
+                    id="graph-fit-local"
+                    type="button"
+                    title="Fit graph to view"
+                    aria-label="Fit graph to view">Fit</button>
+          </div>
+          <div class="graph" id="graph-local"></div>
+        </section>
+        <section class="panel graph-panel"
+                 id="graph-global-panel"
+                 aria-labelledby="graph-global-heading">
+          <div class="panel-header">
+            <h2 class="panel-heading" id="graph-global-heading">Global graph</h2>
+            <button class="panel-action"
+                    id="graph-fit-global"
+                    type="button"
+                    title="Fit graph to view"
+                    aria-label="Fit graph to view">Fit</button>
+          </div>
+          <div class="graph" id="graph-global"></div>
+        </section>
+      </aside>
+      <!-- The right rail mirrors the left one across the page: the same strip of
        chrome closing the grid at the far edge, and the home of the reader's
        app-level controls and the graph's switches. Search and the theme belong
        to the whole reader; each graph switch answers for one view of the one
        floating panel window, the way the sidebar's switches answer for its two
        views: an unlit one brings its view up, a lit one puts the window away. -->
-  <div class="rail rail-end" id="rail-end">
-    <button class="icon-button" id="search-toggle" type="button" aria-label="Search documents" aria-expanded="false" aria-controls="search-panel" title="Search documents (Ctrl+F)">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
-    </button>
-    <button class="icon-button" id="graph-local-toggle" type="button" aria-label="Show local graph" aria-expanded="false" aria-controls="graph-local-panel" title="Show local graph">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="6.5" r="2.5"/><circle cx="18.5" cy="6.5" r="2.5"/><circle cx="12" cy="17.5" r="2.5"/><path d="M7.6 8.4 10.6 15.7M16.4 8.4 13.4 15.7M8 6.5h8"/></svg>
-    </button>
-    <button class="icon-button" id="graph-global-toggle" type="button" aria-label="Show global graph" aria-expanded="false" aria-controls="graph-global-panel" title="Show global graph">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M6.6 6.6l3.8 3.8M17.4 6.6l-3.8 3.8M6.6 17.4l3.8-3.8M17.4 17.4l-3.8-3.8"/></svg>
-    </button>
-    <button class="icon-button" id="theme-toggle" type="button" aria-label="Switch colour theme" aria-pressed="false" title="Switch colour theme">
-      <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
-      <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
-    </button>
-  </div>
-  <!-- The search panel is the app's own dialog: it belongs to the app, not to
+      <div class="rail rail-end" id="rail-end">
+        <button class="icon-button"
+                id="search-toggle"
+                type="button"
+                aria-label="Search documents"
+                aria-expanded="false"
+                aria-controls="search-panel"
+                title="Search documents (Ctrl+F)">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M16.5 16.5 21 21" />
+          </svg>
+        </button>
+        <button class="icon-button"
+                id="graph-local-toggle"
+                type="button"
+                aria-label="Show local graph"
+                aria-expanded="false"
+                aria-controls="graph-local-panel"
+                title="Show local graph">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="5.5" cy="6.5" r="2.5" /><circle cx="18.5" cy="6.5" r="2.5" /><circle cx="12" cy="17.5" r="2.5" />
+            <path d="M7.6 8.4 10.6 15.7M16.4 8.4 13.4 15.7M8 6.5h8" />
+          </svg>
+        </button>
+        <button class="icon-button"
+                id="graph-global-toggle"
+                type="button"
+                aria-label="Show global graph"
+                aria-expanded="false"
+                aria-controls="graph-global-panel"
+                title="Show global graph">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="2" /><circle cx="5" cy="5" r="2" /><circle cx="19" cy="5" r="2" /><circle cx="5" cy="19" r="2" /><circle cx="19" cy="19" r="2" />
+            <path d="M6.6 6.6l3.8 3.8M17.4 6.6l-3.8 3.8M6.6 17.4l3.8-3.8M17.4 17.4l-3.8-3.8" />
+          </svg>
+        </button>
+        <button class="icon-button"
+                id="theme-toggle"
+                type="button"
+                aria-label="Switch colour theme"
+                aria-pressed="false"
+                title="Switch colour theme">
+          <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+          </svg>
+        </button>
+      </div>
+      <!-- The search panel is the app's own dialog: it belongs to the app, not to
        the panel whose picture it would otherwise cover. -->
-  <div class="search-panel" id="search-panel" hidden></div>
-  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
-</div>
-<script id="wikicc-payload" type="application/json">{{ payload|safe }}</script>
-<script>
-{{ js|safe }}
-</script>
-</body>
+      <div class="search-panel" id="search-panel" hidden></div>
+      <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+    </div>
+    <script id="wikicc-payload" type="application/json">{{ payload|safe }}</script>
+    <script>{{ js|safe }}</script>
+  </body>
 </html>

@@ -15,14 +15,16 @@ only the unit tests, only the front-end suite — does not clear the bar.
 ```sh
 cargo fmt --check                          # Rust formatting
 cargo clippy --all-targets -- -D warnings  # Rust lint
-npm run check                              # JS formatting and lint (Biome)
+npm run check                              # JS + template formatting and lint (Biome, djLint)
 cargo test                                 # everything, including the front-end suite
 ```
 
 `npm run check` covers the reader's own JavaScript — the modules in
 `src/web/js`, the tests in `tests/js` and the scripts in `tools`, as scoped by
-`biome.jsonc` — and fails on a formatting difference, a lint violation or a
-lint warning; third-party code under `node_modules` is never touched. `npm run format`
+`biome.jsonc` — plus the page skeleton `src/web/index.html.tmpl`, which djlint
+checks as a jinja template under `djlint.toml`, placeholders included. Both
+fail on a formatting difference, a lint violation or a lint warning;
+third-party code under `node_modules` is never touched. `npm run format`
 rewrites the formatting in place and `npm run lint` runs only the lint half.
 The gates and the suite they protect are described further in
 [`../tests/README.md`](../tests/README.md).

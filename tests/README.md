@@ -222,7 +222,7 @@ run on both platforms in both profiles:
 ```sh
 cargo fmt --check                          # Rust formatting
 cargo clippy --all-targets -- -D warnings  # Rust lint
-npm run check                              # JS formatting and lint (Biome)
+npm run check                              # JS + template formatting and lint (Biome, djLint)
 cargo test                                 # everything, including the front-end suite
 ```
 

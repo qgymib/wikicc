@@ -5,7 +5,8 @@
 #
 # - Rust: `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`
 # - JS:   `npm run check`, one Biome pass over the reader's own sources that
-#   checks formatting and applies every rule enabled in `biome.jsonc`
+#   checks formatting and applies every rule enabled in `biome.jsonc`, and a
+#   djLint pass over the page skeleton `src/web/index.html.tmpl`
 #
 # The checks do not depend on the runner platform, so a single Linux job
 # keeps the feedback fast. There is no `tags` filter: a tagged commit is
@@ -61,7 +62,8 @@ jobs:
 
     # The JS gate: `biome check --error-on-warnings .` fails on a formatting
     # difference, a lint violation or a lint warning in `src/web/js`, `tests/js`
-    # and `tools` (the scope of `biome.jsonc`); third-party code in
-    # `node_modules` is never touched.
+    # and `tools` (the scope of `biome.jsonc`), and djlint lint-checks and
+    # format-checks the page skeleton `src/web/index.html.tmpl` under
+    # `djlint.toml`; third-party code in `node_modules` is never touched.
     - name: Lint JS
       run: npm run check

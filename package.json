@@ -6,9 +6,9 @@
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
-    "check": "biome check --error-on-warnings .",
-    "format": "biome format --write .",
-    "lint": "biome lint ."
+    "check": "biome check --error-on-warnings . && djlint src/web/index.html.tmpl --lint --check",
+    "format": "biome format --write . && djlint src/web/index.html.tmpl --reformat",
+    "lint": "biome lint . && djlint src/web/index.html.tmpl --lint"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.8",
+    "djlint": "1.54.0",
     "esbuild": "0.28.2"
   }
 }
