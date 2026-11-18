@@ -2,8 +2,10 @@
 
 :root {
   color-scheme: dark;
-  --font-sans: "Helvetica Neue", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
+  --font-sans:
+    "Helvetica Neue", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono:
+    ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
 
   --bg: #0b0f14;
   --bg-elevated: #11171f;
@@ -90,11 +92,20 @@ html {
 body {
   margin: 0;
   background: var(--bg);
-  background-image: radial-gradient(1200px 600px at 12% -10%, rgba(76, 141, 255, 0.09), transparent 70%),
-    radial-gradient(900px 500px at 100% 0%, rgba(124, 92, 255, 0.08), transparent 65%);
+  background-image:
+    radial-gradient(
+      1200px 600px at 12% -10%,
+      rgba(76, 141, 255, 0.09),
+      transparent 70%
+    ),
+    radial-gradient(
+      900px 500px at 100% 0%,
+      rgba(124, 92, 255, 0.08),
+      transparent 65%
+    );
   background-attachment: fixed;
   color: var(--text);
-  font: 400 15px/1.65 var(--font-sans);
+  font: 400 15px / 1.65 var(--font-sans);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
@@ -121,4 +132,3 @@ a {
   background: var(--border-strong);
   border-radius: 8px;
 }
-

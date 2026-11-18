@@ -77,7 +77,10 @@
      transition of its own, so an invisible arrow is never a click target. */
   opacity: 0;
   visibility: hidden;
-  transition: opacity 140ms ease, visibility 140ms ease, color 140ms ease,
+  transition:
+    opacity 140ms ease,
+    visibility 140ms ease,
+    color 140ms ease,
     background-color 140ms ease;
 }
 
@@ -149,4 +152,3 @@
     transition: none;
   }
 }
-

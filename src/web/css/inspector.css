@@ -71,7 +71,10 @@
   font: inherit;
   font-size: 11px;
   cursor: pointer;
-  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
 }
 
 .panel-action:hover,
@@ -92,4 +95,3 @@ body[data-graph-view="global"] #graph-local-panel {
 body:not([data-graph-view="global"]) #graph-global-panel {
   display: none;
 }
-

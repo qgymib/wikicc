@@ -11,7 +11,9 @@
      panels take no column of their own: they hang above this grid as a
      floating window (see `.inspector`), so showing or hiding them moves
      nothing here. */
-  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width);
+  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(
+      --rail-width
+    );
   align-items: start;
   min-height: 100vh;
 }
@@ -53,4 +55,3 @@
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
 }
-

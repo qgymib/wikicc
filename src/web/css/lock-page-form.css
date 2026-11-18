@@ -67,7 +67,10 @@
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
 }
 
 .doc-locked-submit:hover {
@@ -122,4 +125,3 @@
     border-bottom: 1px dotted currentColor;
   }
 }
-

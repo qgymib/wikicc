@@ -45,7 +45,10 @@
      and this is not one. */
   opacity: 0;
   visibility: hidden;
-  transition: opacity 140ms ease, visibility 140ms ease, color 140ms ease,
+  transition:
+    opacity 140ms ease,
+    visibility 140ms ease,
+    color 140ms ease,
     background-color 140ms ease;
 }
 
@@ -98,4 +101,3 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-

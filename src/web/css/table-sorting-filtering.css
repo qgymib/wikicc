@@ -14,7 +14,9 @@
   padding-right: 46px;
   cursor: pointer;
   user-select: none;
-  transition: color 140ms ease, background 140ms ease;
+  transition:
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .doc-body thead th.table-sortable:hover {
@@ -68,7 +70,10 @@
   opacity: 0.45;
   cursor: pointer;
   transform: translateY(-50%);
-  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+  transition:
+    opacity 140ms ease,
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .doc-body .table-filter-toggle:hover,
@@ -108,4 +113,3 @@
   font-style: italic;
   text-align: center;
 }
-

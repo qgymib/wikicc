@@ -31,7 +31,9 @@
   opacity: 0;
   pointer-events: none;
   transform: translateY(-6px);
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
   backdrop-filter: blur(8px);
 }
 
@@ -102,7 +104,9 @@
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 140ms ease, background 140ms ease;
+  transition:
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .doc-alert-close:hover,
@@ -133,4 +137,3 @@
     transition: opacity 180ms ease;
   }
 }
-

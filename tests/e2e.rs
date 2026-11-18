@@ -474,8 +474,14 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
     // where they began, in a rail's width, and the graph's floating window
     // takes no column of its own.
     let app = rule_of(css, ".app {");
+    // The formatter wraps a long value across lines, so the column template
+    // is compared with every whitespace squeezed out of both sides.
+    let squeezed = app
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
     assert!(
-        app.contains("var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--rail-width)"),
+        squeezed.contains("var(--rail-width)var(--sidebar-width)minmax(0,1fr)var(--rail-width)"),
         "the grid is bookended by the two rails: {app}"
     );
     assert!(

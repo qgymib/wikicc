@@ -169,7 +169,9 @@
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 140ms ease, background 140ms ease;
+  transition:
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .preview-pin:hover,
@@ -579,4 +581,3 @@
   font-size: 12px;
   line-height: 1.5;
 }
-

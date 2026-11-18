@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/web/js/**", "tests/js/**", "tools/**"]
+    "includes": ["src/web/css/**", "src/web/js/**", "tests/js/**", "tools/**"]
   },
   "formatter": {
     "enabled": true,
@@ -30,7 +30,11 @@
         "useArrowFunction": "off",
         // Existing style chains `a && a.b.c` guards; the rewrite churns 40
         // expressions without changing observable behaviour.
-        "useOptionalChain": "off"
+        "useOptionalChain": "off",
+        // `!important` is deliberate in CSS: the reduced-motion reset must
+        // beat every animation, and viewer rules must beat inline SVG
+        // `max-width` styles injected by KaTeX and mermaid.
+        "noImportantStyles": "off"
       },
       "correctness": {
         // Block-scoped function declarations inside branches are legal in
@@ -38,9 +42,18 @@
         // sloppy mode, where this rule's bug class lives.
         "noInnerDeclarations": "off"
       },
+      "suspicious": {
+        // `height: 100vh` followed by `height: 100dvh` is a deliberate
+        // fallback cascade for browsers without dynamic viewport units.
+        "noDuplicateProperties": "off"
+      },
       "style": {
         // `a + " " + b` concatenation is the established style.
-        "useTemplate": "off"
+        "useTemplate": "off",
+        // Component base styles intentionally follow their scoped
+        // overrides (`.popover:not(...) .part` hides, then `.part` styles);
+        // reordering selectors would flip the cascade.
+        "noDescendingSpecificity": "off"
       }
     }
   },

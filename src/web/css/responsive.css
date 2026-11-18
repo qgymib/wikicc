@@ -181,7 +181,6 @@
     border-radius: 0;
   }
 
-
   /* `.content` narrows its padding, so the banner follows it to stay exactly
      as wide as the article. */
   .doc-alert {

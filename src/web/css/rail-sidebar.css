@@ -5,7 +5,11 @@
 .rail,
 .sidebar {
   border-right: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(17, 23, 31, 0.92), rgba(11, 15, 20, 0.88));
+  background: linear-gradient(
+    180deg,
+    rgba(17, 23, 31, 0.92),
+    rgba(11, 15, 20, 0.88)
+  );
   backdrop-filter: blur(16px);
 }
 
@@ -46,13 +50,21 @@
 
 :root[data-theme="light"] .rail,
 :root[data-theme="light"] .sidebar {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(246, 247, 249, 0.9)
+  );
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .rail,
   :root:not([data-theme="dark"]) .sidebar {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.9));
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.92),
+      rgba(246, 247, 249, 0.9)
+    );
   }
 }
 
@@ -119,7 +131,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   background: var(--bg-hover);
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 160ms ease, border-color 160ms ease, transform 160ms ease;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
 }
 
 .icon-button:hover {
@@ -209,7 +224,10 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+  transition:
+    color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
 }
 
 .doc-link:hover {
@@ -229,4 +247,3 @@ body[data-side-view="outline"] .sidebar .toc-panel {
   color: var(--text-dim);
   font-size: 13px;
 }
-

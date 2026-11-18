@@ -28,7 +28,9 @@
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   background: var(--bg-elevated);
-  box-shadow: var(--shadow), 0 32px 90px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    var(--shadow),
+    0 32px 90px rgba(0, 0, 0, 0.35);
   overflow: hidden;
   /* Opening is a small lift, not a zoom: the dialog arrives from slightly
      above its own centre while the page behind it never moves. */
@@ -157,7 +159,9 @@
   line-height: 1;
   cursor: pointer;
   transform: translateY(-50%);
-  transition: color 140ms ease, background-color 140ms ease;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
 }
 
 /* The cross is drawn from text so the button carries no second glyph. */
@@ -198,7 +202,10 @@
   line-height: 1;
   cursor: pointer;
   transform: translateY(-50%);
-  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
 }
 
 .search-mode:hover,
@@ -523,7 +530,9 @@
   stroke: var(--border-strong);
   stroke-width: 1.1;
   stroke-linecap: round;
-  transition: stroke 150ms ease, opacity 150ms ease;
+  transition:
+    stroke 150ms ease,
+    opacity 150ms ease;
 }
 
 .graph-edge.is-hot {
@@ -548,7 +557,10 @@
   fill: var(--bg-elevated);
   stroke: var(--accent);
   stroke-width: 1.4;
-  transition: fill 150ms ease, stroke 150ms ease, stroke-width 150ms ease;
+  transition:
+    fill 150ms ease,
+    stroke 150ms ease,
+    stroke-width 150ms ease;
 }
 
 .graph-node .graph-label {
@@ -635,7 +647,10 @@
   font-size: 12.8px;
   line-height: 1.45;
   text-decoration: none;
-  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
 }
 
 .toc a:hover {
@@ -658,4 +673,3 @@
 .drawer-backdrop {
   display: none;
 }
-
