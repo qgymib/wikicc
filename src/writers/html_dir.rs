@@ -199,6 +199,31 @@ mod tests {
     }
 
     #[test]
+    fn an_extensionless_text_asset_is_written_with_a_txt_extension() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (build, hashes) = build_with(&[("LICENSE", b"GPL-3.0-only\n")]);
+
+        HtmlDirWriter
+            .write(&build, &page_with(&hashes), dir.path())
+            .expect("write");
+
+        assert_eq!(
+            entry_names(&dir.path().join(ASSETS_DIR_NAME)),
+            [format!("{}.txt", hashes[0])],
+            "the sniffed text asset is stored with the extension its MIME maps to"
+        );
+        assert_eq!(
+            fs::read(
+                dir.path()
+                    .join(ASSETS_DIR_NAME)
+                    .join(format!("{}.txt", hashes[0]))
+            )
+            .expect("asset file"),
+            b"GPL-3.0-only\n"
+        );
+    }
+
+    #[test]
     fn the_page_and_one_file_per_asset_are_written() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (build, hashes) = build_with(&[("logo.svg", b"<svg/>"), ("pic.png", b"png")]);

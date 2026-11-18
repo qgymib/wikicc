@@ -17,6 +17,15 @@
 //! The rendered HTML never carries the final address: it carries the opaque
 //! placeholder [`ASSET_PLACEHOLDER_PREFIX`]`<hash>`, which the writers replace
 //! with a `data:` URI or an `assets/<hash>.<ext>` path.
+//!
+//! MIME and the on-disk extension follow the same determinism rule as the
+//! name: the file name decides when it identifies a type, and otherwise the
+//! content does. When a path carries no extension, or one that neither the
+//! explicit table nor `mime_guess` knows, the head of the file (at most
+//! [`SNIFF_WINDOW_BYTES`]) is sniffed as UTF-8 text — so an extensionless
+//! `LICENSE` becomes `text/plain` and opens inline instead of downloading as
+//! `application/octet-stream`, and its disk name becomes `<hash>.txt`, the
+//! extension static servers and `file://` map back to the sniffed MIME.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -36,12 +45,23 @@ pub const FALLBACK_EXTENSION: &str = "bin";
 /// extension.
 pub const FALLBACK_MIME: &str = "application/octet-stream";
 
+/// Window of the file head the content sniff inspects.
+///
+/// Only the first [`SNIFF_WINDOW_BYTES`] bytes of an asset the name cannot
+/// type are ever read, so the sniff costs the same for a licence text and
+/// for a multi-gigabyte extensionless blob. Text that matters — a licence,
+/// a Makefile, a README — is far smaller than the window; the window is a
+/// cost bound, not a correctness claim.
+pub const SNIFF_WINDOW_BYTES: usize = 8 * 1024;
+
 /// Explicit MIME overrides consulted before `mime_guess`.
 ///
 /// `mime_guess` already knows most of these, but the table is what pins the
 /// values that matter for a self-contained reader (fonts and vector images
 /// must be served with an exact type for `data:` URIs to work in every
 /// browser), and it keeps the mapping stable across `mime_guess` upgrades.
+/// `bin` is pinned too, so the synthetic fallback extension and real `.bin`
+/// files never reach the content sniff of [`asset_mime_and_extension`].
 pub const MIME_FALLBACKS: &[(&str, &str)] = &[
     ("svg", "image/svg+xml"),
     ("svgz", "image/svg+xml"),
@@ -66,6 +86,7 @@ pub const MIME_FALLBACKS: &[(&str, &str)] = &[
     ("csv", "text/csv"),
     ("json", "application/json"),
     ("wasm", "application/wasm"),
+    ("bin", FALLBACK_MIME),
 ];
 
 /// One resource read from disk.
@@ -158,16 +179,19 @@ impl AssetTable {
 
     /// Register already-read content, returning its content hash.
     ///
-    /// `path` only supplies the extension and MIME type; the content decides
-    /// the identity of the asset.
+    /// `path` names the asset: when the name identifies a type it decides the
+    /// MIME type and the disk extension, and when it does not the content is
+    /// sniffed instead — see [`asset_mime_and_extension`]. The content alone
+    /// decides the identity of the asset.
     pub fn insert_bytes(&mut self, path: &Path, bytes: Vec<u8>) -> String {
         let hash = asset_hash(&bytes);
         self.by_path.insert(path.to_path_buf(), hash.clone());
 
+        let (mime, extension) = asset_mime_and_extension(path, &bytes);
         let asset = Asset {
             hash: hash.clone(),
-            mime: mime_for(path),
-            extension: asset_extension(path),
+            mime,
+            extension,
             bytes,
         };
         self.by_hash.entry(hash.clone()).or_insert(asset);
@@ -226,26 +250,107 @@ pub fn asset_hash(bytes: &[u8]) -> String {
 
 /// MIME type for `path`: the explicit [`MIME_FALLBACKS`] entry first, then
 /// `mime_guess`, then [`FALLBACK_MIME`].
+///
+/// This is a name-only lookup: it cannot see the bytes, so a file the name
+/// cannot type stays [`FALLBACK_MIME`]. Registration goes through
+/// [`asset_mime_and_extension`], which asks the content when the name says
+/// nothing.
 pub fn mime_for(path: &Path) -> String {
-    let extension = asset_extension(path);
+    named_mime(path).unwrap_or_else(|| FALLBACK_MIME.to_string())
+}
+
+/// MIME type and disk file name extension for a new asset, decided once per
+/// registration.
+///
+/// A name that identifies a type wins unchanged: the MIME comes from
+/// [`MIME_FALLBACKS`] or `mime_guess` and the extension is the sanitised
+/// spelling of the file name. When the name says nothing — no extension, or
+/// one nobody knows — the content decides ([`sniffed_mime`]) and the disk
+/// extension follows the MIME ([`extension_for_mime`]), so an extensionless
+/// text file is stored as `<hash>.txt` and served as `text/plain` instead of
+/// downloading as an opaque `.bin`.
+pub fn asset_mime_and_extension(path: &Path, bytes: &[u8]) -> (String, String) {
+    match named_mime(path) {
+        Some(mime) => (mime, asset_extension(path)),
+        None => {
+            let mime = sniffed_mime(bytes);
+            let extension = extension_for_mime(&mime);
+            (mime, extension)
+        }
+    }
+}
+
+/// The MIME type the file name itself identifies: the explicit
+/// [`MIME_FALLBACKS`] entry first, then `mime_guess`. `None` when the path
+/// has no extension, or one nobody knows — the case where the content is
+/// asked instead.
+fn named_mime(path: &Path) -> Option<String> {
+    let extension = named_extension(path)?;
 
     if let Some((_, mime)) = MIME_FALLBACKS.iter().find(|(known, _)| *known == extension) {
-        return (*mime).to_string();
+        return Some((*mime).to_string());
     }
 
     mime_guess::from_ext(&extension)
         .first()
         .map(|mime| mime.to_string())
-        .unwrap_or_else(|| FALLBACK_MIME.to_string())
+}
+
+/// Content sniff for an asset the name cannot type: valid UTF-8 without a
+/// NUL byte in the head window is `text/plain`, anything else stays
+/// [`FALLBACK_MIME`].
+///
+/// Only the first [`SNIFF_WINDOW_BYTES`] bytes are inspected, so the cost
+/// does not grow with the file. When the window cuts the stream short, its
+/// end is pulled back to a UTF-8 character boundary first — a multi-byte
+/// sequence split by the artificial cut is not evidence of binary data. A
+/// file that ends mid-sequence on its own is invalid UTF-8 and is judged as
+/// it is.
+fn sniffed_mime(bytes: &[u8]) -> String {
+    let mut end = bytes.len().min(SNIFF_WINDOW_BYTES);
+    if end < bytes.len() {
+        // A UTF-8 continuation byte (10xxxxxx) marks a position inside a
+        // multi-byte sequence; walk back to the start of the sequence so the
+        // artificial cut cannot split one.
+        while end > 0 && bytes[end] & 0xC0 == 0x80 {
+            end -= 1;
+        }
+    }
+    let window = &bytes[..end];
+
+    if !window.contains(&0) && std::str::from_utf8(window).is_ok() {
+        "text/plain".to_string()
+    } else {
+        FALLBACK_MIME.to_string()
+    }
+}
+
+/// Disk extension for an asset the name could not type: the spelling that
+/// static servers and `file://` map back to the MIME, or
+/// [`FALLBACK_EXTENSION`] when the MIME has no obvious one.
+fn extension_for_mime(mime: &str) -> String {
+    if mime == "text/plain" {
+        "txt".to_string()
+    } else {
+        FALLBACK_EXTENSION.to_string()
+    }
 }
 
 /// Extension used for asset names: lowercase, `[a-z0-9]+` only, or
 /// [`FALLBACK_EXTENSION`] when nothing usable remains.
 pub fn asset_extension(path: &Path) -> String {
-    let raw = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default();
+    named_extension(path).unwrap_or_else(|| FALLBACK_EXTENSION.to_string())
+}
+
+/// The file name extension of `path` as the name itself spells it, or `None`
+/// when there is nothing usable to spell.
+///
+/// Unlike [`asset_extension`] this never substitutes the synthetic `bin`
+/// fallback: a path without an extension answers `None`, which is what lets
+/// [`asset_mime_and_extension`] tell "the name names a type" apart from "the
+/// name says nothing" — the synthetic `bin` must not silence the sniff.
+fn named_extension(path: &Path) -> Option<String> {
+    let raw = path.extension().and_then(|extension| extension.to_str())?;
     let cleaned: String = raw
         .chars()
         .filter(|character| character.is_ascii_alphanumeric())
@@ -253,9 +358,9 @@ pub fn asset_extension(path: &Path) -> String {
         .collect();
 
     if cleaned.is_empty() {
-        FALLBACK_EXTENSION.to_string()
+        None
     } else {
-        cleaned
+        Some(cleaned)
     }
 }
 
@@ -390,6 +495,104 @@ mod tests {
         assert_eq!(mime_for(Path::new("photo.jpeg")), "image/jpeg");
         assert_eq!(mime_for(Path::new("data.qqq")), FALLBACK_MIME);
         assert_eq!(mime_for(Path::new("README")), FALLBACK_MIME);
+    }
+
+    #[test]
+    fn a_name_only_lookup_never_sniffs_the_content() {
+        assert_eq!(mime_for(Path::new("LICENSE")), FALLBACK_MIME);
+        assert_eq!(mime_for(Path::new(".gitignore")), FALLBACK_MIME);
+        assert_eq!(mime_for(Path::new("data.qqq")), FALLBACK_MIME);
+    }
+
+    #[test]
+    fn extensionless_text_content_sniffs_as_plain_text() {
+        let mut table = AssetTable::new();
+
+        let hash = table.insert_bytes(
+            Path::new("LICENSE"),
+            b"GPL-3.0-only <https://spdx.org/licenses/GPL-3.0-only>".to_vec(),
+        );
+
+        let asset = table.get(&hash).expect("asset is registered");
+        assert_eq!(asset.mime, "text/plain");
+        assert_eq!(asset.extension, "txt");
+    }
+
+    #[test]
+    fn extensionless_binary_content_stays_octet_stream() {
+        let mut table = AssetTable::new();
+
+        let hash = table.insert_bytes(Path::new("payload"), [0u8, 159, 146, 150].to_vec());
+
+        let asset = table.get(&hash).expect("asset is registered");
+        assert_eq!(asset.mime, FALLBACK_MIME);
+        assert_eq!(asset.extension, FALLBACK_EXTENSION);
+    }
+
+    #[test]
+    fn unknown_extensions_sniff_the_content_too() {
+        let mut table = AssetTable::new();
+
+        let text = table.insert_bytes(Path::new("notes.qqq"), b"plain notes".to_vec());
+        let binary = table.insert_bytes(Path::new("blob.qqq"), [0u8, 1, 2].to_vec());
+
+        let text_asset = table.get(&text).expect("text asset");
+        assert_eq!(text_asset.mime, "text/plain");
+        assert_eq!(text_asset.extension, "txt");
+        let binary_asset = table.get(&binary).expect("binary asset");
+        assert_eq!(binary_asset.mime, FALLBACK_MIME);
+        assert_eq!(binary_asset.extension, FALLBACK_EXTENSION);
+    }
+
+    #[test]
+    fn known_extensions_are_never_overridden_by_the_content() {
+        let mut table = AssetTable::new();
+
+        let png = table.insert_bytes(Path::new("photo.png"), b"this is really text".to_vec());
+        let bin = table.insert_bytes(Path::new("payload.bin"), b"also text".to_vec());
+
+        let png_asset = table.get(&png).expect("png asset");
+        assert_eq!(png_asset.mime, "image/png");
+        assert_eq!(png_asset.extension, "png");
+        let bin_asset = table.get(&bin).expect("bin asset");
+        assert_eq!(bin_asset.mime, FALLBACK_MIME);
+        assert_eq!(bin_asset.extension, FALLBACK_EXTENSION);
+    }
+
+    #[test]
+    fn dotfiles_sniff_as_text() {
+        let mut table = AssetTable::new();
+
+        let hash = table.insert_bytes(Path::new(".gitignore"), b"target/\n".to_vec());
+
+        let asset = table.get(&hash).expect("asset is registered");
+        assert_eq!(asset.mime, "text/plain");
+        assert_eq!(asset.extension, "txt");
+    }
+
+    #[test]
+    fn the_sniff_window_bounds_the_inspection() {
+        let mut text_head = vec![b'a'; SNIFF_WINDOW_BYTES];
+        text_head.extend_from_slice(&[0, 1, 2, 3]);
+        let mut binary_head = vec![0u8; SNIFF_WINDOW_BYTES];
+        binary_head.extend_from_slice(b"the tail is text");
+
+        assert_eq!(sniffed_mime(&text_head), "text/plain");
+        assert_eq!(sniffed_mime(&binary_head), FALLBACK_MIME);
+    }
+
+    #[test]
+    fn a_window_cut_through_a_multibyte_sequence_is_not_binary() {
+        let mut head = vec![b'a'; SNIFF_WINDOW_BYTES - 1];
+        // 3 bytes of a multi-byte character straddling the window cut.
+        head.extend_from_slice("汉".as_bytes());
+
+        assert_eq!(sniffed_mime(&head), "text/plain");
+    }
+
+    #[test]
+    fn an_invalid_utf8_file_is_judged_as_it_is() {
+        assert_eq!(sniffed_mime(b"abc\xE4"), FALLBACK_MIME);
     }
 
     #[test]

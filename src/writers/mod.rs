@@ -665,11 +665,24 @@ mod tests {
     }
 
     #[test]
-    fn assets_without_a_usable_extension_still_get_a_name() {
+    fn assets_without_a_usable_extension_get_a_name_from_their_content() {
         let (table, hash) = table_with("README", b"text");
         let asset = table.get(&hash).expect("asset");
 
-        assert_eq!(asset_file_name(asset), format!("{hash}.bin"));
+        assert_eq!(
+            asset_file_name(asset),
+            format!("{hash}.txt"),
+            "text the name could not type is stored with the extension its MIME maps to"
+        );
+
+        let (table, hash) = table_with("payload", &[0u8, 1, 2]);
+        let asset = table.get(&hash).expect("asset");
+
+        assert_eq!(
+            asset_file_name(asset),
+            format!("{hash}.bin"),
+            "binary the name could not type keeps the fallback extension"
+        );
     }
 
     #[test]
