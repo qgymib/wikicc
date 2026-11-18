@@ -171,6 +171,16 @@
     padding: 14px 14px 20px;
   }
 
+  /* The viewer is the page on the phone: the window fills the viewport edge
+     to edge, without the frame the desktop window rounds. */
+  .viewer-window {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
 
   /* `.content` narrows its padding, so the banner follows it to stay exactly
      as wide as the article. */
@@ -234,6 +244,7 @@
   .sidebar,
   .inspector,
   .search-panel,
+  .viewer-backdrop,
   .skip-link {
     display: none;
   }

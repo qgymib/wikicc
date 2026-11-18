@@ -98,12 +98,13 @@ const IGNORED_OVERRIDE: &str = "/usr/bin/esbuild";
 /// pulls a large tree (its diagram chunks plus `elkjs`, `cytoscape`, `katex`).
 /// `katex` typesets math in the browser, which the source-text placeholder in
 /// the document only works with once the engine is bundled.
-const REQUIRED_MANIFESTS: [&str; 7] = [
+const REQUIRED_MANIFESTS: [&str; 8] = [
     "node_modules/minisearch/package.json",
     "node_modules/d3-force/package.json",
     "node_modules/d3-selection/package.json",
     "node_modules/d3-zoom/package.json",
     "node_modules/d3-drag/package.json",
+    "node_modules/@panzoom/panzoom/package.json",
     "node_modules/mermaid/package.json",
     "node_modules/katex/package.json",
 ];
@@ -159,7 +160,7 @@ const STAGED_TEXT_ASSETS: [(&str, &str); 2] = [
 /// sequence. The split itself is purely mechanical: no rule moved relative
 /// to any other, and joining the layers reproduces the single-file sheet's
 /// bytes.
-const CSS_LAYERS: [&str; 16] = [
+const CSS_LAYERS: [&str; 17] = [
     "base.css",
     "shell.css",
     "rail-sidebar.css",
@@ -175,6 +176,7 @@ const CSS_LAYERS: [&str; 16] = [
     "lock-page-form.css",
     "inspector.css",
     "search-panel.css",
+    "content-viewer.css",
     "responsive.css",
 ];
 

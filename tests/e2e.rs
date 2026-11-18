@@ -817,14 +817,28 @@ fn the_search_panel_opens_as_a_centered_dialog() {
     assert_eq!(declaration(panel, "margin"), Some("auto"));
 
     // Two limits, whichever is smaller: the pixel ceiling is what a large
-    // screen gets, the viewport share is what a mid-size screen gets. Both
-    // are pinned here so growing the dialog cannot silently shrink again.
-    let width = declaration(panel, "width").expect("panel width");
+    // screen gets, the viewport share is what a mid-size screen gets. The
+    // limits live in the sheet's shared tokens — the content viewer's window
+    // takes the same fields — and both are pinned here so growing the dialog
+    // cannot silently shrink again.
+    assert_eq!(
+        declaration(panel, "width"),
+        Some("var(--dialog-width)"),
+        "the dialog takes the shared dialog width"
+    );
+    assert_eq!(
+        declaration(panel, "height"),
+        Some("var(--dialog-height)"),
+        "the dialog takes the shared dialog height"
+    );
+
+    let tokens = rule_of(css, ":root {");
+    let width = declaration(tokens, "--dialog-width").expect("dialog width token");
     assert!(
         width.starts_with("min(") && width.contains("1920px") && width.contains("98vw"),
         "the dialog spans nearly the whole viewport: {width}"
     );
-    let height = declaration(panel, "height").expect("panel height");
+    let height = declaration(tokens, "--dialog-height").expect("dialog height token");
     assert!(
         height.starts_with("min(") && height.contains("1155px") && height.contains("97vh"),
         "the dialog fills nearly all of the viewport's height: {height}"
@@ -881,6 +895,51 @@ fn the_search_panel_opens_as_a_centered_dialog() {
     );
     assert_eq!(declaration(panel, "height"), Some("calc(100dvh - 12px)"));
     assert_eq!(declaration(panel, "border-radius"), Some("12px"));
+}
+
+#[test]
+fn the_viewer_window_shares_the_dialog_size() {
+    // The viewer is the other centered dialog: it takes the search panel's
+    // own size fields, so the window a diagram opens in is exactly the window
+    // a search opens in, and growing one cannot leave the other behind.
+    let css = SHELL_CSS;
+    let window = rule_of(css, ".viewer-window {");
+
+    assert_eq!(
+        declaration(window, "width"),
+        Some("min(var(--dialog-width), 100%)"),
+        "the viewer window takes the shared dialog width, capped by its backdrop"
+    );
+    assert_eq!(
+        declaration(window, "height"),
+        Some("min(var(--dialog-height), 100%)"),
+        "the viewer window takes the shared dialog height, capped by its backdrop"
+    );
+
+    // The backdrop keeps no padding of its own: the shared size's viewport
+    // margins are the breathing room, and a padded backdrop would cap the
+    // window below the search dialog's reach on every ordinary screen.
+    let backdrop = rule_of(css, ".viewer-backdrop {");
+    assert_eq!(
+        declaration(backdrop, "padding"),
+        Some("0"),
+        "the backdrop holds the window at the shared dialog's exact box"
+    );
+
+    // The phone keeps the viewer's own full-bleed form: it is the page there,
+    // not a dialog on it.
+    let drawer = media_block(css, "max-width: 640px");
+    let window = rule_of(drawer, ".viewer-window {");
+    assert_eq!(
+        declaration(window, "width"),
+        Some("100vw"),
+        "on the phone the viewer fills the viewport edge to edge"
+    );
+    assert_eq!(
+        declaration(window, "height"),
+        Some("100dvh"),
+        "the phone's dynamic viewport height wins the double declaration"
+    );
 }
 
 #[test]

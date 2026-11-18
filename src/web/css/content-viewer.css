@@ -1,0 +1,121 @@
+/* ---------- content viewer ---------- */
+
+/* The lightbox the hover toolbar opens: a scrim over the whole page and one
+   centered window that carries the content a provider mounts onto it. The
+   window is a flex column — a heading row with the actions on the right, and
+   the stage below — so a header of any width still leaves the stage the
+   whole rest of the room.
+
+   The backdrop sits above every overlay the page already has: the preview
+   popover at 45, the search dialog at 30, the inspector at 20. It stays
+   below the accessibility skip link at 60, whose one job is to be reachable
+   over anything. The body attribute the viewer sets while it is open takes
+   the page's scroll away: the picture is the page for the moment, and
+   wheeling over it zooms instead of scrolls. */
+
+body[data-viewer="open"] {
+  overflow: hidden;
+}
+
+.viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* No padding of its own: the shared dialog size already keeps the viewport
+     margins, and a padded backdrop would cap the window below the search
+     dialog's reach on every ordinary screen. */
+  padding: 0;
+  background: rgba(6, 9, 13, 0.62);
+  backdrop-filter: blur(6px);
+  animation: viewer-fade 160ms ease;
+}
+
+@keyframes viewer-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.viewer-window {
+  display: flex;
+  flex-direction: column;
+  /* The search dialog's own size fields: the window a diagram opens in is
+     the window a search opens in. The 100% terms are the usual cap — the
+     backdrop's box excludes the classic scrollbar, and the viewport shares
+     must not push past it. */
+  width: min(var(--dialog-width), 100%);
+  height: min(var(--dialog-height), 100%);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+  animation: viewer-rise 160ms ease;
+}
+
+@keyframes viewer-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-title {
+  /* The heading takes the free space, so the actions line up on the right
+     however many of them a provider adds. */
+  margin: 0 auto 0 0;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.viewer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* The stage is the canvas the transform engine answers to: it hides whatever
+   the picture grows past, and centers the picture while it fits. */
+.viewer-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The engine moves this element; its origin is its own center, so a scale
+   about it keeps the picture centered on the stage. */
+.viewer-content {
+  transform-origin: 50% 50%;
+  line-height: 0;
+}
+
+/* mermaid caps its picture with an inline `max-width`; the viewer shows the
+   picture at the size the diagram engine laid out and lets the transform
+   scale it. A stylesheet rule with a priority beats an inline one. */
+.viewer-content svg {
+  max-width: none !important;
+  display: block;
+}

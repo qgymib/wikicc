@@ -9,13 +9,14 @@
   z-index: 30;
   inset: 0;
   margin: auto;
-  /* Two limits, whichever is smaller: the pixel ceiling is what a large
-     screen gets (1920x1155, the old 1600x1100 grown by a fifth in width and
-     a twentieth in height), the viewport share is what a mid-size screen
-     gets. Only 1vw and 1.5vh of margin is left on each side, so the dialog
-     nearly touches the edge before the breakpoints take over. */
-  width: min(1920px, 98vw);
-  height: min(1155px, 97vh);
+  /* One size shared with the content viewer's window: two limits, whichever
+     is smaller — the pixel ceiling is what a large screen gets (1920x1155,
+     the old 1600x1100 grown by a fifth in width and a twentieth in height),
+     the viewport share is what a mid-size screen gets. Only 1vw and 1.5vh of
+     margin is left on each side, so the dialog nearly touches the edge before
+     the breakpoints take over. */
+  width: var(--dialog-width);
+  height: var(--dialog-height);
   /* One reading line, top to bottom: the question the reader typed, the
     places it is answered, and the document one of those places opens. The
     field takes its own height and the other two split the rest a third to

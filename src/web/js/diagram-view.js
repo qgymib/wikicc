@@ -14,6 +14,7 @@
 import mermaid from "mermaid";
 
 import * as Diagrams from "./diagrams.js";
+import { viewerView } from "./viewer-view.js";
 
 /** Attribute holding the author's source while the element shows an SVG. */
 const SOURCE_ATTRIBUTE = "data-source";
@@ -70,6 +71,12 @@ export function renderDiagrams(root, theme) {
   return mermaid
     .run({ nodes: nodes, suppressErrors: true })
     .then(function () {
+      // Every surface that draws diagrams comes through here, so the
+      // viewer's hover toolbar is armed in the one place, after the engine
+      // has run: a block without a rendered picture matches no provider and
+      // is left alone, and the toolbar an earlier render carried is
+      // rebuilt, because the engine's own replacements took it.
+      viewerView.armHover(nodes);
       return true;
     })
     .catch(function (error) {

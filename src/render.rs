@@ -609,7 +609,7 @@ mod tests {
         // every layer's section marker must appear in the staged sheet
         // strictly after the previous one. A reordered declaration fails
         // here; a layer the declaration misses fails the build itself.
-        const LAYER_MARKERS: [&str; 16] = [
+        const LAYER_MARKERS: [&str; 17] = [
             "/* wikicc reader shell", // base.css carries no section marker
             "/* ---------- shell ---------- */",
             "/* ---------- rail and sidebar ---------- */",
@@ -625,6 +625,7 @@ mod tests {
             "/* ---------- lock page form ---------- */",
             "/* ---------- inspector ---------- */",
             "/* ---------- search panel ---------- */",
+            "/* ---------- content viewer ---------- */",
             "/* ---------- responsive ---------- */",
         ];
 
@@ -717,6 +718,7 @@ mod tests {
         for (section, name) in [
             ("dependencies", "minisearch"),
             ("dependencies", "mermaid"),
+            ("dependencies", "@panzoom/panzoom"),
             ("devDependencies", "esbuild"),
         ] {
             let version = manifest[section][name]

@@ -28,6 +28,12 @@
      center on the viewport, so the paddings live in tokens both sides read. */
   --content-pad-top: 44px;
   --content-pad-bottom: 120px;
+  /* The two centered dialogs — the search panel and the content viewer's
+     window — share one size: the pixel ceiling is what a large screen gets,
+     the viewport share what a mid-size one gets. Both take these fields, so
+     one window cannot shrink behind the other's back. */
+  --dialog-width: min(1920px, 98vw);
+  --dialog-height: min(1155px, 97vh);
   /* The panel column is one surface painted from two stops, and its left rule
      has a token of its own. */
   --shell-top: rgba(17, 23, 31, 0.55);

@@ -31,6 +31,11 @@ their chapter outline.
   next one.
 - **Code blocks**: a button on every code block copies its text to the
   clipboard; inline code, diagrams and formulas are left alone.
+- **Content viewer**: hovering a rendered diagram frames it and shows one
+  button that lifts the picture into a large lightbox, where it can be zoomed,
+  panned and reset to its fitted state; Escape, the backdrop or the close
+  button put it away. The viewer is built to carry other kinds of content
+  later, each with actions of its own.
 - **Theme** toggle (light/dark) and a layout that stays usable down to phone
   width.
 

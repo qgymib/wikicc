@@ -15,16 +15,55 @@
   overflow-x: auto;
 }
 
-/* The engine marks the element once it has replaced the source with an SVG. */
+/* The engine marks the element once it has replaced the source with an SVG.
+   From then on the block is also the viewer's hover surface: a positioning
+   context for the corner toolbar, and a block whose rule line returns on
+   hover — the picture the reader is pointing at, framed while they are
+   pointing at it. The toolbar is a descendant, so the hover and the
+   focus-within that show it follow the block itself, the way a pointer
+   moving onto the button is still a hover over the diagram. */
 .doc-body pre.mermaid[data-processed="true"] {
   padding: 0;
   border-color: transparent;
   background: none;
+  position: relative;
+  transition: border-color 150ms ease;
+}
+
+.doc-body pre.mermaid[data-processed="true"]:hover,
+.doc-body pre.mermaid[data-processed="true"]:focus-within {
+  border-color: var(--border);
 }
 
 .doc-body pre.mermaid svg {
   max-width: 100%;
   height: auto;
+}
+
+/* The viewer's corner toolbar: one button that lifts the diagram into the
+   lightbox. It takes no room in the flow and answers to no press while it
+   is invisible, so a reader crossing the diagram with the pointer never
+   lands on a button they cannot see; hover and focus bring it back. */
+.viewer-hover {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.doc-body pre.mermaid:hover .viewer-hover,
+.doc-body pre.mermaid:focus-within .viewer-hover {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The shared .icon-button shape, over the diagram: an opaque disc, so the
+   button reads the same over any picture behind it. */
+.viewer-open {
+  background: var(--bg-elevated);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
 }
 
 .doc-body table {
