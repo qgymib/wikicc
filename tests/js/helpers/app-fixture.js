@@ -305,8 +305,17 @@ export function lazyCorpus() {
  * session so a test can read what the reader wrote. The object handed to
  * `body` exposes the pieces a test asserts on: the headings the session can
  * find by id, the address bar, and the frame queue.
+ *
+ * The install is deliberately synchronous: everything `body` does before its
+ * first `await` runs while the fake page is up, and anything `body` throws —
+ * a failed assertion, most of all — propagates to the caller instead of
+ * becoming a rejection nobody holds. An `async` wrapper would turn that
+ * throw into a rejection the bridge's `--test-force-exit` exits before the
+ * runner can report, and a failing test would pass. A `body` that needs to
+ * settle promises returns a promise (or is itself `async`), and the caller
+ * that awaits `withSession` waits for it.
  */
-export async function withSession(options, body) {
+export function withSession(options, body) {
   // The search panel debounces its query, so the timers it schedules are kept
   // for the test to run instead of waiting for them.
   const timers = createFakeTimers();

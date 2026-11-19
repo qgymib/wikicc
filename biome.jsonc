@@ -42,6 +42,15 @@
         // sloppy mode, where this rule's bug class lives.
         "noInnerDeclarations": "off"
       },
+      "nursery": {
+        // A floating promise is how a test body's failed assertion became a
+        // rejection the bridge's `--test-force-exit` exits before reporting:
+        // an async harness the callers did not await swallowed the failure
+        // and the test passed. The rule is the static guard for that class.
+        // The reader's deliberate fire-and-forget calls — the diagram passes
+        // that swallow their own failures — are marked `void`.
+        "noFloatingPromises": "error"
+      },
       "suspicious": {
         // `height: 100vh` followed by `height: 100dvh` is a deliberate
         // fallback cascade for browsers without dynamic viewport units.

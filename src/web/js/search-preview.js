@@ -297,7 +297,7 @@ export function createSearchPreview(options) {
     // Diagrams are drawn after insertion — the body module's one deferred
     // step, because the engine measures its labels with the layout — and
     // asynchronously, so the text is readable while the pictures arrive.
-    DocBody.drawDiagrams(body, theme());
+    void DocBody.drawDiagrams(body, theme());
 
     SearchHighlight.scrollToSlot(slots, entry.hit);
   }

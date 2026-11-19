@@ -462,7 +462,7 @@ export function createPreviewView(options) {
       return;
     }
     DiagramView.resetDiagrams(panel.body());
-    DiagramView.renderDiagrams(panel.body(), theme());
+    void DiagramView.renderDiagrams(panel.body(), theme());
   }
 
   listen();

@@ -168,8 +168,8 @@ export function createDocRender(deps) {
     // to its caller, because the engine measures label sizes with the DOM,
     // which is impossible for a detached subtree. The call is asynchronous and
     // swallows its own failures, so the document is already readable when the
-    // SVGs replace their source blocks.
-    DocBody.drawDiagrams(body, currentTheme());
+    // SVGs replace their source blocks. `void` says the drop is deliberate.
+    void DocBody.drawDiagrams(body, currentTheme());
 
     // Formulas are typeset in the same insertion-time contract; the call is
     // synchronous and swallows its own failures.
@@ -195,7 +195,7 @@ export function createDocRender(deps) {
     // reset to its source and drawn again. Only the diagrams are touched: the
     // rest of the document keeps its scroll position, table sort and filters.
     DiagramView.resetDiagrams(body);
-    DiagramView.renderDiagrams(body, currentTheme());
+    void DiagramView.renderDiagrams(body, currentTheme());
   }
 
   return {

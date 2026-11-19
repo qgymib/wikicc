@@ -365,29 +365,26 @@ test("a sealed document answers its title as a locked row and its body with noth
   });
 });
 
-test("opening a locked result lands on the lock page with no passage to mark", async () => {
-  await withSession(
-    { hash: "#/doc/index.md", docs: lockedDocs() },
-    (session) => {
-      startSession();
+test("opening a locked result lands on the lock page with no passage to mark", () => {
+  withSession({ hash: "#/doc/index.md", docs: lockedDocs() }, (session) => {
+    startSession();
 
-      askGlobal(session, "intro");
-      searchInput(session.shell).fire("keydown", { key: "Enter" });
+    askGlobal(session, "intro");
+    searchInput(session.shell).fire("keydown", { key: "Enter" });
 
-      // The pick changed the address; the browser's own hashchange is what
-      // turns it into a render, which follow models here.
-      assert.equal(session.location.hash, "#/doc/guide/intro.md");
-      session.follow(session.location.hash);
+    // The pick changed the address; the browser's own hashchange is what
+    // turns it into a render, which follow models here.
+    assert.equal(session.location.hash, "#/doc/guide/intro.md");
+    session.follow(session.location.hash);
 
-      const article = session.shell.get("doc-article");
-      assert.match(
-        article.children[1].className,
-        /doc-locked-title/,
-        "the row's one action opens the document at its lock",
-      );
-      assert.equal(session.shell.get("search-panel").hidden, true);
-    },
-  );
+    const article = session.shell.get("doc-article");
+    assert.match(
+      article.children[1].className,
+      /doc-locked-title/,
+      "the row's one action opens the document at its lock",
+    );
+    assert.equal(session.shell.get("search-panel").hidden, true);
+  });
 });
 
 test("the opened body answers the query the sealed title could not", async () => {

@@ -194,7 +194,7 @@ export function createPreviewRoles(deps) {
     // tables right after the markup exists — and the diagrams are drawn for
     // the theme in effect, the step that measures against the layout.
     DocBody.fillDocBody(panel.body(), preview.html, { enhanceTables: true });
-    DocBody.drawDiagrams(panel.body(), theme());
+    void DocBody.drawDiagrams(panel.body(), theme());
     DocBody.drawMath(panel.body());
 
     show(link);

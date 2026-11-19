@@ -91,8 +91,8 @@ function plainClick() {
   return { button: 0, preventDefault() {} };
 }
 
-test("the panel lists the payload's tags and starts with nothing unfolded", async () => {
-  await withSession({ hash: "#/doc/index.md", tags: TAGS }, (session) => {
+test("the panel lists the payload's tags and starts with nothing unfolded", () => {
+  withSession({ hash: "#/doc/index.md", tags: TAGS }, (session) => {
     startSession();
 
     const rows = tagRows(session.shell);
@@ -121,8 +121,8 @@ test("the panel lists the payload's tags and starts with nothing unfolded", asyn
   });
 });
 
-test("a payload without tags renders the empty message", async () => {
-  await withSession({ hash: "#/doc/index.md" }, (session) => {
+test("a payload without tags renders the empty message", () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
     startSession();
 
     const panel = session.shell.get("tags");
@@ -136,8 +136,8 @@ test("a payload without tags renders the empty message", async () => {
   });
 });
 
-test("selecting a tag filters the document list and unfolds it in the panel", async () => {
-  await withSession({ hash: "#/doc/index.md", tags: TAGS }, (session) => {
+test("selecting a tag filters the document list and unfolds it in the panel", () => {
+  withSession({ hash: "#/doc/index.md", tags: TAGS }, (session) => {
     startSession();
 
     tagRows(session.shell)[0].fire("click", plainClick());
@@ -168,8 +168,8 @@ test("selecting a tag filters the document list and unfolds it in the panel", as
   });
 });
 
-test("a navigation keeps the filter the reader chose", async () => {
-  await withSession({ hash: "#/doc/index.md", tags: TAGS }, (session) => {
+test("a navigation keeps the filter the reader chose", () => {
+  withSession({ hash: "#/doc/index.md", tags: TAGS }, (session) => {
     startSession();
 
     tagRows(session.shell)[0].fire("click", plainClick());
@@ -188,8 +188,8 @@ test("a navigation keeps the filter the reader chose", async () => {
   });
 });
 
-test("a chip in the article answers like the panel's row", async () => {
-  await withSession(
+test("a chip in the article answers like the panel's row", () => {
+  withSession(
     { hash: "#/doc/index.md", docs: taggedDocs, tags: TAGS },
     (session) => {
       startSession();
@@ -234,8 +234,8 @@ test("a chip in the article answers like the panel's row", async () => {
   );
 });
 
-test("a keyboard press answers the chip the same way a click does", async () => {
-  await withSession(
+test("a keyboard press answers the chip the same way a click does", () => {
+  withSession(
     { hash: "#/doc/index.md", docs: taggedDocs, tags: TAGS },
     (session) => {
       startSession();
@@ -255,8 +255,8 @@ test("a keyboard press answers the chip the same way a click does", async () => 
   );
 });
 
-test("a press that does not start on a chip leaves everything alone", async () => {
-  await withSession(
+test("a press that does not start on a chip leaves everything alone", () => {
+  withSession(
     { hash: "#/doc/index.md", docs: taggedDocs, tags: TAGS },
     (session) => {
       startSession();
@@ -284,8 +284,8 @@ test("a press that does not start on a chip leaves everything alone", async () =
   );
 });
 
-test("the rail's switch trades the window's tags view", async () => {
-  await withSession({ hash: "#/doc/index.md", tags: TAGS }, (session) => {
+test("the rail's switch trades the window's tags view", () => {
+  withSession({ hash: "#/doc/index.md", tags: TAGS }, (session) => {
     startSession();
 
     const toggle = session.shell.get("tags-toggle");
