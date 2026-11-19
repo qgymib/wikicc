@@ -148,10 +148,3 @@ are decremented to match:
   and is not written to the artifact at all;
 - an asset shared with a public document is written once, for the public
   reference, and the decrypted body carries its own embedded copy besides.
-
-## Performance
-
-The 600,000-iteration PBKDF2 runs once per sealed document. Derivation takes
-seconds under an unoptimized profile, so `sha2` and `pbkdf2` compile at
-opt-level 3 in the dev and test profiles — a release build derives in
-milliseconds.

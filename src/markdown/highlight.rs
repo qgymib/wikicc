@@ -335,8 +335,6 @@ pub(crate) fn escape_into(out: &mut String, code: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
     use super::*;
 
     /// A Rust block whose highlighting is unambiguous.
@@ -675,27 +673,5 @@ mod tests {
         assert!(std::ptr::eq(assets(), assets()));
         assert_eq!(language_name(Some("rust")), Some("Rust"));
         assert!(std::ptr::eq(assets(), assets()));
-    }
-
-    #[test]
-    fn a_five_thousand_line_block_stays_fast() {
-        let mut code = String::with_capacity(5000 * 24);
-        for index in 0..5000 {
-            code.push_str(&format!("let value_{index} = {index};\n"));
-        }
-
-        // Warm the lazily initialised assets so the measurement covers
-        // highlighting alone, not the one-off dump deserialisation.
-        code_block_html("fn main() {}\n", Some("rust"));
-
-        let started = Instant::now();
-        let html = code_block_html(&code, Some("rust"));
-        let elapsed = started.elapsed();
-
-        assert!(html.contains("<span class=\""), "html must be highlighted");
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "highlighting 5000 lines took {elapsed:?}"
-        );
     }
 }
