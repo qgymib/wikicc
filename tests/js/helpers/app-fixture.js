@@ -43,11 +43,13 @@ const SHELL_IDS = [
   "sidebar-collapse",
   "graph-local-toggle",
   "graph-global-toggle",
+  "backlinks-toggle",
   "outline-toggle",
   "drawer-backdrop",
   "theme-toggle",
   "doc-list",
   "toc",
+  "backlinks",
   "graph-local",
   "graph-global",
   "graph-fit-local",
@@ -306,11 +308,19 @@ export async function withSession(options, body) {
   const payloadElement = fakeElement("script");
   payloadElement.id = "wikicc-payload";
   // `options.docs` swaps the embedded payload's documents (a test that needs
-  // a sealed document builds one here); `options.payload` replaces the whole
-  // payload, which is how a pages test seeds its own manifest.
-  const embedded = options.docs
-    ? Object.assign(payload(), { docs: options.docs })
-    : null;
+  // a sealed document builds one here) and `options.edges` its link graph;
+  // `options.payload` replaces the whole payload, which is how a pages test
+  // seeds its own manifest.
+  let embedded = null;
+  if (options.docs || options.edges) {
+    embedded = payload();
+    if (options.docs) {
+      embedded.docs = options.docs;
+    }
+    if (options.edges) {
+      embedded.edges = options.edges;
+    }
+  }
   payloadElement.textContent = JSON.stringify(
     embedded || options.payload || (options.lazy ? lazyManifest() : payload()),
   );

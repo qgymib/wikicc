@@ -18,6 +18,7 @@
   #sidebar-collapse,
   #graph-local-toggle,
   #graph-global-toggle,
+  #backlinks-toggle,
   #outline-toggle {
     display: inline-flex;
   }

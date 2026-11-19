@@ -29,6 +29,7 @@
  * exports the controller so the same functions stay testable in isolation.
  */
 import * as AssetLinks from "./asset-links.js";
+import * as Backlinks from "./backlinks.js";
 import * as Banner from "./banner.js";
 import * as DocList from "./doc-list.js";
 import * as DocStore from "./doc-store.js";
@@ -192,6 +193,7 @@ export function start() {
   var themeToggle = document.getElementById("theme-toggle");
   var graphLocalToggle = document.getElementById("graph-local-toggle");
   var graphGlobalToggle = document.getElementById("graph-global-toggle");
+  var backlinksToggle = document.getElementById("backlinks-toggle");
   var outlineToggle = document.getElementById("outline-toggle");
   // The floating window the graph's two panels live in: a press outside it
   // folds the window (see `createPanels`).
@@ -243,6 +245,19 @@ export function start() {
     container: document.getElementById("toc"),
     onNavigate: function (id, anchor) {
       navigation.navigate(id, anchor);
+    },
+  });
+
+  // What links here: the reverse half of the graph the build resolved. The
+  // panel is the floating window's third view, and its list answers the
+  // document the reader is on — refreshed by the navigation cycle, whether
+  // or not the window is showing.
+  var backlinks = Backlinks.createBacklinks({
+    container: document.getElementById("backlinks"),
+    docs: docs,
+    edges: Array.isArray(bundle.edges) ? bundle.edges : [],
+    onNavigate: function (id) {
+      navigation.navigate(id, null);
     },
   });
 
@@ -351,6 +366,7 @@ export function start() {
     backdrop: backdrop,
     graphLocalToggle: graphLocalToggle,
     graphGlobalToggle: graphGlobalToggle,
+    backlinksToggle: backlinksToggle,
     session: session,
     globalGraph: globalGraph,
     inspector: inspector,
@@ -364,6 +380,7 @@ export function start() {
     localGraph: localGraph,
     globalGraph: globalGraph,
     toc: toc,
+    backlinks: backlinks,
     banner: banner,
     article: article,
     content: content,

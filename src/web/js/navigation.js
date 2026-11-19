@@ -25,6 +25,10 @@ export function createNavigation(deps) {
   var localGraph = deps.localGraph;
   var globalGraph = deps.globalGraph;
   var toc = deps.toc;
+  // The backlinks panel answers the document on screen: every navigation
+  // that changes the document refreshes it, whether or not its view of the
+  // floating window is the one showing.
+  var backlinks = deps.backlinks;
   var banner = deps.banner;
   var article = deps.article;
   var content = deps.content;
@@ -273,6 +277,10 @@ export function createNavigation(deps) {
         docRender.renderDocument(doc);
       }
       toc.render(doc.toc, doc.id);
+      // The reverse references are public build data — the links were
+      // resolved before any body was sealed — so a locked document lists
+      // what points at it the same as an open one.
+      backlinks.render(doc.id);
       document.title = doc.title ? doc.title + " · " + siteTitle : siteTitle;
     }
 
@@ -343,6 +351,10 @@ export function createNavigation(deps) {
       empty.textContent = "This site has no documents.";
       article.appendChild(empty);
       docList.render(null, null);
+      // No document is on screen, so the panel answers nothing: the empty
+      // panel is a cleared one, without a message about a document that
+      // does not exist.
+      backlinks.render(null);
       return;
     }
 

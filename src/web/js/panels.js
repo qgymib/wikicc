@@ -1,13 +1,13 @@
 /**
- * The layout panels: the sidebar's two views, the graph panel's two views,
- * and the phone's drawer.
+ * The layout panels: the sidebar's two views, the floating window's three
+ * views, and the phone's drawer.
  *
  * Every panel is one body attribute the stylesheet answers to, and the
  * switches around it — the rail's, the graph's, the drawer's backdrop — are
  * synced by the setters that surround each write, so a screen reader hears
  * the same answer whichever switch asked. The sidebar's view and its
  * visibility are the reader's own preferences and travel through the
- * session; the graph's are the page's own for this visit only.
+ * session; the floating window's are the page's own for this visit only.
  *
  * Pure wiring over the attributes: nothing here renders content.
  */
@@ -22,6 +22,7 @@ export function createPanels(deps) {
   var backdrop = deps.backdrop;
   var graphLocalToggle = deps.graphLocalToggle;
   var graphGlobalToggle = deps.graphGlobalToggle;
+  var backlinksToggle = deps.backlinksToggle;
   var session = deps.session;
   var globalGraph = deps.globalGraph;
   var inspector = deps.inspector;
@@ -130,16 +131,20 @@ export function createPanels(deps) {
   }
 
   /**
-   * The graph view currently selected, and whether its panel is showing.
+   * The floating window's view currently selected, and whether it is showing.
    *
    * The view is one body attribute the stylesheet answers to, and the other
    * is the one that folds the panel column; the switches read both through
    * here, so a screen reader hears the same answer whichever switch asked.
+   * Three views share the window: the two graphs and the backlinks list —
+   * anything else reads as the local graph, the state a reader starts in.
    */
   function currentGraphView() {
-    return document.body.getAttribute("data-graph-view") === "global"
-      ? "global"
-      : "local";
+    var view = document.body.getAttribute("data-graph-view");
+    if (view === "global" || view === "backlinks") {
+      return view;
+    }
+    return "local";
   }
 
   function graphVisible() {
@@ -147,12 +152,12 @@ export function createPanels(deps) {
   }
 
   /**
-   * Point every graph switch at the state it now offers.
+   * Point every window switch at the state it now offers.
    *
-   * Each switch speaks for the view it selects, not for the panel column as a
+   * Each switch speaks for the view it selects, not for the window as a
    * whole: its expanded state says whether that view is the one showing, and
    * its label offers what a press would do — bring the view up, or put the
-   * column away when the view is already up.
+   * window away when the view is already up.
    */
   function syncGraphButtons() {
     var view = currentGraphView();
@@ -179,20 +184,34 @@ export function createPanels(deps) {
       graphGlobalToggle.setAttribute("aria-label", globalLabel);
       graphGlobalToggle.setAttribute("title", globalLabel);
     }
+
+    var backlinksLit = view === "backlinks" && visible;
+    var backlinksLabel = backlinksLit ? "Hide backlinks" : "Show backlinks";
+    if (backlinksToggle) {
+      backlinksToggle.setAttribute(
+        "aria-expanded",
+        backlinksLit ? "true" : "false",
+      );
+      backlinksToggle.setAttribute("aria-label", backlinksLabel);
+      backlinksToggle.setAttribute("title", backlinksLabel);
+    }
   }
 
   /**
-   * Select the view the graph panel shows.
+   * Select the view the floating window shows.
    *
    * The attribute is the state the stylesheet answers to; showing a view
-   * always unfolds the floating window, and the first look at the global
-   * view spends its layout — a panel never shown has never been laid out
-   * (see `createGlobalGraph`).
+   * always unfolds the window, and the first look at the global view spends
+   * its layout — a panel never shown has never been laid out (see
+   * `createGlobalGraph`). The backlinks list is plain DOM the navigation
+   * cycle keeps current, so its view needs nothing on the way in.
    */
   function setGraphView(view) {
     if (view === "global") {
       document.body.setAttribute("data-graph-view", "global");
       globalGraph.refresh();
+    } else if (view === "backlinks") {
+      document.body.setAttribute("data-graph-view", "backlinks");
     } else {
       document.body.setAttribute("data-graph-view", "local");
     }
@@ -249,10 +268,17 @@ export function createPanels(deps) {
     ) {
       return true;
     }
-    return Boolean(
+    if (
       graphGlobalToggle &&
-        typeof graphGlobalToggle.contains === "function" &&
-        graphGlobalToggle.contains(node),
+      typeof graphGlobalToggle.contains === "function" &&
+      graphGlobalToggle.contains(node)
+    ) {
+      return true;
+    }
+    return Boolean(
+      backlinksToggle &&
+        typeof backlinksToggle.contains === "function" &&
+        backlinksToggle.contains(node),
     );
   }
 
@@ -337,7 +363,7 @@ export function createPanels(deps) {
   }
 
   /**
-   * One gesture for a graph's switch: bring its view up, or — the view
+   * One gesture for a window's switch: bring its view up, or — the view
    * already showing — put the floating window away. The choice is the
    * page's own for this visit only; no record is kept across a reload.
    */
@@ -358,6 +384,12 @@ export function createPanels(deps) {
   if (graphGlobalToggle) {
     graphGlobalToggle.addEventListener("click", function () {
       selectGraph("global");
+    });
+  }
+
+  if (backlinksToggle) {
+    backlinksToggle.addEventListener("click", function () {
+      selectGraph("backlinks");
     });
   }
 

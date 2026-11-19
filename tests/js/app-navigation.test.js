@@ -24,6 +24,7 @@ import {
   startSession,
   activeEntry,
   countLinks,
+  lockedDocs,
   searchInput,
   searchParts,
   keydown,
@@ -275,4 +276,73 @@ test("a pages session lands the search's passage when the document arrives", asy
       "the reader is brought to the passage",
     );
   });
+});
+
+test("every navigation refreshes the backlinks panel", async () => {
+  withSession(
+    {
+      hash: "#/doc/index.md",
+      edges: [
+        { from: "index.md", to: "guide/intro.md" },
+        { from: "guide/intro.md", to: "index.md" },
+        { from: "guide/intro.md", to: "index.md" },
+      ],
+    },
+    (session) => {
+      startSession();
+
+      const panel = session.shell.get("backlinks");
+      assert.equal(
+        countLinks(panel),
+        1,
+        "the page the reader opened lists what points at it",
+      );
+
+      session.follow("#/doc/guide/intro.md");
+      assert.equal(
+        countLinks(panel),
+        1,
+        "the panel answers the document the reader is on now",
+      );
+
+      // The list is links like any other view's: a plain left click follows
+      // the route instead of the browser.
+      panel.children[0].children[0].children[0].fire("click", {
+        button: 0,
+        preventDefault() {},
+      });
+      assert.equal(
+        session.location.hash,
+        "#/doc/index.md",
+        "following a backlink navigates to its source",
+      );
+    },
+  );
+});
+
+test("a locked document still lists what points at it", async () => {
+  withSession(
+    {
+      hash: "#/doc/index.md",
+      docs: lockedDocs(),
+      edges: [{ from: "index.md", to: "guide/intro.md" }],
+    },
+    (session) => {
+      startSession();
+
+      const panel = session.shell.get("backlinks");
+      assert.equal(
+        countLinks(panel),
+        0,
+        "the public page carries no edge into it",
+      );
+
+      session.follow("#/doc/guide/intro.md");
+      assert.equal(
+        countLinks(panel),
+        1,
+        "the sealed page lists its sources: the graph was resolved before any body was sealed",
+      );
+    },
+  );
 });

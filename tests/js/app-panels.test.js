@@ -297,6 +297,7 @@ test("the graph starts folded away and its switches say so", async () => {
     const body = session.doc.body;
     const local = session.shell.get("graph-local-toggle");
     const global = session.shell.get("graph-global-toggle");
+    const backlinks = session.shell.get("backlinks-toggle");
     const outline = session.shell.get("outline-toggle");
 
     // The floating window waits for a switch: the local view is the one
@@ -307,6 +308,8 @@ test("the graph starts folded away and its switches say so", async () => {
     assert.equal(local.getAttribute("aria-label"), "Show local graph");
     assert.equal(global.getAttribute("aria-expanded"), "false");
     assert.equal(global.getAttribute("aria-label"), "Show global graph");
+    assert.equal(backlinks.getAttribute("aria-expanded"), "false");
+    assert.equal(backlinks.getAttribute("aria-label"), "Show backlinks");
     assert.equal(
       outline.getAttribute("aria-label"),
       "Show outline panel",
@@ -502,5 +505,80 @@ test("the global view's window folds on a press outside it too", async () => {
     );
     assert.equal(global.getAttribute("aria-expanded"), "false");
     assert.equal(global.getAttribute("aria-label"), "Show global graph");
+  });
+});
+
+test("the backlinks switch is the floating window's third view", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const local = session.shell.get("graph-local-toggle");
+    const global = session.shell.get("graph-global-toggle");
+    const backlinks = session.shell.get("backlinks-toggle");
+
+    // The backlinks switch brings its list up and puts whichever graph was
+    // showing away, exactly as the graphs trade with each other.
+    backlinks.fire("click");
+    assert.equal(body.getAttribute("data-graph-view"), "backlinks");
+    assert.equal(body.getAttribute("data-graph"), null);
+    assert.equal(backlinks.getAttribute("aria-expanded"), "true");
+    assert.equal(backlinks.getAttribute("aria-label"), "Hide backlinks");
+    assert.equal(local.getAttribute("aria-expanded"), "false");
+    assert.equal(global.getAttribute("aria-expanded"), "false");
+
+    // A graph switch takes the window back: the list gives way to the view
+    // the reader asked for, and the backlinks switch offers to bring it up
+    // again.
+    global.fire("click");
+    assert.equal(body.getAttribute("data-graph-view"), "global");
+    assert.equal(backlinks.getAttribute("aria-expanded"), "false");
+    assert.equal(backlinks.getAttribute("aria-label"), "Show backlinks");
+    assert.equal(global.getAttribute("aria-expanded"), "true");
+
+    // The switch whose view is showing puts the window away; the view it
+    // selected stays selected behind the fold.
+    backlinks.fire("click");
+    assert.equal(body.getAttribute("data-graph-view"), "backlinks");
+    assert.equal(body.getAttribute("data-graph"), null);
+    backlinks.fire("click");
+    assert.equal(body.getAttribute("data-graph"), "hidden");
+    assert.equal(body.getAttribute("data-graph-view"), "backlinks");
+    assert.equal(backlinks.getAttribute("aria-expanded"), "false");
+    assert.equal(backlinks.getAttribute("aria-label"), "Show backlinks");
+
+    // A switch of the folded window brings its own view back.
+    backlinks.fire("click");
+    assert.equal(body.getAttribute("data-graph"), null);
+    assert.equal(body.getAttribute("data-graph-view"), "backlinks");
+    assert.equal(backlinks.getAttribute("aria-expanded"), "true");
+  });
+});
+
+test("a press on the backlinks switch is left to the switch's own click", async () => {
+  withSession({ hash: "#/doc/index.md" }, (session) => {
+    startSession();
+
+    const body = session.doc.body;
+    const backlinks = session.shell.get("backlinks-toggle");
+
+    backlinks.fire("click");
+    assert.equal(body.getAttribute("data-graph"), null);
+
+    // Folding on the press would race the switch's own click, which would
+    // then find a folded window and bring it straight back.
+    session.doc.fireEvent("pointerdown", { target: backlinks });
+    assert.equal(
+      body.getAttribute("data-graph"),
+      null,
+      "the press alone does nothing",
+    );
+
+    backlinks.fire("click");
+    assert.equal(
+      body.getAttribute("data-graph"),
+      "hidden",
+      "the click folds it",
+    );
   });
 });

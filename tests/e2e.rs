@@ -80,6 +80,9 @@ fn the_page_carries_every_required_marker() {
         r#"id="graph-global""#,
         r#"id="graph-fit-local""#,
         r#"id="graph-fit-global""#,
+        r#"id="backlinks""#,
+        r#"id="backlinks-toggle""#,
+        r#"id="backlinks-panel""#,
         r#"id="toc""#,
         r#"id="theme-toggle""#,
         r#"id="search-toggle""#,
@@ -165,16 +168,16 @@ fn the_search_panel_stays_outside_the_article_column() {
 }
 
 #[test]
-fn the_right_rail_reads_search_graph_theme() {
+fn the_right_rail_reads_search_theme_graph_backlinks() {
     let page = render(&build(&fixture_root(), "Fixture"));
 
-    // The theme is an app-level control like search, so both belong to the
-    // right rail, and the graph's switches sit between them: search, the
-    // local graph, the global graph, theme, top to bottom — one switch per
-    // view, the way the left rail carries one switch per sidebar view. The
-    // outline's switch answers for the sidebar's views, so it lives in the
-    // left rail; the sidebar header is left holding nothing but the site
-    // title.
+    // The theme is an app-level control like search, so both sit at the
+    // rail's head, and the floating window's switches follow: search, the
+    // theme, the global graph, the local graph, the backlinks, top to
+    // bottom — one switch per view, the way the left rail carries one switch
+    // per sidebar view. The outline's switch answers for the sidebar's
+    // views, so it lives in the left rail; the sidebar header is left
+    // holding nothing but the site title.
     let rail = page
         .html
         .find(r#"class="rail rail-end""#)
@@ -195,6 +198,10 @@ fn the_right_rail_reads_search_graph_theme() {
         .html
         .find(r#"id="theme-toggle""#)
         .expect("theme button");
+    let backlinks = page
+        .html
+        .find(r#"id="backlinks-toggle""#)
+        .expect("backlinks switch");
     let header = page
         .html
         .find(r#"class="sidebar-header""#)
@@ -206,8 +213,8 @@ fn the_right_rail_reads_search_graph_theme() {
 
     assert!(rail < search, "search belongs to the right rail");
     assert!(
-        search < local && local < global && global < theme,
-        "the rail reads search, the local graph, the global graph, theme"
+        search < theme && theme < global && global < local && local < backlinks,
+        "the rail reads search, the theme, the graphs and the backlinks last"
     );
     assert!(
         !page.html[header..header_end].contains("theme-toggle"),
@@ -380,8 +387,8 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
 
     // The outline panel lives in the sidebar now, after the document list
     // and before the column of panels; its switch sits in the left rail, and
-    // the rail closes the page behind the panels, search and theme at its
-    // ends.
+    // the right rail opens with the reader's app-level controls, the
+    // floating window's switches after them.
     let list = page.html.find(r#"id="doc-list""#).expect("document list");
     let outline_panel = page.html.find(r#"id="toc-panel""#).expect("outline panel");
     let inspector = page
@@ -404,6 +411,10 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         .html
         .find(r#"id="graph-global-toggle""#)
         .expect("global graph switch");
+    let backlinks = page
+        .html
+        .find(r#"id="backlinks-toggle""#)
+        .expect("backlinks switch");
     let theme = page
         .html
         .find(r#"id="theme-toggle""#)
@@ -413,16 +424,18 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         "the outline shares the sidebar's column, the graph keeps its own"
     );
     assert!(
-        rail < search && search < local && local < global && global < theme,
-        "the rail closes the page behind the panels, search and theme at its ends"
+        rail < search && search < theme && theme < global && global < local && local < backlinks,
+        "the rail reads search, theme, the graphs and the backlinks last"
     );
 
     // One panel per view, and no mode switch left over: the split is between
-    // two panels and their two rail switches, not a mode inside one panel.
+    // three panels and their three rail switches, not a mode inside one
+    // panel.
     let local_panel = page.html.find(r#"id="graph-local-panel""#);
     let global_panel = page.html.find(r#"id="graph-global-panel""#);
+    let backlinks_panel = page.html.find(r#"id="backlinks-panel""#);
     assert!(
-        local_panel.is_some() && global_panel.is_some(),
+        local_panel.is_some() && global_panel.is_some() && backlinks_panel.is_some(),
         "the floating window holds one panel per view"
     );
     assert!(
@@ -448,6 +461,15 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
             && head.contains(r#"aria-expanded="false""#)
             && head.contains("Show global graph"),
         "the global switch names its panel and starts offering it: {head}"
+    );
+
+    let head = &page.html[backlinks..];
+    let head = &head[..head.find('>').expect("the switch's open tag ends")];
+    assert!(
+        head.contains(r#"aria-controls="backlinks-panel""#)
+            && head.contains(r#"aria-expanded="false""#)
+            && head.contains("Show backlinks"),
+        "the backlinks switch names its panel and starts offering it: {head}"
     );
 
     // The outline's switch starts offering the view: the list is what a page
@@ -535,19 +557,19 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
         "the outline's view fills the column like the list does: {shown}"
     );
 
-    // Two panels, one at a time: one body attribute picks the view the
-    // window shows, and the other panel steps out of the flow. The page's
+    // Three panels, one at a time: one body attribute picks the view the
+    // window shows, and the other two step out of the flow. The page's
     // markup carries no attribute at all — the local view is the state a
-    // reader starts in — so the rule that hides the global panel reads the
-    // negation.
+    // reader starts in — so every rule reads the negation, and a view the
+    // window gains costs one rule, not a rewrite of the others'.
     let local_off = rule_of(
         css,
-        r#"body[data-graph-view="global"] #graph-local-panel {"#,
+        r#"body:not([data-graph-view="local"]) #graph-local-panel {"#,
     );
     assert_eq!(
         declaration(local_off, "display"),
         Some("none"),
-        "the global view takes the local panel out of the flow: {local_off}"
+        "the page's first view is the local graph: {local_off}"
     );
     let global_off = rule_of(
         css,
@@ -556,7 +578,16 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
     assert_eq!(
         declaration(global_off, "display"),
         Some("none"),
-        "the local view is what a reader starts in: {global_off}"
+        "the global panel waits for its switch: {global_off}"
+    );
+    let backlinks_off = rule_of(
+        css,
+        r#"body:not([data-graph-view="backlinks"]) #backlinks-panel {"#,
+    );
+    assert_eq!(
+        declaration(backlinks_off, "display"),
+        Some("none"),
+        "the backlinks panel waits for its switch: {backlinks_off}"
     );
 
     // The graph's fold attribute takes the whole floating window out, wherever
@@ -596,6 +627,72 @@ fn the_sidebar_holds_the_list_and_the_outline_under_their_switches() {
     assert!(
         drawer.contains("#outline-toggle"),
         "the outline's switch answers on the phone, where the drawer carries both views"
+    );
+}
+
+#[test]
+fn the_backlinks_panel_is_the_floating_window_s_third_view() {
+    // The floating window answers for the two graphs and for the list of
+    // what points at the document being read: the panel sits beside the
+    // graphs in the markup, its switch sits between theirs and the theme's,
+    // and the list it carries is a nav of its own, named for what it lists.
+    let page = render(&build(&fixture_root(), "Fixture"));
+    let css = SHELL_CSS;
+
+    let inspector = page
+        .html
+        .find(r#"class="inspector""#)
+        .expect("floating window");
+    let global_panel = page
+        .html
+        .find(r#"id="graph-global-panel""#)
+        .expect("global graph panel");
+    let backlinks_panel = page
+        .html
+        .find(r#"id="backlinks-panel""#)
+        .expect("backlinks panel");
+    assert!(
+        inspector < global_panel && global_panel < backlinks_panel,
+        "the backlinks panel is the window's third view, after the graphs"
+    );
+    assert!(
+        backlinks_panel
+            < page
+                .html
+                .find(r#"class="rail rail-end""#)
+                .expect("right rail"),
+        "the panel lives in the floating window, not past it"
+    );
+
+    assert!(
+        page.html
+            .contains(r#"id="backlinks-heading">Backlinks</h2>"#),
+        "the panel names itself for what it lists"
+    );
+    assert!(
+        page.html
+            .contains(r#"<nav class="backlinks" id="backlinks" aria-label="Backlinks">"#),
+        "the list is a nav of its own"
+    );
+    assert!(
+        !page.html.contains("backlinks-fit"),
+        "a list needs no fit control; the graphs keep theirs"
+    );
+
+    // The list borrows the document list's link language, and a document
+    // without sources is answered with a line of its own instead of an
+    // empty box.
+    let link = rule_of(css, ".backlink {");
+    assert_eq!(
+        declaration(link, "text-decoration"),
+        Some("none"),
+        "the rows are links that read as rows: {link}"
+    );
+    let empty = rule_of(css, ".backlinks-empty {");
+    assert_eq!(
+        declaration(empty, "color"),
+        Some("var(--text-dim)"),
+        "the empty answer speaks in the dim the panels use: {empty}"
     );
 }
 

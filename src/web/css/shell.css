@@ -20,12 +20,13 @@
 
 /* The rail switches all start hidden: the width that has a use for one
    brings it back — the drawer's toggle on the phone, the collapse switch on
-   the wider layouts, the outline's switch on both, and the graph's two
-   switches on the wider layouts alone. */
+   the wider layouts, the outline's switch on both, and the floating
+   window's three switches on the wider layouts alone. */
 #sidebar-toggle,
 #sidebar-collapse,
 #graph-local-toggle,
 #graph-global-toggle,
+#backlinks-toggle,
 #outline-toggle {
   display: none;
 }
