@@ -69,6 +69,8 @@
  */
 var SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
+import { t } from "./i18n.js";
+
 /** Smallest distance from the viewport edge the panel keeps. */
 export var MARGIN_PX = 10;
 
@@ -195,6 +197,33 @@ export var UNLOCK_ERROR_TEXT =
   "That password did not unlock this document. Try again.";
 
 /**
+ * The dictionary keys the panel's copy resolves through.
+ *
+ * The exported constants above are the English text the tests import; the
+ * panel itself resolves every slot through the dictionaries at the moment
+ * it builds the DOM, so a site built in another language renders that
+ * language's words.
+ */
+var COPY_KEYS = {
+  panelLabel: "preview.panelLabel",
+  drag: "preview.drag",
+  pin: "preview.pin",
+  unpin: "preview.unpin",
+  close: "preview.close",
+  missingTitle: "preview.missingTitle",
+  missingSeparator: "preview.missingSeparator",
+  missingTail: "preview.missingTail",
+  loading: "preview.loading",
+  errorTitle: "preview.errorTitle",
+  errorText: "preview.errorText",
+  lockedTitle: "preview.lockedTitle",
+  lockedText: "preview.lockedText",
+  unlockInputLabel: "preview.unlockInputLabel",
+  unlockSubmit: "preview.unlockSubmit",
+  unlockError: "preview.unlockError",
+};
+
+/**
  * Build one preview panel and hand back its frame and geometry.
  *
  * The `handlers` are the decisions the frame cannot make on its own, wired in
@@ -277,13 +306,13 @@ export function createPreviewPanel(handlers) {
     panel = document.createElement("div");
     panel.className = POPOVER_CLASS;
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", PREVIEW_LABEL);
+    panel.setAttribute("aria-label", t(COPY_KEYS.panelLabel));
     panel.hidden = true;
 
     // The head is also the handle: it says so, and it is where a drag starts.
     head = document.createElement("div");
     head.className = HEAD_CLASS;
-    head.setAttribute("title", DRAG_LABEL);
+    head.setAttribute("title", t(COPY_KEYS.drag));
     headListener = function (event) {
       // A press on one of the head's buttons is never a handle press, since
       // those two clicks already mean something else; a widget inside a
@@ -325,7 +354,7 @@ export function createPreviewPanel(handlers) {
     var actions = document.createElement("div");
     actions.className = ACTIONS_CLASS;
 
-    pinButton = iconButton("pin", PIN_CLASS, PIN_LABEL, pinSvg);
+    pinButton = iconButton("pin", PIN_CLASS, t(COPY_KEYS.pin), pinSvg);
     pinButton.setAttribute("aria-pressed", "false");
     pinButton.addEventListener("click", function (event) {
       handlers.onPinClick(event);
@@ -333,7 +362,12 @@ export function createPreviewPanel(handlers) {
 
     // The reader already holds this panel when they reach for its buttons, so a
     // close here must not be read as "a click inside the panel" and pin it.
-    closeButton = iconButton("close", CLOSE_CLASS, CLOSE_LABEL, closeSvg);
+    closeButton = iconButton(
+      "close",
+      CLOSE_CLASS,
+      t(COPY_KEYS.close),
+      closeSvg,
+    );
     closeButton.addEventListener("click", function (event) {
       handlers.onCloseClick(event);
     });
@@ -352,7 +386,7 @@ export function createPreviewPanel(handlers) {
 
     var noticeTitle = document.createElement("p");
     noticeTitle.className = "preview-missing-title";
-    noticeTitle.textContent = MISSING_TITLE;
+    noticeTitle.textContent = t(COPY_KEYS.missingTitle);
 
     noticeText = document.createElement("p");
     noticeText.className = "preview-missing-text";
@@ -363,9 +397,11 @@ export function createPreviewPanel(handlers) {
     noticeChapter = document.createElement("code");
     noticeChapter.className = "preview-missing-code";
 
-    noticeText.appendChild(document.createTextNode(MISSING_SEPARATOR));
+    noticeText.appendChild(
+      document.createTextNode(t(COPY_KEYS.missingSeparator)),
+    );
     noticeText.appendChild(noticeChapter);
-    noticeText.appendChild(document.createTextNode(MISSING_TAIL));
+    noticeText.appendChild(document.createTextNode(t(COPY_KEYS.missingTail)));
     noticeText.appendChild(noticeDoc);
 
     notice.appendChild(noticeTitle);
@@ -379,7 +415,7 @@ export function createPreviewPanel(handlers) {
 
     var loadingText = document.createElement("p");
     loadingText.className = LOADING_TEXT_CLASS;
-    loadingText.textContent = LOADING_TEXT;
+    loadingText.textContent = t(COPY_KEYS.loading);
     loading.appendChild(loadingText);
 
     // The error state: a heading and one sentence, the notice's shape again.
@@ -389,11 +425,11 @@ export function createPreviewPanel(handlers) {
 
     var errorTitle = document.createElement("p");
     errorTitle.className = "preview-error-title";
-    errorTitle.textContent = ERROR_TITLE;
+    errorTitle.textContent = t(COPY_KEYS.errorTitle);
 
     var errorText = document.createElement("p");
     errorText.className = "preview-error-text";
-    errorText.textContent = ERROR_TEXT;
+    errorText.textContent = t(COPY_KEYS.errorText);
 
     error.appendChild(errorTitle);
     error.appendChild(errorText);
@@ -406,11 +442,11 @@ export function createPreviewPanel(handlers) {
 
     var lockedTitle = document.createElement("p");
     lockedTitle.className = "preview-locked-title";
-    lockedTitle.textContent = LOCKED_TITLE;
+    lockedTitle.textContent = t(COPY_KEYS.lockedTitle);
 
     var lockedText = document.createElement("p");
     lockedText.className = "preview-locked-text";
-    lockedText.textContent = LOCKED_TEXT;
+    lockedText.textContent = t(COPY_KEYS.lockedText);
 
     unlockForm = document.createElement("form");
     unlockForm.className = UNLOCK_FORM_CLASS;
@@ -421,7 +457,7 @@ export function createPreviewPanel(handlers) {
     unlockInput = document.createElement("input");
     unlockInput.className = UNLOCK_INPUT_CLASS;
     unlockInput.setAttribute("type", "password");
-    unlockInput.setAttribute("aria-label", UNLOCK_INPUT_LABEL);
+    unlockInput.setAttribute("aria-label", t(COPY_KEYS.unlockInputLabel));
     unlockInput.setAttribute("autocomplete", "off");
     unlockInput.addEventListener("input", function () {
       handlers.onUnlockInput();
@@ -430,7 +466,7 @@ export function createPreviewPanel(handlers) {
     unlockSubmit = document.createElement("button");
     unlockSubmit.className = UNLOCK_SUBMIT_CLASS;
     unlockSubmit.setAttribute("type", "submit");
-    unlockSubmit.textContent = UNLOCK_SUBMIT_TEXT;
+    unlockSubmit.textContent = t(COPY_KEYS.unlockSubmit);
 
     unlockForm.appendChild(unlockInput);
     unlockForm.appendChild(unlockSubmit);
@@ -438,7 +474,7 @@ export function createPreviewPanel(handlers) {
     unlockError = document.createElement("p");
     unlockError.className = UNLOCK_ERROR_CLASS;
     unlockError.setAttribute("role", "alert");
-    unlockError.textContent = UNLOCK_ERROR_TEXT;
+    unlockError.textContent = t(COPY_KEYS.unlockError);
     unlockError.hidden = true;
 
     locked.appendChild(lockedTitle);

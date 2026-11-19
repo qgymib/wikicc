@@ -50,7 +50,8 @@
  * composer wires the three together and answers the intents raised here — an
  * open that matured, a close whose grace period ran out.
  */
-import { MARGIN_PX, PIN_LABEL, UNPIN_LABEL } from "./preview-panel.js";
+import { MARGIN_PX } from "./preview-panel.js";
+import { t } from "./i18n.js";
 
 /** How long the pointer must rest on a link before the preview opens. */
 export var HOVER_DELAY_MS = 300;
@@ -185,8 +186,14 @@ export function createPreviewGestures(deps) {
     var button = panel.pinButton();
     if (button) {
       button.setAttribute("aria-pressed", pinned ? "true" : "false");
-      button.setAttribute("aria-label", pinned ? UNPIN_LABEL : PIN_LABEL);
-      button.setAttribute("title", pinned ? UNPIN_LABEL : PIN_LABEL);
+      button.setAttribute(
+        "aria-label",
+        pinned ? t("preview.unpin") : t("preview.pin"),
+      );
+      button.setAttribute(
+        "title",
+        pinned ? t("preview.unpin") : t("preview.pin"),
+      );
     }
   }
 

@@ -6,9 +6,10 @@
  * interpreted as markup.
  */
 import { formatHash } from "./router.js";
+import { t } from "./i18n.js";
 
 /** Group label used for documents that live in the input root. */
-export var ROOT_LABEL = "Documents";
+export var ROOT_LABEL = t("docList.rootGroup");
 
 /** Folder part of a document id, `""` for the root. */
 export function folderOf(id) {
@@ -32,7 +33,11 @@ export function groupDocs(docs) {
     var folder = folderOf(doc.id);
     var group = byFolder[folder];
     if (!group) {
-      group = { folder: folder, label: folder || ROOT_LABEL, docs: [] };
+      group = {
+        folder: folder,
+        label: folder || t("docList.rootGroup"),
+        docs: [],
+      };
       byFolder[folder] = group;
       groups.push(group);
     }
@@ -87,7 +92,7 @@ export function createDocList(options) {
     if (!visible.length) {
       var empty = document.createElement("p");
       empty.className = "doc-empty";
-      empty.textContent = "No documents match";
+      empty.textContent = t("docList.empty");
       container.appendChild(empty);
       return;
     }

@@ -7,6 +7,7 @@ use std::str::FromStr;
 use clap::Parser;
 
 use super::format::OutputFormat;
+use super::language::Language;
 
 /// Settings the command line, the environment and the configuration file can
 /// all express.
@@ -67,6 +68,11 @@ pub struct Settings {
     /// [default: all cores]
     #[arg(short = 'j', long, value_name = "N")]
     pub jobs: Option<u32>,
+
+    /// Language the reader's interface copy is rendered in: `en` or `zh`;
+    /// overrides `.wikicc.json` [default: en]
+    #[arg(long, value_name = "LANG", value_parser = Language::from_str)]
+    pub language: Option<Language>,
 }
 
 /// The raw build intent: what the command line said, before any default.

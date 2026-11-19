@@ -26,6 +26,7 @@ import { ELLIPSIS } from "./search.js";
 import * as SearchHighlight from "./search-highlight.js";
 import * as DocBody from "./doc-body.js";
 import { EMPTY_CLASS, markNode } from "./search-panel.js";
+import { t } from "./i18n.js";
 
 /** Class of the whole-document body inside the preview. */
 export var DOCUMENT_CLASS = "search-document";
@@ -234,7 +235,7 @@ export function createSearchPreview(options) {
   function renderIdle() {
     var idle = document.createElement("p");
     idle.className = EMPTY_CLASS;
-    idle.textContent = PREVIEW_IDLE_LABEL;
+    idle.textContent = t("search.previewIdle");
     preview.appendChild(idle);
   }
 
@@ -250,7 +251,7 @@ export function createSearchPreview(options) {
   function renderLockedNotice() {
     var notice = document.createElement("p");
     notice.className = SEARCH_LOCKED_CLASS;
-    notice.textContent = LOCKED_NOTICE;
+    notice.textContent = t("search.lockedNotice");
     preview.appendChild(notice);
   }
 

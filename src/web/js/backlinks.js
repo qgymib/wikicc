@@ -15,6 +15,7 @@
  * never be interpreted as markup.
  */
 import { formatHash } from "./router.js";
+import { t } from "./i18n.js";
 
 /** Whether a click should be handled by the router instead of the browser. */
 function isPlainLeftClick(event) {
@@ -92,7 +93,7 @@ export function createBacklinks(options) {
     if (!sources.length) {
       var empty = document.createElement("p");
       empty.className = "backlinks-empty";
-      empty.textContent = "No documents link to this one.";
+      empty.textContent = t("backlinks.empty");
       container.appendChild(empty);
       return;
     }

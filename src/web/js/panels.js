@@ -11,6 +11,7 @@
  *
  * Pure wiring over the attributes: nothing here renders content.
  */
+import { t } from "./i18n.js";
 
 /** The media query below which the document list is a drawer, not a column. */
 var DRAWER_QUERY = "(max-width: 640px)";
@@ -97,14 +98,14 @@ export function createPanels(deps) {
 
     if (outlineToggle) {
       var lit = view === "outline" && visible;
-      var label = lit ? "Hide outline panel" : "Show outline panel";
+      var label = lit ? t("panels.outline.hide") : t("panels.outline.show");
       outlineToggle.setAttribute("aria-expanded", lit ? "true" : "false");
       outlineToggle.setAttribute("aria-label", label);
       outlineToggle.setAttribute("title", label);
     }
 
     var listLit = view === "docs" && visible;
-    var listLabel = listLit ? "Hide document list" : "Show document list";
+    var listLabel = listLit ? t("panels.list.hide") : t("panels.list.show");
     if (sidebarToggle) {
       sidebarToggle.setAttribute("aria-expanded", listLit ? "true" : "false");
       sidebarToggle.setAttribute("aria-label", listLabel);
@@ -166,7 +167,9 @@ export function createPanels(deps) {
     var visible = graphVisible();
 
     var localLit = view === "local" && visible;
-    var localLabel = localLit ? "Hide local graph" : "Show local graph";
+    var localLabel = localLit
+      ? t("panels.graphLocal.hide")
+      : t("panels.graphLocal.show");
     if (graphLocalToggle) {
       graphLocalToggle.setAttribute(
         "aria-expanded",
@@ -177,7 +180,9 @@ export function createPanels(deps) {
     }
 
     var globalLit = view === "global" && visible;
-    var globalLabel = globalLit ? "Hide global graph" : "Show global graph";
+    var globalLabel = globalLit
+      ? t("panels.graphGlobal.hide")
+      : t("panels.graphGlobal.show");
     if (graphGlobalToggle) {
       graphGlobalToggle.setAttribute(
         "aria-expanded",
@@ -188,7 +193,9 @@ export function createPanels(deps) {
     }
 
     var backlinksLit = view === "backlinks" && visible;
-    var backlinksLabel = backlinksLit ? "Hide backlinks" : "Show backlinks";
+    var backlinksLabel = backlinksLit
+      ? t("panels.backlinks.hide")
+      : t("panels.backlinks.show");
     if (backlinksToggle) {
       backlinksToggle.setAttribute(
         "aria-expanded",
@@ -199,7 +206,7 @@ export function createPanels(deps) {
     }
 
     var tagsLit = view === "tags" && visible;
-    var tagsLabel = tagsLit ? "Hide tags" : "Show tags";
+    var tagsLabel = tagsLit ? t("panels.tags.hide") : t("panels.tags.show");
     if (tagsToggle) {
       tagsToggle.setAttribute("aria-expanded", tagsLit ? "true" : "false");
       tagsToggle.setAttribute("aria-label", tagsLabel);

@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::format::OutputFormat;
+use super::language::Language;
 use super::normalize_excludes;
 use super::settings::Settings;
 use crate::error::{Error, Result};
@@ -44,6 +45,7 @@ pub(crate) enum Field {
     Favicon,
     Password,
     Jobs,
+    Language,
 }
 
 impl Field {
@@ -60,6 +62,7 @@ impl Field {
             Field::Favicon => "favicon",
             Field::Password => "password",
             Field::Jobs => "jobs",
+            Field::Language => "language",
         }
     }
 
@@ -70,7 +73,12 @@ impl Field {
             Field::Home => settings.home = Some(value),
             Field::Favicon => settings.favicon = Some(value),
             Field::Password => settings.password = Some(value),
-            Field::Out | Field::Format | Field::Strict | Field::Exclude | Field::Jobs => {
+            Field::Out
+            | Field::Format
+            | Field::Strict
+            | Field::Exclude
+            | Field::Jobs
+            | Field::Language => {
                 unreachable!("'{}' does not carry a text value", self.name())
             }
         }
@@ -87,7 +95,8 @@ impl Field {
             | Field::Exclude
             | Field::Favicon
             | Field::Password
-            | Field::Jobs => {
+            | Field::Jobs
+            | Field::Language => {
                 unreachable!("'{}' does not carry a path value", self.name())
             }
         }
@@ -104,7 +113,8 @@ impl Field {
             | Field::Exclude
             | Field::Favicon
             | Field::Password
-            | Field::Jobs => {
+            | Field::Jobs
+            | Field::Language => {
                 unreachable!("'{}' does not carry a boolean value", self.name())
             }
         }
@@ -121,7 +131,8 @@ impl Field {
             | Field::Exclude
             | Field::Favicon
             | Field::Password
-            | Field::Jobs => {
+            | Field::Jobs
+            | Field::Language => {
                 unreachable!("'{}' does not carry a format value", self.name())
             }
         }
@@ -138,7 +149,8 @@ impl Field {
             | Field::Home
             | Field::Favicon
             | Field::Password
-            | Field::Jobs => {
+            | Field::Jobs
+            | Field::Language => {
                 unreachable!("'{}' does not carry a list value", self.name())
             }
         }
@@ -155,8 +167,27 @@ impl Field {
             | Field::Home
             | Field::Exclude
             | Field::Favicon
-            | Field::Password => {
+            | Field::Password
+            | Field::Language => {
                 unreachable!("'{}' does not carry a count value", self.name())
+            }
+        }
+    }
+
+    /// Store a reader interface language value.
+    fn store_language(self, settings: &mut Settings, value: Language) {
+        match self {
+            Field::Language => settings.language = Some(value),
+            Field::Out
+            | Field::Format
+            | Field::Title
+            | Field::Strict
+            | Field::Home
+            | Field::Exclude
+            | Field::Favicon
+            | Field::Password
+            | Field::Jobs => {
+                unreachable!("'{}' does not carry a language value", self.name())
             }
         }
     }
@@ -193,6 +224,10 @@ pub(crate) enum Kind {
     /// and non-integers are rejected: a build with no worker threads cannot
     /// run.
     Count,
+    /// The reader interface language (`language`). Both surfaces spell it a
+    /// language code — `en` or `zh`, letter case ignored — and an unknown
+    /// code is rejected: the reader carries no dictionary for it.
+    Language,
 }
 
 /// One setting's coordinates: which field the entry fills, the full
@@ -256,6 +291,13 @@ impl SettingSpec {
             Kind::Count => {
                 let count = parse_count(self.var, value)?;
                 self.field.store_count(settings, count);
+                Ok(())
+            }
+            Kind::Language => {
+                let language = value
+                    .parse::<Language>()
+                    .map_err(|error| invalid(self.var, &error.to_string()))?;
+                self.field.store_language(settings, language);
                 Ok(())
             }
         }
@@ -338,6 +380,13 @@ impl SettingSpec {
                     .ok_or_else(|| wrong_type(key, "a positive integer"))?;
                 self.field.store_count(settings, count as u32);
             }
+            Kind::Language => {
+                let Value::String(text) = value else {
+                    return Err(wrong_type(key, "a string"));
+                };
+                self.field
+                    .store_language(settings, text.parse::<Language>()?);
+            }
         }
         Ok(())
     }
@@ -406,10 +455,17 @@ pub(crate) const JOBS: SettingSpec = SettingSpec {
     kind: Kind::Count,
 };
 
+/// The reader interface language setting.
+pub(crate) const LANGUAGE: SettingSpec = SettingSpec {
+    field: Field::Language,
+    var: "WIKICC_LANGUAGE",
+    kind: Kind::Language,
+};
+
 /// Every setting this version knows, in the order the [`Settings`] struct
 /// declares them.
-pub(crate) const SETTINGS: [SettingSpec; 9] = [
-    OUT, FORMAT, TITLE, STRICT, HOME, EXCLUDE, FAVICON, PASSWORD, JOBS,
+pub(crate) const SETTINGS: [SettingSpec; 10] = [
+    OUT, FORMAT, TITLE, STRICT, HOME, EXCLUDE, FAVICON, PASSWORD, JOBS, LANGUAGE,
 ];
 
 /// Parse a boolean spelled `true`, `false`, `1` or `0`, in any letter case.
@@ -564,6 +620,7 @@ mod tests {
             Field::Favicon => ("assets/icon.png", "\"assets/icon.png\""),
             Field::Password => ("global secret", "\"global secret\""),
             Field::Jobs => ("4", "4"),
+            Field::Language => ("zh", "\"zh\""),
         }
     }
 
@@ -594,6 +651,7 @@ mod tests {
             Field::Favicon => assert_eq!(options.favicon.as_deref(), Some("assets/icon.png")),
             Field::Password => assert_eq!(options.password.as_deref(), Some("global secret")),
             Field::Jobs => assert_eq!(options.jobs, Some(4)),
+            Field::Language => assert_eq!(options.language, Some(Language::Zh)),
         }
     }
 

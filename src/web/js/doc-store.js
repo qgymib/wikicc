@@ -49,6 +49,7 @@
 import { encodeId } from "./router.js";
 import * as Lock from "./lock.js";
 import { versionProblem } from "./payload-version.js";
+import { t } from "./i18n.js";
 
 /** Where the search corpus lives, relative to the page. */
 export var SEARCH_CORPUS_PATH = "search.json";
@@ -142,7 +143,7 @@ export function createDocStore(bundle, fetchImpl) {
       .then(function (chunk) {
         if (
           chunk &&
-          !versionProblem(chunk.v, "The document chunk") &&
+          !versionProblem(chunk.v, t("payload.subject.chunk")) &&
           typeof chunk.html === "string" &&
           chunk.id
         ) {
@@ -236,7 +237,7 @@ export function createDocStore(bundle, fetchImpl) {
         return response.json();
       })
       .then(function (parsed) {
-        if (parsed && versionProblem(parsed.v, "The search corpus")) {
+        if (parsed && versionProblem(parsed.v, t("payload.subject.corpus"))) {
           return null;
         }
         return parsed && Array.isArray(parsed.docs) ? parsed.docs : null;

@@ -9,6 +9,7 @@
  * scroll-spy state by that href, which would break deep links.
  */
 import { formatHash, parseHash } from "./router.js";
+import { t } from "./i18n.js";
 
 /**
  * Where the reading line sits, as a fraction of the viewport height.
@@ -449,7 +450,7 @@ export function createToc(options) {
     if (!Array.isArray(toc) || !toc.length) {
       var empty = globalThis.document.createElement("p");
       empty.className = "toc-empty";
-      empty.textContent = "This document has no headings.";
+      empty.textContent = t("toc.empty");
       container.appendChild(empty);
       return;
     }

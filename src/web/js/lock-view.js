@@ -23,6 +23,7 @@
  * The DOM is touched only through the `document` passed in, which is what
  * keeps the view testable without a browser.
  */
+import { t } from "./i18n.js";
 
 /** Class of the form the lock page answers in. */
 export var FORM_CLASS = "doc-locked-form";
@@ -33,7 +34,13 @@ export var LABEL_TEXT_CLASS = "doc-locked-label-text";
 /** Class of the password field. */
 export var INPUT_CLASS = "doc-locked-input";
 
-/** What the field's label says. */
+/**
+ * What the field's label says, in the English copy.
+ *
+ * The constants below are the English text, kept for the tests that import
+ * them; the form resolves its copy through the dictionaries at build time,
+ * so a site built in another language renders that language's words.
+ */
 export var INPUT_LABEL = "Password";
 
 /** Class of the button that submits the password. */
@@ -84,7 +91,7 @@ export function createUnlockForm(options) {
 
   var labelText = d.createElement("span");
   labelText.className = LABEL_TEXT_CLASS;
-  labelText.textContent = INPUT_LABEL;
+  labelText.textContent = t("lock.label");
 
   var input = d.createElement("input");
   input.className = INPUT_CLASS;
@@ -98,7 +105,7 @@ export function createUnlockForm(options) {
   var submit = d.createElement("button");
   submit.className = SUBMIT_CLASS;
   submit.setAttribute("type", "submit");
-  submit.textContent = SUBMIT_TEXT;
+  submit.textContent = t("lock.submit");
 
   var error = d.createElement("p");
   error.className = ERROR_CLASS;
@@ -128,7 +135,7 @@ export function createUnlockForm(options) {
     busy = waiting;
     submit.disabled = waiting;
     input.disabled = waiting;
-    submit.textContent = waiting ? BUSY_TEXT : SUBMIT_TEXT;
+    submit.textContent = waiting ? t("lock.busy") : t("lock.submit");
   }
 
   function onSubmitEvent(event) {
@@ -152,12 +159,12 @@ export function createUnlockForm(options) {
         // reader still here, and the line names the failure while they
         // retype.
         if (!unlocked) {
-          fail(WRONG_PASSWORD_MESSAGE);
+          fail(t("lock.wrongPassword"));
         }
       })
       .catch(function (_error) {
         setBusy(false);
-        fail(UNAVAILABLE_MESSAGE);
+        fail(t("lock.unavailable"));
       });
   }
 

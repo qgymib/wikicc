@@ -181,8 +181,12 @@ pub(crate) fn definition_html<R: LinkRewriter + ?Sized>(
     } else if let Some(message) = target.invalid.as_deref() {
         // A definition can also name a target the site does not have, so the
         // entry carries the dead-link mark too: the look, the attribute the
-        // reader stops the click on, and the reason the build warned about.
-        html.push_str(&super::invalid_link_attributes(message));
+        // reader stops the click on, the reason the build warned about, and
+        // the stable code the reader localizes that reason by.
+        html.push_str(&super::invalid_link_attributes(
+            message,
+            target.invalid_reason,
+        ));
     }
 
     html.push('>');

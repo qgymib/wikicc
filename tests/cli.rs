@@ -40,6 +40,7 @@ fn help_lists_documented_options() {
         "--favicon",
         "--password",
         "--jobs",
+        "--language",
         "--force",
         "--quiet",
     ] {
@@ -82,6 +83,7 @@ fn help_output_is_pinned_byte_for_byte() {
         "      --favicon <FILE>       Favicon file relative to the input folder; overrides `.wikicc.json` [default: the wikicc logo]",
         "      --password <PASSWORD>  Global password for documents whose front matter declares encryption; overrides `.wikicc.json`. Prefer the `WIKICC_PASSWORD` environment variable: a command line value stays in the shell history and the process list",
         "  -j, --jobs <N>             Worker threads the parallel build stages may use; overrides `.wikicc.json` [default: all cores]",
+        "      --language <LANG>      Language the reader's interface copy is rendered in: `en` or `zh`; overrides `.wikicc.json` [default: en]",
         "      --force                Overwrite the output directory without confirmation",
         "  -q, --quiet                Suppress the summary line",
         "      --init-config [<DIR>]  Write a default `.wikicc.json` into DIR [default: the current directory] and exit",
@@ -141,6 +143,34 @@ fn unknown_format_exits_with_2() {
         .code(2)
         .stderr(predicate::str::contains(
             "invalid format 'pdf', expected one of: single-html, html-dir, pages",
+        ));
+}
+
+#[test]
+fn unknown_language_exits_with_2() {
+    let dir = fixture();
+
+    wikicc()
+        .arg(dir.path())
+        .args(["--language", "fr"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid language 'fr', expected one of: en, zh",
+        ));
+}
+
+#[test]
+fn an_invalid_language_environment_value_exits_with_1() {
+    let dir = fixture();
+
+    wikicc()
+        .arg(dir.path())
+        .env("WIKICC_LANGUAGE", "fr")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "environment variable 'WIKICC_LANGUAGE': invalid language 'fr', expected one of: en, zh",
         ));
 }
 

@@ -28,6 +28,7 @@
  * `LOCK_ATTRIBUTE` marker.
  */
 import * as Table from "./table.js";
+import { t } from "./i18n.js";
 
 /** Class of the funnel button inside a header cell. */
 export var FILTER_BUTTON_CLASS = "table-filter-toggle";
@@ -99,7 +100,7 @@ var activePanel = null;
 function headerLabel(cell, index) {
   var text =
     cell && typeof cell.textContent === "string" ? cell.textContent.trim() : "";
-  return text || "column " + (index + 1);
+  return text || t("table.columnFallback", { n: index + 1 });
 }
 
 /** Inline funnel icon: no external asset, no icon font, inherits `currentColor`. */
@@ -124,7 +125,7 @@ function createEmptyRow(columns) {
   row.setAttribute("hidden", "");
 
   cell.colSpan = columns > 0 ? columns : 1;
-  cell.textContent = Table.NO_MATCH_TEXT;
+  cell.textContent = t("table.noMatchingRows");
 
   row.appendChild(cell);
   return row;
@@ -237,13 +238,19 @@ function openFilterPanel(options) {
   var panel = document.createElement("div");
   panel.className = FILTER_PANEL_CLASS;
   panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-label", "Filter column " + options.label);
+  panel.setAttribute(
+    "aria-label",
+    t("table.filterColumn", { column: options.label }),
+  );
 
   var search = document.createElement("input");
   search.type = "search";
   search.className = FILTER_SEARCH_CLASS;
-  search.placeholder = SEARCH_PLACEHOLDER;
-  search.setAttribute("aria-label", "Search values in column " + options.label);
+  search.placeholder = t("table.searchValues");
+  search.setAttribute(
+    "aria-label",
+    t("table.searchColumn", { column: options.label }),
+  );
   search.autocomplete = "off";
   search.spellcheck = false;
 
@@ -253,7 +260,7 @@ function openFilterPanel(options) {
   allInput.type = "checkbox";
   var allText = document.createElement("span");
   allText.className = "table-filter-value";
-  allText.textContent = "Select all";
+  allText.textContent = t("table.selectAll");
   var allCount = document.createElement("span");
   allCount.className = "table-filter-count";
   allRow.appendChild(allInput);
@@ -268,11 +275,11 @@ function openFilterPanel(options) {
   var clear = document.createElement("button");
   clear.type = "button";
   clear.className = FILTER_CLEAR_CLASS;
-  clear.textContent = "Clear filter";
+  clear.textContent = t("table.clearFilter");
   var confirm = document.createElement("button");
   confirm.type = "button";
   confirm.className = FILTER_CONFIRM_CLASS;
-  confirm.textContent = CONFIRM_LABEL;
+  confirm.textContent = t("table.apply");
   footer.appendChild(clear);
   footer.appendChild(confirm);
 
@@ -345,7 +352,7 @@ function openFilterPanel(options) {
       text.className = "table-filter-value";
       if (value.kind === "empty") {
         text.classList.add("is-blank");
-        text.textContent = BLANKS_LABEL;
+        text.textContent = t("table.blanks");
       } else {
         text.textContent = value.text;
       }
@@ -373,8 +380,9 @@ function openFilterPanel(options) {
     if (visible.length > MAX_RENDERED_VALUES) {
       var more = document.createElement("p");
       more.className = FILTER_MORE_CLASS;
-      more.textContent =
-        visible.length - MAX_RENDERED_VALUES + " " + MORE_VALUES_TEXT;
+      more.textContent = t("table.moreValues", {
+        n: visible.length - MAX_RENDERED_VALUES,
+      });
       fragment.appendChild(more);
     }
 

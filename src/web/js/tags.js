@@ -17,6 +17,7 @@
  * never be interpreted as markup.
  */
 import { formatHash } from "./router.js";
+import { t } from "./i18n.js";
 
 /** The body attribute the build writes on every `#tag` chip. */
 export var TAG_CHIP_ATTRIBUTE = "data-tag";
@@ -88,7 +89,7 @@ export function createTagsPanel(options) {
     if (!tags.length) {
       var empty = document.createElement("p");
       empty.className = "tags-empty";
-      empty.textContent = "No tags yet.";
+      empty.textContent = t("tags.empty");
       container.appendChild(empty);
       return;
     }
@@ -110,7 +111,7 @@ export function createTagsPanel(options) {
       row.type = "button";
       row.className = "tag-name";
       row.setAttribute("aria-expanded", selected ? "true" : "false");
-      row.title = "Browse this tag";
+      row.title = t("tags.browseTitle");
 
       var label = document.createElement("span");
       label.className = "tag-label";

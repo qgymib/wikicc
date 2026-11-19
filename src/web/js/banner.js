@@ -22,6 +22,7 @@
  * the `document` passed in.
  */
 import { BANNER_TIMEOUT_MS } from "./banner-config.js";
+import { t } from "./i18n.js";
 
 /** Class of the banner root. */
 export var BANNER_CLASS = "doc-alert";
@@ -36,9 +37,9 @@ export var OPEN_ATTRIBUTE = "data-open";
 export { BANNER_TIMEOUT_MS };
 
 /** Prefix of the message, so the wording has one home. */
-var MESSAGE_LEAD = "Chapter not found in ";
+var MESSAGE_LEAD_KEY = "banner.chapterLead";
 /** Separator between the document path and the chapter. */
-var MESSAGE_SEPARATOR = ": ";
+var MESSAGE_SEPARATOR_KEY = "banner.chapterSeparator";
 
 /**
  * Create the banner controller.
@@ -103,7 +104,7 @@ export function createBanner(options) {
 
     text = doc.createElement("p");
     text.className = "doc-alert-text";
-    lead = doc.createTextNode(MESSAGE_LEAD);
+    lead = doc.createTextNode(t(MESSAGE_LEAD_KEY));
     text.appendChild(lead);
 
     // The two facts are their own elements, filled with `textContent`: a
@@ -114,15 +115,15 @@ export function createBanner(options) {
     chapter.className = "doc-alert-code";
 
     text.appendChild(path);
-    separator = doc.createTextNode(MESSAGE_SEPARATOR);
+    separator = doc.createTextNode(t(MESSAGE_SEPARATOR_KEY));
     text.appendChild(separator);
     text.appendChild(chapter);
 
     close = doc.createElement("button");
     close.className = CLOSE_CLASS;
     close.setAttribute("type", "button");
-    close.setAttribute("aria-label", "Dismiss");
-    close.setAttribute("title", "Dismiss");
+    close.setAttribute("aria-label", t("banner.dismiss"));
+    close.setAttribute("title", t("banner.dismiss"));
     close.appendChild(closeSvg(doc));
     close.addEventListener("click", onCloseClick);
 
@@ -205,8 +206,8 @@ export function createBanner(options) {
     ensure();
     clearTimer();
 
-    lead.textContent = MESSAGE_LEAD;
-    separator.textContent = MESSAGE_SEPARATOR;
+    lead.textContent = t(MESSAGE_LEAD_KEY);
+    separator.textContent = t(MESSAGE_SEPARATOR_KEY);
     path.textContent = details.docId ? String(details.docId) : "";
     chapter.textContent = details.anchor ? String(details.anchor) : "";
     reveal();

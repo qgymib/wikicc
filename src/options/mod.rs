@@ -8,6 +8,7 @@
 
 mod format;
 mod guards;
+mod language;
 mod resolve;
 mod settings;
 pub(crate) mod spec;
@@ -16,6 +17,7 @@ mod values;
 pub use format::OutputFormat;
 pub(crate) use guards::path_components;
 pub use guards::{normalize, validate_input, validate_paths};
+pub use language::Language;
 pub use resolve::{DEFAULT_OUT_DIR, FALLBACK_TITLE, Options};
 pub use settings::{Request, Settings};
 pub(crate) use values::{normalize_candidate, normalize_excludes, normalize_favicon};

@@ -206,6 +206,7 @@ mod tests {
                 v: crate::site::PAYLOAD_FORMAT_VERSION,
                 title: "Site".to_string(),
                 home: None,
+                language: None,
                 docs: Vec::new(),
                 edges: Vec::new(),
                 tags: Vec::new(),

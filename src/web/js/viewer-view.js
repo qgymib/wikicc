@@ -45,6 +45,7 @@ import Panzoom from "@panzoom/panzoom/dist/panzoom.es.js";
 
 import * as Diagrams from "./diagrams.js";
 import * as Viewer from "./viewer.js";
+import { t } from "./i18n.js";
 
 /** Zoom bounds the engine is given; the fitted start scale is clamped in. */
 var MIN_SCALE = 0.05;
@@ -82,9 +83,11 @@ var diagramProvider = {
       element.getAttribute("data-processed") === "true"
     );
   },
-  hoverLabel: "Open diagram in viewer",
+  hoverLabel: function () {
+    return t("viewer.openDiagram");
+  },
   title: function () {
-    return "Diagram";
+    return t("viewer.diagramTitle");
   },
   mount: function (element) {
     var svg = element.querySelector("svg");
@@ -299,12 +302,21 @@ export function createViewerView(options) {
     }
   }
 
+  /** The label one provider's open button wears, in the language in effect. */
+  function hoverLabelOf(provider) {
+    var value =
+      provider && typeof provider.hoverLabel === "function"
+        ? provider.hoverLabel()
+        : provider && provider.hoverLabel;
+    return typeof value === "string" && value ? value : t("viewer.openDefault");
+  }
+
   /** The corner button of one armed block. */
   function makeOpenButton(provider, element) {
     var button = document.createElement("button");
     button.type = "button";
     button.className = "icon-button " + Viewer.OPEN_BUTTON_CLASS;
-    var label = provider.hoverLabel || "Open in viewer";
+    var label = hoverLabelOf(provider);
     button.setAttribute("aria-label", label);
     button.setAttribute("title", label);
     var icon = makeIcon(OPEN_ICON);
@@ -430,7 +442,7 @@ export function createViewerView(options) {
     var closeButton = null;
     Viewer.STANDARD_ACTIONS.forEach(function (action) {
       var button = makeActionButton(
-        action.label,
+        action.labelKey ? t(action.labelKey) : action.label,
         action.icon,
         standardAction(action.id),
       );

@@ -11,6 +11,7 @@
  * Pure: no DOM and no history, so `node --test` covers it directly.
  */
 import { parseHash, ROUTE_PREFIX } from "./router.js";
+import { t } from "./i18n.js";
 
 /**
  * Attribute marking a link the preview may open.
@@ -62,6 +63,53 @@ export var INVALID_ATTRIBUTE = "data-wikicc-invalid";
 
 /** Selector matching a link the build marked as having no target. */
 export var INVALID_SELECTOR = "a[" + INVALID_ATTRIBUTE + "]";
+
+/**
+ * Attribute carrying why a link's target does not exist, as a stable code.
+ *
+ * The build writes the build warning's English wording into the link's
+ * `title`; this attribute is what the reader resolves into the language the
+ * site was built for, keying its dictionaries by the code. Must stay in
+ * step with `INVALID_REASON_ATTRIBUTE` in `src/markdown/links.rs`.
+ */
+export var INVALID_REASON_ATTRIBUTE = "data-wikicc-invalid-reason";
+
+/**
+ * The dictionary key each reason code answers through.
+ *
+ * The codes are the build's own vocabulary (`MissingReason::code` in
+ * `src/markdown/links.rs`); the keys name the entries in `i18n.js` whose
+ * English text is verbatim the build warning the `title` fallback quotes.
+ * A code this table does not know keeps the build's wording.
+ */
+export var REASON_KEYS = {
+  "not-relative": "links.invalid.not-relative",
+  "escapes-root": "links.invalid.escapes-root",
+  "unknown-document": "links.invalid.unknown-document",
+  "unknown-anchor": "links.invalid.unknown-anchor",
+  "unknown-asset": "links.invalid.unknown-asset",
+  "unreadable-asset": "links.invalid.unreadable-asset",
+};
+
+/**
+ * The `title` one dead link wears, in the language in effect.
+ *
+ * `reason` is the value the build wrote into
+ * [`INVALID_REASON_ATTRIBUTE`]; `destination` is the address the author
+ * wrote, which the build keeps verbatim in the `href`. An unknown or absent
+ * code answers `null`, and the caller keeps the build's wording.
+ */
+export function invalidTitle(reason, destination) {
+  var key = typeof reason === "string" && REASON_KEYS[reason];
+  if (!key) {
+    return null;
+  }
+  return t(key, {
+    destination: String(
+      destination === null || destination === undefined ? "" : destination,
+    ),
+  });
+}
 
 /**
  * Attributes matching the destination prefix the build emits.

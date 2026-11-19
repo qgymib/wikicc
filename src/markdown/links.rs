@@ -79,6 +79,28 @@ pub enum MissingReason {
     UnreadableAsset,
 }
 
+impl MissingReason {
+    /// The stable code the serialized HTML carries in
+    /// [`INVALID_REASON_ATTRIBUTE`], which the reader's dictionaries key the
+    /// localized explanation by.
+    ///
+    /// The codes are the build's own vocabulary, kept deliberately apart from
+    /// the human-readable message: the message is the build warning's English
+    /// wording and the `title` attribute's fallback, while the code is what
+    /// the reader rewrites into the language the site was built in. Must stay
+    /// in step with the reason codes in `src/web/js/links.js`.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NotRelative => "not-relative",
+            Self::EscapesRoot => "escapes-root",
+            Self::UnknownDocument => "unknown-document",
+            Self::UnknownAnchor => "unknown-anchor",
+            Self::UnknownAsset => "unknown-asset",
+            Self::UnreadableAsset => "unreadable-asset",
+        }
+    }
+}
+
 /// Syntactic class of one destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkClass {
@@ -140,6 +162,14 @@ pub struct LinkTarget {
     /// `title` attribute so hovering explains the dead end. A chapter
     /// mismatch never sets it — that failure still resolves to its document.
     pub invalid: Option<String>,
+    /// Why the destination can never resolve, as the stable code the reader
+    /// localizes by.
+    ///
+    /// Present exactly when [`LinkTarget::invalid`] is: the two are set
+    /// together, the message for the fallback `title` and the build
+    /// warning, the code for the attribute the reader's dictionaries key
+    /// their own wording by.
+    pub invalid_reason: Option<MissingReason>,
 }
 
 impl LinkTarget {
@@ -150,6 +180,7 @@ impl LinkTarget {
             missing_anchor: None,
             new_tab: false,
             invalid: None,
+            invalid_reason: None,
         }
     }
 
@@ -160,6 +191,7 @@ impl LinkTarget {
             missing_anchor: None,
             new_tab: true,
             invalid: None,
+            invalid_reason: None,
         }
     }
 
@@ -170,16 +202,26 @@ impl LinkTarget {
             missing_anchor: Some(anchor.into()),
             new_tab: false,
             invalid: None,
+            invalid_reason: None,
         }
     }
 
     /// This destination, plus the reason it can never resolve.
-    pub fn invalid(dest: impl Into<String>, message: impl Into<String>) -> Self {
+    ///
+    /// `message` is the human-readable warning the build reports and the
+    /// `title` attribute quotes; `reason` is the stable code the reader
+    /// localizes by. The two name the same failure in their own words.
+    pub fn invalid(
+        dest: impl Into<String>,
+        reason: MissingReason,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             dest: dest.into(),
             missing_anchor: None,
             new_tab: false,
             invalid: Some(message.into()),
+            invalid_reason: Some(reason),
         }
     }
 }
@@ -236,19 +278,38 @@ pub const INVALID_LINK_CLASS: &str = "doc-link-invalid";
 /// `src/web/js/links.js`.
 pub const INVALID_LINK_ATTRIBUTE: &str = "data-wikicc-invalid";
 
+/// Attribute carrying why a link's target does not exist, as a stable code.
+///
+/// The `title` quotes the build warning's English wording, which is the
+/// no-script fallback; this attribute is what the reader resolves into the
+/// language the site was built for, keying its dictionaries by the code.
+/// Must stay in step with `INVALID_REASON_ATTRIBUTE` in
+/// `src/web/js/links.js`.
+pub const INVALID_REASON_ATTRIBUTE: &str = "data-wikicc-invalid-reason";
+
 /// Opening-tag attributes for a link whose target does not exist.
 ///
 /// The class carries the look, the bare attribute lets the reader stop the
-/// click, `aria-disabled` says so to assistive technology, and the `title`
-/// quotes the same reason the build warned about. Built from escaped parts,
-/// so the reason cannot terminate the attribute it is written into.
-pub(crate) fn invalid_link_attributes(message: &str) -> String {
-    let mut attributes = String::with_capacity(message.len() + 96);
+/// click, `aria-disabled` says so to assistive technology, the `title`
+/// quotes the same reason the build warned about, and the reason attribute
+/// names that reason as the stable code the reader's dictionaries key their
+/// own wording by. Built from escaped parts, so the reason cannot terminate
+/// the attribute it is written into.
+pub(crate) fn invalid_link_attributes(message: &str, reason: Option<MissingReason>) -> String {
+    let mut attributes = String::with_capacity(message.len() + 128);
     attributes.push_str(" class=\"");
     attributes.push_str(INVALID_LINK_CLASS);
     attributes.push_str("\" ");
     attributes.push_str(INVALID_LINK_ATTRIBUTE);
-    attributes.push_str(" aria-disabled=\"true\" title=\"");
+    attributes.push_str(" aria-disabled=\"true\"");
+    if let Some(code) = reason {
+        attributes.push(' ');
+        attributes.push_str(INVALID_REASON_ATTRIBUTE);
+        attributes.push_str("=\"");
+        escape_into(&mut attributes, code.code());
+        attributes.push('"');
+    }
+    attributes.push_str(" title=\"");
     escape_into(&mut attributes, message);
     attributes.push('"');
     attributes
@@ -584,7 +645,7 @@ impl LinkResolver<'_> {
             LinkClass::Missing { reason } => {
                 let message = missing_message(reason, destination);
                 self.report(line, message.clone());
-                LinkTarget::invalid(destination, message)
+                LinkTarget::invalid(destination, reason, message)
             }
         }
     }
@@ -613,13 +674,13 @@ impl LinkResolver<'_> {
         let Some(id) = join_relative(doc_dir(&self.doc_id), path) else {
             let message = missing_message(MissingReason::EscapesRoot, destination);
             self.report(line, message.clone());
-            return LinkTarget::invalid(destination, message);
+            return LinkTarget::invalid(destination, MissingReason::EscapesRoot, message);
         };
 
         if !self.docs.contains(&id) {
             let message = missing_message(MissingReason::UnknownDocument, destination);
             self.report(line, message.clone());
-            return LinkTarget::invalid(destination, message);
+            return LinkTarget::invalid(destination, MissingReason::UnknownDocument, message);
         }
 
         self.targets.push(id.clone());
@@ -657,7 +718,7 @@ impl LinkResolver<'_> {
         let Some(relative) = join_relative(doc_dir(&self.doc_id), path) else {
             let message = missing_message(MissingReason::EscapesRoot, destination);
             self.report(line, message.clone());
-            return LinkTarget::invalid(destination, message);
+            return LinkTarget::invalid(destination, MissingReason::EscapesRoot, message);
         };
 
         // `relative` is root-relative and free of `..`, so the joined path
@@ -679,8 +740,12 @@ impl LinkResolver<'_> {
                         missing_message(MissingReason::UnreadableAsset, destination)
                     ),
                 };
+                let reason = match error.kind() {
+                    std::io::ErrorKind::NotFound => MissingReason::UnknownAsset,
+                    _ => MissingReason::UnreadableAsset,
+                };
                 self.report(line, message.clone());
-                LinkTarget::invalid(destination, message)
+                LinkTarget::invalid(destination, reason, message)
             }
         }
     }
@@ -1493,16 +1558,61 @@ mod tests {
     #[test]
     fn invalid_link_attributes_escape_the_message() {
         assert_eq!(
-            invalid_link_attributes("link target not found: 'missing.md'"),
+            invalid_link_attributes(
+                "link target not found: 'missing.md'",
+                Some(MissingReason::UnknownDocument)
+            ),
             " class=\"doc-link-invalid\" data-wikicc-invalid \
-             aria-disabled=\"true\" title=\"link target not found: &#39;missing.md&#39;\""
+             aria-disabled=\"true\" \
+             data-wikicc-invalid-reason=\"unknown-document\" \
+             title=\"link target not found: &#39;missing.md&#39;\""
         );
         assert_eq!(
-            invalid_link_attributes("asset not found: 'a\"b&c<d>'"),
+            invalid_link_attributes(
+                "asset not found: 'a\"b&c<d>'",
+                Some(MissingReason::UnknownAsset)
+            ),
             " class=\"doc-link-invalid\" data-wikicc-invalid \
-             aria-disabled=\"true\" title=\"asset not found: \
+             aria-disabled=\"true\" data-wikicc-invalid-reason=\"unknown-asset\" \
+             title=\"asset not found: \
              &#39;a&quot;b&amp;c&lt;d&gt;&#39;\"",
             "the reason cannot terminate the attribute it is written into"
+        );
+    }
+
+    #[test]
+    fn every_missing_reason_names_a_stable_code() {
+        for (reason, code) in [
+            (MissingReason::NotRelative, "not-relative"),
+            (MissingReason::EscapesRoot, "escapes-root"),
+            (MissingReason::UnknownDocument, "unknown-document"),
+            (MissingReason::UnknownAnchor, "unknown-anchor"),
+            (MissingReason::UnknownAsset, "unknown-asset"),
+            (MissingReason::UnreadableAsset, "unreadable-asset"),
+        ] {
+            assert_eq!(reason.code(), code, "{reason:?} names its code");
+        }
+    }
+
+    #[test]
+    fn an_invalid_target_carries_the_reason_beside_the_message() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = ["a.md"];
+
+        let mut context = context(dir.path(), &docs);
+        let missing = {
+            let mut resolver = context.for_doc("a.md");
+            resolver.resolve("missing.md", 1)
+        };
+
+        assert_eq!(
+            missing.invalid_reason,
+            Some(MissingReason::UnknownDocument),
+            "the code rides beside the message"
+        );
+        assert_eq!(
+            missing.invalid_reason.map(MissingReason::code),
+            Some("unknown-document")
         );
     }
 

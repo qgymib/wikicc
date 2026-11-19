@@ -166,6 +166,11 @@ pub fn run(request: &Request, out: &mut dyn Write, err: &mut dyn Write) -> Resul
 
     let mut build = pool.install(|| site::build_site(&options.title, &options.input, &report.docs));
     build.bundle.home = home;
+    // The language the reader renders its copy in. No source named one and
+    // the payload stays without the key, the reader keeping its English.
+    build.bundle.language = options
+        .language
+        .map(|language| language.as_str().to_string());
     // The favicon joins the asset table like any document-referenced resource
     // (deduplicated by content); the rendered head addresses it by the
     // placeholder the registration returns.
@@ -1158,6 +1163,46 @@ mod tests {
         assert!(
             stdout.contains("(pages)"),
             "the summary names the configured format: {stdout}"
+        );
+    }
+
+    #[test]
+    fn the_language_setting_reaches_the_page_and_the_payload() {
+        let dir = fixture();
+        let out = dir.path().join("dist");
+        let mut zh_request = request(dir.path(), &out, OutputFormat::SingleHtml);
+        zh_request.settings.language = Some(crate::options::Language::Zh);
+
+        let (outcome, _, stderr) = execute(&zh_request);
+        outcome.expect("the build succeeds");
+        assert!(
+            !stderr.contains("warning"),
+            "a clean build reports no warning: {stderr}"
+        );
+
+        let artifact =
+            std::fs::read_to_string(out.join(writers::HTML_FILE_NAME)).expect("read artifact");
+        assert!(
+            artifact.contains(r#"<html lang="zh">"#),
+            "the page's lang attribute names the configured language"
+        );
+        assert!(
+            artifact.contains(r#""language":"zh""#),
+            "the payload carries the configured language"
+        );
+
+        // The default build stays untouched: English page, no payload key.
+        let plain_out = dir.path().join("plain");
+        let plain_request = request(dir.path(), &plain_out, OutputFormat::SingleHtml);
+        execute(&plain_request)
+            .0
+            .expect("the default build succeeds");
+        let plain = std::fs::read_to_string(plain_out.join(writers::HTML_FILE_NAME))
+            .expect("read plain artifact");
+        assert!(plain.contains(r#"<html lang="en">"#));
+        assert!(
+            !plain.contains(r#""language":"#),
+            "the default payload carries no language key"
         );
     }
 

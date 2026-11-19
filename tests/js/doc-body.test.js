@@ -47,6 +47,12 @@ import {
   walkDescendants,
   withGlobals,
 } from "./helpers/dom.js";
+import {
+  INVALID_ATTRIBUTE,
+  INVALID_REASON_ATTRIBUTE,
+} from "../../src/web/js/links.js";
+import { TAG_CHIP_ATTRIBUTE } from "../../src/web/js/tags.js";
+import { setLanguage } from "../../src/web/js/i18n.js";
 
 /**
  * Element stub: records markup writes and every query run over it.
@@ -314,6 +320,113 @@ test("fillDocBody leaves the tables alone unless asked", () => {
       [],
       "an explicit false is the same as absent",
     );
+  });
+});
+
+/* ---------- the copy the build wrote into the markup ---------- */
+
+/** A dead link shaped the way the build serialises one. */
+function addDeadLink(body, doc, destination, reason) {
+  const link = doc.createElement("a");
+  link.setAttribute("href", destination);
+  link.setAttribute(INVALID_ATTRIBUTE, "");
+  if (reason) {
+    link.setAttribute(INVALID_REASON_ATTRIBUTE, reason);
+  }
+  link.setAttribute("title", "link target not found: '" + destination + "'");
+  body.appendChild(link);
+  return link;
+}
+
+/** A tag chip shaped the way the build serialises one. */
+function addTagChip(body, doc, tag) {
+  const chip = doc.createElement("span");
+  chip.className = "doc-tag";
+  chip.setAttribute(TAG_CHIP_ATTRIBUTE, tag);
+  chip.setAttribute("title", "Browse this tag");
+  body.appendChild(chip);
+  return chip;
+}
+
+test("fillDocBody rewrites a dead link's title in the language in effect", () => {
+  withDocument(function (doc) {
+    const body = doc.createElement("div");
+    body.className = BODY_CLASS;
+    const link = addDeadLink(body, doc, "missing.md", "unknown-document");
+    fillDocBody(body, "<ignored/>");
+
+    assert.equal(
+      link.getAttribute("title"),
+      "link target not found: 'missing.md'",
+      "the English copy is verbatim the build warning",
+    );
+
+    setLanguage("zh");
+    try {
+      const retranslated = addDeadLink(
+        body,
+        doc,
+        "../outside.md",
+        "escapes-root",
+      );
+      fillDocBody(body, "<ignored/>");
+
+      assert.equal(
+        link.getAttribute("title"),
+        "找不到链接目标：'missing.md'",
+        "a body filled again after the language changed answers in it",
+      );
+      assert.equal(
+        retranslated.getAttribute("title"),
+        "链接目标逃出输入目录：'../outside.md'",
+        "the reason code picks the dictionary entry",
+      );
+    } finally {
+      setLanguage("en");
+    }
+  });
+});
+
+test("fillDocBody keeps the build's wording for an unknown reason code", () => {
+  withDocument(function (doc) {
+    const body = doc.createElement("div");
+    body.className = BODY_CLASS;
+    const link = addDeadLink(body, doc, "missing.md", "future-code");
+    fillDocBody(body, "<ignored/>");
+
+    assert.equal(
+      link.getAttribute("title"),
+      "link target not found: 'missing.md'",
+      "an unknown code is the build's business, not a blank title",
+    );
+  });
+});
+
+test("fillDocBody rewrites a tag chip's title in the language in effect", () => {
+  withDocument(function (doc) {
+    const body = doc.createElement("div");
+    body.className = BODY_CLASS;
+    const chip = addTagChip(body, doc, "rust");
+    fillDocBody(body, "<ignored/>");
+
+    assert.equal(
+      chip.getAttribute("title"),
+      "Browse this tag",
+      "the English copy is verbatim what the build wrote",
+    );
+
+    setLanguage("zh");
+    try {
+      fillDocBody(body, "<ignored/>");
+
+      assert.equal(
+        chip.getAttribute("title"),
+        "浏览此标签",
+        "the chip answers in the site's language",
+      );
+    } finally {
+      setLanguage("en");
+    }
   });
 });
 

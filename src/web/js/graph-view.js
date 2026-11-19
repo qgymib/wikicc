@@ -44,6 +44,7 @@ import { zoom as d3Zoom, zoomIdentity } from "d3-zoom";
 
 import * as Graph from "./graph.js";
 import { formatHash } from "./router.js";
+import { t } from "./i18n.js";
 
 /** Marker id of the arrowhead; the page holds a single graph. */
 var ARROW_ID = "wikicc-graph-arrow";
@@ -128,8 +129,11 @@ export function labelFor(doc) {
 
 /** Spoken description of a node, including how connected it is. */
 function describe(doc, degree) {
-  var connections = degree === 1 ? "1 connection" : degree + " connections";
-  return labelFor(doc) + ", " + connections;
+  var connections = t(
+    degree === 1 ? "graph.connections.one" : "graph.connections.other",
+    { n: degree },
+  );
+  return t("graph.node", { label: labelFor(doc), connections: connections });
 }
 
 /** Position one node element with an SVG transform. */
@@ -202,7 +206,7 @@ function createGraph(options, kind) {
     return inertGraph();
   }
   if (!docs.length) {
-    renderHint(container, "No documents");
+    renderHint(container, t("graph.empty"));
     return inertGraph();
   }
 
@@ -349,18 +353,24 @@ function createGraph(options, kind) {
       .attr("viewBox", "0 0 " + result.width + " " + result.height)
       .attr("preserveAspectRatio", "xMidYMid meet")
       .attr("role", "group")
-      .attr("aria-label", "Link graph");
+      .attr("aria-label", t("graph.aria"));
 
-    svg
-      .append("title")
-      .text(
-        "Link graph: " +
-          result.nodes.length +
-          (result.nodes.length === 1 ? " document" : " documents") +
-          ", " +
-          links.length +
-          (links.length === 1 ? " link" : " links"),
-      );
+    svg.append("title").text(
+      t("graph.summary", {
+        nodes: t(
+          result.nodes.length === 1
+            ? "graph.summaryNodes.one"
+            : "graph.summaryNodes.other",
+          { n: result.nodes.length },
+        ),
+        links: t(
+          links.length === 1
+            ? "graph.summaryLinks.one"
+            : "graph.summaryLinks.other",
+          { n: links.length },
+        ),
+      }),
+    );
 
     if (!simplified) {
       svg

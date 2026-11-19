@@ -183,8 +183,8 @@ These are the boundaries where an internal change becomes observable, so each
 one is stated as a contract rather than left to the implementation.
 
 - **The configuration file.** `.wikicc.json` sits in the input folder root and
-  is optional. It carries nine keys — `home`, `exclude`, `out`, `format`,
-  `title`, `favicon`, `password`, `strict`, `jobs` — exactly the `Settings`
+  is optional. It carries ten keys — `home`, `exclude`, `out`, `format`,
+  `title`, `favicon`, `password`, `strict`, `jobs`, `language` — exactly the `Settings`
   shape the command line and the `WIKICC_*` environment variables also express, and
   every value it names is a default: a set variable overrides it, an explicit
   flag overrides the variable. A relative `out` is resolved against the input folder (the

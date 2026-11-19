@@ -16,6 +16,7 @@ import * as Anchor from "./anchor.js";
 import * as DocBody from "./doc-body.js";
 import * as Links from "./links.js";
 import * as Router from "./router.js";
+import { t } from "./i18n.js";
 
 export function createNavigation(deps) {
   var store = deps.store;
@@ -357,7 +358,7 @@ export function createNavigation(deps) {
       article.textContent = "";
       var empty = document.createElement("p");
       empty.className = "doc-empty";
-      empty.textContent = "This site has no documents.";
+      empty.textContent = t("navigation.emptySite");
       article.appendChild(empty);
       docList.render(docFilter(), null);
       // No document is on screen, so the panel answers nothing: the empty

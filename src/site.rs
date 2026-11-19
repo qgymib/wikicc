@@ -164,6 +164,14 @@ pub struct SiteBundle {
     /// the field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// Language the reader's interface copy is rendered in, as the code the
+    /// reader's dictionaries are keyed by (`"en"`, `"zh"`).
+    ///
+    /// Absent from the JSON when no setting named one, so a site without
+    /// the setting serialises byte-identically to a build that never heard
+    /// of the field; the reader then renders its English copy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     /// Documents in scan order, i.e. sorted by id in byte order.
     pub docs: Vec<DocModel>,
     /// Link graph, sorted by `(from, to)`.
@@ -418,6 +426,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
             // Set by the pipeline from the configuration file; the assembly
             // stage itself only knows the documents it was handed.
             home: None,
+            language: None,
             docs: models,
             edges,
             tags,
@@ -1090,6 +1099,41 @@ mod tests {
 
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(value["home"], "a.md");
+    }
+
+    #[test]
+    fn a_configured_language_travels_in_the_payload_and_round_trips() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source("a.md", "A", "# A\n")];
+
+        let mut build = build_site("Site", dir.path(), &docs);
+        build.bundle.language = Some("zh".to_string());
+
+        let json = build.bundle.to_json();
+        assert!(
+            json.contains(r#""language":"zh""#),
+            "the payload carries the language beside the title and home: {json}"
+        );
+
+        let parsed: SiteBundle = serde_json::from_str(&json).expect("the payload parses back");
+        assert_eq!(parsed.language.as_deref(), Some("zh"));
+    }
+
+    #[test]
+    fn a_site_without_a_language_serialises_without_the_key() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source("a.md", "A", "# A\n")];
+
+        let build = build_site("Site", dir.path(), &docs);
+        let json = build.bundle.to_json();
+
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&json)
+                .expect("valid JSON")
+                .get("language")
+                .is_none(),
+            "no setting means no language key: {json}"
+        );
     }
 
     #[test]

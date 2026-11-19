@@ -1,6 +1,6 @@
 //! Site configuration file: `.wikicc.json` in the input folder root.
 //!
-//! The file is optional and carries nine keys, exactly the settings the
+//! The file is optional and carries ten keys, exactly the settings the
 //! command line can also express ([`Settings`]):
 //!
 //! - `home`: the document the reader shows when it is opened at an empty or
@@ -30,6 +30,9 @@
 //! - `jobs`: the worker threads the parallel build stages may use, spelled
 //!   as a JSON number of at least 1. Without the key the build uses every
 //!   available core.
+//! - `language`: the language the reader's interface copy is rendered in,
+//!   spelled `en` or `zh` (letter case ignored). Without the key the reader
+//!   renders its English copy.
 //!
 //! The keys and their value grammar are the entries of the settings spec
 //! (`src/options/spec.rs`), not a match arm here: the loader looks each key
@@ -154,7 +157,7 @@ pub fn load(input: &Path) -> Result<SiteConfig> {
 /// through [`parse`], so the default content can never drift away from what
 /// the loader accepts.
 pub fn template() -> &'static str {
-    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"favicon\": null,\n  \"password\": null,\n  \"strict\": null,\n  \"jobs\": null\n}\n"
+    "{\n  \"home\": null,\n  \"exclude\": null,\n  \"out\": null,\n  \"format\": null,\n  \"title\": null,\n  \"favicon\": null,\n  \"password\": null,\n  \"strict\": null,\n  \"jobs\": null,\n  \"language\": null\n}\n"
 }
 
 /// Write the default configuration file into `dir` and report it.
@@ -240,7 +243,7 @@ pub(crate) fn parse(bytes: &[u8], path: &Path, base: &Path) -> Result<SiteConfig
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::options::OutputFormat;
+    use crate::options::{Language, OutputFormat};
 
     /// Parse a configuration whose relative `out` resolves against `input`.
     fn parse_text(text: &str) -> Result<SiteConfig> {
@@ -452,6 +455,39 @@ mod tests {
         let error = parse_text(r#"{"format": 3}"#).expect_err("a number is not a format");
 
         assert_eq!(error.to_string(), "'format' must be a string");
+    }
+
+    #[test]
+    fn language_is_parsed_like_the_flag_value() {
+        let config = parse_text(r#"{"language": "zh"}"#).expect("valid config");
+
+        assert_eq!(config.settings.language, Some(Language::Zh));
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_null_language_is_unset() {
+        let config = parse_text(r#"{"language": null}"#).expect("valid config");
+
+        assert_eq!(config.settings.language, None);
+        assert!(config.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_language_is_a_hard_error() {
+        let error = parse_text(r#"{"language": "fr"}"#).expect_err("fr is not a language");
+
+        assert_eq!(
+            error.to_string(),
+            "invalid language 'fr', expected one of: en, zh"
+        );
+    }
+
+    #[test]
+    fn a_non_string_language_is_a_hard_error() {
+        let error = parse_text(r#"{"language": 3}"#).expect_err("a number is not a language");
+
+        assert_eq!(error.to_string(), "'language' must be a string");
     }
 
     #[test]

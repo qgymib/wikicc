@@ -34,6 +34,7 @@ import * as Banner from "./banner.js";
 import * as DocList from "./doc-list.js";
 import * as DocStore from "./doc-store.js";
 import * as GraphView from "./graph-view.js";
+import { setLanguage, t } from "./i18n.js";
 import * as PreviewView from "./preview-view.js";
 import * as SearchView from "./search-view.js";
 import * as Session from "./session.js";
@@ -52,7 +53,7 @@ function readPayload() {
     throw new Error("wikicc payload element is missing");
   }
   var payload = JSON.parse(element.textContent);
-  var problem = versionProblem(payload.v, "The site payload");
+  var problem = versionProblem(payload.v, t("payload.subject.site"));
   if (problem) {
     throw new Error(problem);
   }
@@ -88,6 +89,75 @@ function openedFromFile() {
   );
 }
 
+/**
+ * Write the shell's static copy in the language in effect.
+ *
+ * The template ships English — the skip link, the panel headings, the rail
+ * switches' first labels — because it must render before any script runs,
+ * while the build names the language only in the payload. The composition
+ * root rewrites those slots once here, after the language is known and
+ * before any view is built. The rail switches' labels are re-derived from
+ * state afterwards by `panels.restore()`, so the values written here are
+ * only the initial states' answers; the noscript sentence, which only a
+ * script-less page shows, stays English on purpose.
+ */
+function localizeShellCopy() {
+  /** Set `element.textContent` when the element exists. */
+  function say(id, text) {
+    var element = document.getElementById(id);
+    if (element) {
+      element.textContent = text;
+    }
+  }
+
+  /** Set one attribute when the element exists. */
+  function name(id, attribute, value) {
+    var element = document.getElementById(id);
+    if (element) {
+      element.setAttribute(attribute, value);
+    }
+  }
+
+  var skipLink = document.querySelector(".skip-link");
+  if (skipLink) {
+    skipLink.textContent = t("shell.skipLink");
+  }
+
+  name("sidebar", "aria-label", t("shell.sidebarAria"));
+  name("sidebar-toggle", "aria-label", t("shell.toggleList"));
+  name("sidebar-collapse", "aria-label", t("panels.list.hide"));
+  name("sidebar-collapse", "title", t("panels.list.hide"));
+  name("outline-toggle", "aria-label", t("panels.outline.show"));
+  name("outline-toggle", "title", t("panels.outline.show"));
+  name("doc-list", "aria-label", t("shell.docListAria"));
+  say("toc-heading", t("shell.tocHeading"));
+  name("toc", "aria-label", t("shell.tocAria"));
+  name("inspector", "aria-label", t("shell.inspectorAria"));
+  say("graph-local-heading", t("shell.graphLocalHeading"));
+  say("graph-global-heading", t("shell.graphGlobalHeading"));
+  ["graph-fit-local", "graph-fit-global"].forEach(function (id) {
+    name(id, "title", t("shell.fit"));
+    name(id, "aria-label", t("shell.fit"));
+    say(id, t("shell.fitShort"));
+  });
+  say("backlinks-heading", t("shell.backlinksHeading"));
+  name("backlinks", "aria-label", t("shell.backlinksAria"));
+  say("tags-heading", t("shell.tagsHeading"));
+  name("tags", "aria-label", t("shell.tagsAria"));
+  name("search-toggle", "aria-label", t("shell.search"));
+  name("search-toggle", "title", t("shell.searchTitle"));
+  name("theme-toggle", "aria-label", t("shell.theme"));
+  name("theme-toggle", "title", t("shell.theme"));
+  name("graph-global-toggle", "aria-label", t("shell.showGlobalGraph"));
+  name("graph-global-toggle", "title", t("shell.showGlobalGraph"));
+  name("graph-local-toggle", "aria-label", t("shell.showLocalGraph"));
+  name("graph-local-toggle", "title", t("shell.showLocalGraph"));
+  name("backlinks-toggle", "aria-label", t("shell.showBacklinks"));
+  name("backlinks-toggle", "title", t("shell.showBacklinks"));
+  name("tags-toggle", "aria-label", t("shell.showTags"));
+  name("tags-toggle", "title", t("shell.showTags"));
+}
+
 /** Theme the operating system asks for. */
 export function systemTheme() {
   if (typeof globalThis.matchMedia === "function") {
@@ -113,8 +183,7 @@ export function applyTheme(theme, toggle) {
 
   if (toggle) {
     var current = theme || systemTheme();
-    var label =
-      current === "light" ? "Switch to dark theme" : "Switch to light theme";
+    var label = current === "light" ? t("theme.dark") : t("theme.light");
     toggle.setAttribute("aria-pressed", current === "light" ? "true" : "false");
     toggle.setAttribute("aria-label", label);
     toggle.setAttribute("title", label);
@@ -136,6 +205,11 @@ export function start() {
   var ids = docs.map(function (doc) {
     return doc.id;
   });
+  // The language the build wrote into the payload: every view below draws
+  // its copy from the dictionaries it selects. A payload that predates the
+  // field — or names a code the bundle does not carry — keeps the English.
+  setLanguage(typeof bundle.language === "string" ? bundle.language : null);
+  localizeShellCopy();
   // The tag aggregation the build folded out of the bodies. A payload that
   // predates the key — or a manifest that never carried one — reads as no
   // tags at all.
@@ -386,9 +460,7 @@ export function start() {
   // browser refuses every one of those requests from a `file://` page. That is
   // said once, where the reader is looking, instead of once per navigation.
   if (store.isLazy() && openedFromFile()) {
-    banner.showMessage(
-      "This site is built in the pages format and needs to be served over HTTP(S); opening it from a file:// page cannot load its documents.",
-    );
+    banner.showMessage(t("banner.pagesFileProtocol"));
   }
 
   var docRender = createDocRender({
@@ -548,11 +620,13 @@ export function start() {
         ? bundle.stats.assets
         : 0;
     stats.textContent =
-      docs.length +
-      (docs.length === 1 ? " document" : " documents") +
+      t(docs.length === 1 ? "stats.documents.one" : "stats.documents.other", {
+        n: docs.length,
+      }) +
       " · " +
-      assets +
-      (assets === 1 ? " asset" : " assets");
+      t(assets === 1 ? "stats.assets.one" : "stats.assets.other", {
+        n: assets,
+      });
   }
 
   globalThis.addEventListener("hashchange", function () {

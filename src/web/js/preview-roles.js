@@ -53,11 +53,7 @@
 import * as Links from "./links.js";
 import * as Preview from "./preview.js";
 import * as DocBody from "./doc-body.js";
-import {
-  MISSING_TITLE,
-  PREVIEW_LABEL,
-  UNLOCK_SUBMIT_TEXT,
-} from "./preview-panel.js";
+import { t } from "./i18n.js";
 
 /**
  * Attribute marking the popover as a notice rather than a preview.
@@ -347,7 +343,7 @@ export function createPreviewRoles(deps) {
     // Nothing of a previous preview, loading mark or error may survive: the
     // notice owns the panel.
     panel.body().textContent = "";
-    panel.title().textContent = MISSING_TITLE;
+    panel.title().textContent = t("preview.missingTitle");
     panel.path().textContent = resolved.docId ? String(resolved.docId) : "";
     panel.noticeChapter().textContent = resolved.anchor
       ? String(resolved.anchor)
@@ -431,7 +427,7 @@ export function createPreviewRoles(deps) {
     input.value = "";
     input.disabled = false;
     submit.disabled = false;
-    submit.textContent = UNLOCK_SUBMIT_TEXT;
+    submit.textContent = t("preview.unlockSubmit");
     errorLine.hidden = true;
   }
 
@@ -446,7 +442,9 @@ export function createPreviewRoles(deps) {
 
     input.disabled = unlocking;
     submit.disabled = unlocking;
-    submit.textContent = unlocking ? UNLOCK_BUSY_TEXT : UNLOCK_SUBMIT_TEXT;
+    submit.textContent = unlocking
+      ? t("roles.unlockBusy")
+      : t("preview.unlockSubmit");
   }
 
   /** The reader is retyping: a failed attempt's answer stops applying. */
@@ -665,15 +663,15 @@ export function createPreviewRoles(deps) {
       root.removeAttribute(LOCKED_ATTRIBUTE);
     }
 
-    var label = PREVIEW_LABEL;
+    var label = t("preview.panelLabel");
     if (role === "missing") {
-      label = MISSING_LABEL;
+      label = t("roles.missing");
     } else if (role === "loading") {
-      label = LOADING_LABEL;
+      label = t("roles.loading");
     } else if (role === "error") {
-      label = FAILED_LABEL;
+      label = t("roles.failed");
     } else if (role === "locked") {
-      label = LOCKED_LABEL;
+      label = t("roles.locked");
     }
     root.setAttribute("aria-label", label);
   }

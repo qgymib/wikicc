@@ -2,7 +2,7 @@
 //!
 //! Environment variables are the second of the three setting sources: an
 //! explicit command line flag overrides them, and they override
-//! `.wikicc.json`. Nine variables name the settings both other surfaces
+//! `.wikicc.json`. Ten variables name the settings both other surfaces
 //! carry ([`crate::options::Settings`]), spelled with a `WIKICC_` prefix and
 //! in upper case only — one entry of the settings spec each
 //! (`src/options/spec.rs`), which is where their names and their value
@@ -34,6 +34,9 @@
 //!   spelled like the `--jobs` flag: a positive integer. Unset, the build
 //!   uses every available core; `1` keeps the parallel-capable stages
 //!   effectively sequential.
+//! - `WIKICC_LANGUAGE`: the language the reader's interface copy is
+//!   rendered in, spelled like the `--language` flag: `en` or `zh`, letter
+//!   case ignored.
 //!
 //! The reading rules follow the variable's role as an export in someone
 //! else's environment:
@@ -60,7 +63,7 @@
 use crate::error::Result;
 use crate::options::Settings;
 use crate::options::spec::{
-    EXCLUDE, FAVICON, FORMAT, HOME, JOBS, OUT, PASSWORD, STRICT, SettingSpec, TITLE,
+    EXCLUDE, FAVICON, FORMAT, HOME, JOBS, LANGUAGE, OUT, PASSWORD, STRICT, SettingSpec, TITLE,
 };
 
 /// Prefix of the environment variables this module reads.
@@ -95,6 +98,9 @@ pub const PASSWORD_VAR: &str = PASSWORD.var;
 
 /// Environment variable naming the worker-thread count of the build.
 pub const JOBS_VAR: &str = JOBS.var;
+
+/// Environment variable naming the reader interface language.
+pub const LANGUAGE_VAR: &str = LANGUAGE.var;
 
 /// Read the `WIKICC_*` settings from the process environment.
 ///
@@ -149,7 +155,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    use crate::options::OutputFormat;
+    use crate::options::{Language, OutputFormat};
 
     /// Parse a fixed set of name/value pairs, as the environment would hand
     /// them over.
@@ -169,6 +175,7 @@ mod tests {
             (FAVICON_VAR, "assets/icon.png"),
             (PASSWORD_VAR, "global secret"),
             (JOBS_VAR, "4"),
+            (LANGUAGE_VAR, "zh"),
         ])
         .expect("the variables parse");
 
@@ -184,6 +191,7 @@ mod tests {
         assert_eq!(settings.favicon.as_deref(), Some("assets/icon.png"));
         assert_eq!(settings.password.as_deref(), Some("global secret"));
         assert_eq!(settings.jobs, Some(4));
+        assert_eq!(settings.language, Some(Language::Zh));
     }
 
     #[test]
@@ -279,6 +287,23 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "environment variable 'WIKICC_FORMAT': invalid format 'pdf', expected one of: single-html, html-dir, pages"
+        );
+    }
+
+    #[test]
+    fn the_language_variable_parses_letter_case_and_all_codes() {
+        let settings = pairs(&[(LANGUAGE_VAR, "ZH")]).expect("the variable parses");
+
+        assert_eq!(settings.language, Some(Language::Zh));
+    }
+
+    #[test]
+    fn an_unknown_language_is_a_hard_error_naming_the_variable() {
+        let error = pairs(&[(LANGUAGE_VAR, "fr")]).expect_err("fr is not a language");
+
+        assert_eq!(
+            error.to_string(),
+            "environment variable 'WIKICC_LANGUAGE': invalid language 'fr', expected one of: en, zh"
         );
     }
 

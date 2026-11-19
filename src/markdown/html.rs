@@ -562,7 +562,8 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
         // warned about — the one explanation that matters more than any
         // title the author wrote.
         if let Some(message) = &target.invalid {
-            self.html.push_str(&invalid_link_attributes(message));
+            self.html
+                .push_str(&invalid_link_attributes(message, target.invalid_reason));
         } else if let Some(title) = title {
             self.html.push_str(" title=\"");
             escape_into(&mut self.html, title);

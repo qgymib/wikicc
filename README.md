@@ -180,6 +180,8 @@ wikicc [OPTIONS] [INPUT_DIR]
                          list
   -j, --jobs <N>         Worker threads the parallel build stages may use;
                          overrides .wikicc.json [default: all cores]
+      --language <LANG>  Language the reader's interface copy is rendered
+                         in: en or zh; overrides .wikicc.json [default: en]
       --force            Overwrite the output directory without confirmation
   -q, --quiet            Suppress the summary line
       --init-config [DIR]
@@ -201,6 +203,7 @@ wikicc path/to/docs --favicon assets/icon.png
 WIKICC_PASSWORD="opensesame" wikicc path/to/docs # seal documents marked encrypt: true
 wikicc path/to/docs --password "opensesame"      # the same seal, but the password lands in the shell history
 wikicc path/to/docs --jobs 4              # cap the parallel build at four worker threads
+wikicc path/to/docs --language zh         # build the reader's interface copy in Chinese
 wikicc --init-config path/to/docs         # writes path/to/docs/.wikicc.json
 ```
 
@@ -224,11 +227,12 @@ upper case. The command line overrides the variables; the variables override
 | `WIKICC_FAVICON` | Favicon file relative to the input folder |
 | `WIKICC_PASSWORD` | Global password for documents whose front matter declares encryption |
 | `WIKICC_JOBS` | Worker threads the parallel build stages may use; a positive integer |
+| `WIKICC_LANGUAGE` | Language the reader's interface copy is rendered in; `en` or `zh` |
 
 A variable that is not set, or whose value is blank, did not speak: the next
 source down decides. A value that cannot be understood — an unknown format, an
 unparseable boolean, an empty exclusion entry — fails the build with an error
-naming the variable. Only the nine names above count; any other `WIKICC_*`
+naming the variable. Only the ten names above count; any other `WIKICC_*`
 variable in the environment is ignored, because that namespace belongs to
 other programs too. `--force`, `--quiet`, `--init-config` and the input
 directory exist only on the command line, never as variables.
@@ -261,6 +265,7 @@ by a flag or a set variable:
 | `password` | Global password for documents whose front matter declares encryption; read verbatim |
 | `strict` | Fail the build on warnings [default: `false`] |
 | `jobs` | Worker threads the parallel build stages may use, at least 1 [default: all cores] |
+| `language` | Language the reader's interface copy is rendered in, `en` or `zh` [default: `en`] |
 
 `home` is a document id — the path relative to the input folder, `/`
 separated, extension included — and a missing `.md` (or `.markdown`) suffix is
@@ -300,7 +305,8 @@ the executable at build time.
   "favicon": "assets/icon.png",
   "password": "opensesame",
   "strict": false,
-  "jobs": 4
+  "jobs": 4,
+  "language": "zh"
 }
 ```
 
@@ -308,13 +314,15 @@ the executable at build time.
 over it, and an explicit flag wins over the variable.**
 
 - `WIKICC_OUT`, `WIKICC_FORMAT`, `WIKICC_TITLE`, `WIKICC_STRICT`, `WIKICC_HOME`,
-  `WIKICC_EXCLUDE`, `WIKICC_FAVICON`, `WIKICC_PASSWORD` and `WIKICC_JOBS`
+  `WIKICC_EXCLUDE`, `WIKICC_FAVICON`, `WIKICC_PASSWORD`, `WIKICC_JOBS` and
+  `WIKICC_LANGUAGE`
   override their configured counterparts; the command line flags below override
   the variables again.
 - `--home` replaces the configured `home`.
 - `--exclude` **replaces** the configured list entirely; repeat the flag for
   several directories.
-- `--out`, `--format`, `--title`, `--favicon`, `--password` and `--jobs`
+- `--out`, `--format`, `--title`, `--favicon`, `--password`, `--jobs` and
+  `--language`
   override their configured counterparts.
 - A bare `--strict` turns the gate on and `--strict=false` turns it off,
   whatever the file says.
@@ -351,7 +359,8 @@ key unset:
   "favicon": null,
   "password": null,
   "strict": null,
-  "jobs": null
+  "jobs": null,
+  "language": null
 }
 ```
 

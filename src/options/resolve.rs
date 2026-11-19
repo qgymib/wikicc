@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::format::OutputFormat;
 use super::guards::{normalize, validate_input, validate_paths};
+use super::language::Language;
 use super::settings::{Request, Settings};
 use super::{normalize_candidate, normalize_excludes, normalize_favicon};
 use crate::error::{Error, Result};
@@ -53,6 +54,10 @@ pub struct Options {
     /// Worker threads the parallel build stages may use, exactly as the
     /// winning source wrote it; `None` uses every available core.
     pub jobs: Option<u32>,
+    /// The reader interface language, exactly as the winning source wrote
+    /// it; `None` means no source named one and the reader renders its
+    /// English copy.
+    pub language: Option<Language>,
 }
 
 impl Options {
@@ -122,6 +127,8 @@ impl Options {
             return Err(Error::InvalidInput("'jobs' must be at least 1".to_string()));
         }
 
+        let language = cli.language.or(env.language).or(file.language);
+
         Ok(Self {
             input: input.clone(),
             out: cli
@@ -149,6 +156,7 @@ impl Options {
             favicon,
             password,
             jobs,
+            language,
         })
     }
 
@@ -560,6 +568,61 @@ mod tests {
         assert_eq!(
             options.jobs, None,
             "no source spoke, the default is automatic"
+        );
+    }
+
+    #[test]
+    fn language_merges_from_every_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let request = Request {
+            input: dir.path().to_path_buf(),
+            settings: Settings {
+                language: Some(Language::En),
+                ..Settings::default()
+            },
+            force: false,
+            quiet: false,
+        };
+        let env = Settings {
+            language: Some(Language::Zh),
+            ..Settings::default()
+        };
+        let file = Settings {
+            language: Some(Language::Zh),
+            ..Settings::default()
+        };
+
+        let options = Options::resolve(&request, &env, &file).expect("valid settings");
+        assert_eq!(
+            options.language,
+            Some(Language::En),
+            "the command line wins"
+        );
+
+        let options = Options::resolve(
+            &Request {
+                input: dir.path().to_path_buf(),
+                settings: Settings::default(),
+                force: false,
+                quiet: false,
+            },
+            &env,
+            &file,
+        )
+        .expect("valid settings");
+        assert_eq!(
+            options.language,
+            Some(Language::Zh),
+            "the environment wins over the file"
+        );
+
+        let options = resolve_file(dir.path(), file).expect("valid settings");
+        assert_eq!(options.language, Some(Language::Zh));
+
+        let options = resolve_cli(dir.path(), Settings::default()).expect("valid settings");
+        assert_eq!(
+            options.language, None,
+            "no source spoke, the reader keeps its English copy"
         );
     }
 

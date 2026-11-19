@@ -83,28 +83,34 @@ export var FIT_PORTION = 0.92;
  * The standard actions of the viewer's window, in display order.
  *
  * `run` is resolved by the view against the live transform engine; `close`
- * is the viewer's own gesture and never reaches an engine. The icons are
- * single stroke paths in the site's 24-unit box, drawn by the shared
- * `.icon-button` styling.
+ * is the viewer's own gesture and never reaches an engine. Each action
+ * names its label twice: `labelKey` is the dictionary entry the view
+ * resolves in the language in effect, and `label` is the English copy the
+ * tests and a fallback read. The icons are single stroke paths in the
+ * site's 24-unit box, drawn by the shared `.icon-button` styling.
  */
 export var STANDARD_ACTIONS = [
   {
     id: "zoom-in",
+    labelKey: "viewer.zoomIn",
     label: "Zoom in",
     icon: "M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M16.5 16.5 21 21M8 11h6M11 8v6",
   },
   {
     id: "zoom-out",
+    labelKey: "viewer.zoomOut",
     label: "Zoom out",
     icon: "M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M16.5 16.5 21 21M8 11h6",
   },
   {
     id: "reset",
+    labelKey: "viewer.reset",
     label: "Reset view",
     icon: "M1 4v6h6M3.51 15a9 9 0 1 0 2.13-9.36L1 10",
   },
   {
     id: "close",
+    labelKey: "viewer.close",
     label: "Close viewer",
     icon: "M6 6l12 12M18 6 6 18",
   },

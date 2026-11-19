@@ -17,6 +17,7 @@ import * as Diagrams from "./diagrams.js";
 import * as DiagramView from "./diagram-view.js";
 import * as DocBody from "./doc-body.js";
 import * as LockView from "./lock-view.js";
+import { t } from "./i18n.js";
 
 /** Class of the paragraph shown while a document is being fetched. */
 export var LOADING_CLASS = "doc-loading";
@@ -67,7 +68,7 @@ export function createDocRender(deps) {
   function renderLoading(id) {
     var loading = document.createElement("p");
     loading.className = LOADING_CLASS;
-    loading.textContent = "Loading " + id + " \u2026";
+    loading.textContent = t("docRender.loading", { id: id });
 
     mountArticle();
     article.appendChild(loading);
@@ -80,17 +81,13 @@ export function createDocRender(deps) {
   function renderLoadError(route) {
     var failed = document.createElement("p");
     failed.className = "doc-empty";
-    failed.textContent = "This document could not be loaded.";
+    failed.textContent = t("docRender.failed");
 
     mountArticle();
     article.appendChild(failed);
     toc.render([], route.id);
     document.title = siteTitle;
-    banner.showMessage(
-      "Could not load " +
-        route.id +
-        " \u2014 the file is missing, or the site is not being served over HTTP.",
-    );
+    banner.showMessage(t("docRender.loadFailedBanner", { id: route.id }));
   }
 
   /** Whether the document's body is sealed and only its title is public. */
@@ -124,8 +121,7 @@ export function createDocRender(deps) {
 
     var note = document.createElement("p");
     note.className = LOCKED_CLASS;
-    note.textContent =
-      "This document is encrypted. Its contents stay hidden until it is unlocked.";
+    note.textContent = t("docRender.lockedNote");
 
     mountArticle();
     // The lock page is a centered composition, not a column of prose: the

@@ -12,6 +12,7 @@
  *
  * Pure: no DOM. `node --test` drives it directly.
  */
+import { t } from "./i18n.js";
 
 /** The payload format version this reader speaks. */
 export var PAYLOAD_VERSION = 1;
@@ -20,29 +21,26 @@ export var PAYLOAD_VERSION = 1;
  * The problem with `value` as the payload format version of `what`, or
  * `null` when this reader speaks it.
  *
- * `what` names the surface the value came from — "The site payload", "The
- * document chunk", "The search corpus" — so the refusal says which file it
- * turned away. A missing field and anything other than the version above
- * are refused alike: both mean the artifact was not built by a compatible
- * wikicc, and neither is something rendering could survive.
+ * `what` names the surface the value came from — the site payload, the
+ * document chunk, the search corpus — so the refusal says which file it
+ * turned away; the callers pass the subject in the language in effect, and
+ * an unnamed surface falls back to the plain one. A missing field and
+ * anything other than the version above are refused alike: both mean the
+ * artifact was not built by a compatible wikicc, and neither is something
+ * rendering could survive.
  */
 export function versionProblem(value, what) {
-  var subject = typeof what === "string" && what ? what : "The payload";
+  var subject =
+    typeof what === "string" && what ? what : t("payload.subject.fallback");
   if (value === undefined || value === null) {
-    return (
-      subject +
-      " carries no payload format version; rebuild the site with wikicc to read it."
-    );
+    return t("payload.noVersion", { subject: subject });
   }
   if (value !== PAYLOAD_VERSION) {
-    return (
-      subject +
-      " was built for payload format version " +
-      value +
-      ", and this reader speaks version " +
-      PAYLOAD_VERSION +
-      "; rebuild the site with a matching version of wikicc to read it."
-    );
+    return t("payload.versionMismatch", {
+      subject: subject,
+      found: String(value),
+      expected: String(PAYLOAD_VERSION),
+    });
   }
   return null;
 }

@@ -117,10 +117,12 @@ fn unresolvable_targets_keep_their_destination_and_are_marked_invalid() {
     assert!(
         readme.contains(
             "<a href=\"missing.md\" class=\"doc-link-invalid\" data-wikicc-invalid \
-             aria-disabled=\"true\" title=\"link target not found: &#39;missing.md&#39;\">"
+             aria-disabled=\"true\" data-wikicc-invalid-reason=\"unknown-document\" \
+             title=\"link target not found: &#39;missing.md&#39;\">"
         ),
         "an unknown document must be marked so the reader shows the dead end \
-         and stops the click\nhtml: {readme}"
+         and stops the click, with the reason code the reader localizes by\n\
+         html: {readme}"
     );
     assert!(
         readme.contains("src=\"../outside.png\""),
@@ -366,7 +368,8 @@ fn definition_destinations_are_resolved_like_inline_links() {
     assert!(
         html.contains(
             "<a href=\"missing.md\" class=\"doc-link-invalid\" data-wikicc-invalid \
-             aria-disabled=\"true\" title=\"link target not found: &#39;missing.md&#39;\">\
+             aria-disabled=\"true\" data-wikicc-invalid-reason=\"unknown-document\" \
+             title=\"link target not found: &#39;missing.md&#39;\">\
              missing.md</a>"
         ),
         "an unresolvable definition keeps its destination and is marked\nhtml: {html}"

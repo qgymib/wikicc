@@ -706,6 +706,31 @@ fn the_page_is_a_utf8_html_document() {
 }
 
 #[test]
+fn the_page_carries_the_configured_language() {
+    // A site built in Chinese names its language in the page's `lang`
+    // attribute and the payload both; a site that names none keeps the
+    // English page and a payload without the key, exactly as earlier
+    // builds wrote them.
+    let mut zh = build(&fixture_root(), "Fixture");
+    zh.language = Some("zh".to_string());
+    let page = render(&zh);
+
+    assert!(page.html.contains(r#"<html lang="zh">"#));
+    let value: serde_json::Value =
+        serde_json::from_str(payload_of(&page.html)).expect("payload is valid JSON");
+    assert_eq!(value["language"], "zh");
+
+    let plain = render(&build(&fixture_root(), "Fixture"));
+    assert!(plain.html.contains(r#"<html lang="en">"#));
+    let plain_value: serde_json::Value =
+        serde_json::from_str(payload_of(&plain.html)).expect("payload is valid JSON");
+    assert!(
+        plain_value.get("language").is_none(),
+        "no setting means no language key"
+    );
+}
+
+#[test]
 fn the_payload_is_embedded_and_parses() {
     let bundle = build(&fixture_root(), "Fixture");
     let page = render(&bundle);
@@ -2286,6 +2311,35 @@ fn the_default_format_writes_one_self_contained_page() {
     assert!(
         page.contains("data:image/svg+xml"),
         "the fixture logo must be inlined as a data URI"
+    );
+}
+
+#[test]
+fn the_language_flag_reaches_the_page_and_the_manifest() {
+    // The binary half of the language surface: `--language zh` builds a
+    // Chinese page and, in the pages format, a Chinese manifest, while the
+    // default build stays English on every surface.
+    let zh = tempfile::tempdir().expect("temp dir");
+    let output = build_with(&fixture_root(), zh.path(), &["--language", "zh"]);
+    assert!(output.status.success(), "{}", stderr_of(&output));
+
+    let page = std::fs::read_to_string(zh.path().join(HTML_FILE_NAME)).expect("read the page");
+    assert!(page.contains(r#"<html lang="zh">"#));
+    assert!(page.contains(r#""language":"zh""#));
+
+    let pages_out = tempfile::tempdir().expect("temp dir");
+    let output = build_with(
+        &fixture_root(),
+        pages_out.path(),
+        &["--format", "pages", "--language", "zh"],
+    );
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let shell =
+        std::fs::read_to_string(pages_out.path().join(HTML_FILE_NAME)).expect("read the shell");
+    assert!(shell.contains(r#"<html lang="zh">"#));
+    assert!(
+        shell.contains(r#""language":"zh""#),
+        "the manifest carries it too"
     );
 }
 

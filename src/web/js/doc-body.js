@@ -36,6 +36,9 @@
 import * as TableView from "./table-view.js";
 import * as DiagramView from "./diagram-view.js";
 import * as MathView from "./math-view.js";
+import * as Links from "./links.js";
+import { TAG_CHIP_ATTRIBUTE } from "./tags.js";
+import { t } from "./i18n.js";
 
 /** Class every document body carries; the stylesheet keys the typography off it. */
 export var BODY_CLASS = "doc-body";
@@ -313,8 +316,14 @@ function fold(body, chapter, button) {
   }
 
   button.setAttribute("aria-expanded", hidden ? "false" : "true");
-  button.setAttribute("aria-label", hidden ? EXPAND_LABEL : COLLAPSE_LABEL);
-  button.setAttribute("title", hidden ? EXPAND_LABEL : COLLAPSE_LABEL);
+  button.setAttribute(
+    "aria-label",
+    hidden ? t(EXPAND_LABEL_KEY) : t(COLLAPSE_LABEL_KEY),
+  );
+  button.setAttribute(
+    "title",
+    hidden ? t(EXPAND_LABEL_KEY) : t(COLLAPSE_LABEL_KEY),
+  );
   if (hidden) {
     chapter.heading.setAttribute("data-collapsed", "");
   } else {
@@ -322,9 +331,9 @@ function fold(body, chapter, button) {
   }
 }
 
-/** Labels the arrow wears, in the language the rest of the reader is written in. */
-var COLLAPSE_LABEL = "Collapse section";
-var EXPAND_LABEL = "Expand section";
+/** The dictionary keys the fold arrow's two states answer through. */
+var COLLAPSE_LABEL_KEY = "fold.collapse";
+var EXPAND_LABEL_KEY = "fold.expand";
 
 /** Build the arrow of one chapter. */
 function createToggle(doc) {
@@ -332,8 +341,8 @@ function createToggle(doc) {
   button.className = TOGGLE_CLASS;
   button.setAttribute("type", "button");
   button.setAttribute("aria-expanded", "true");
-  button.setAttribute("aria-label", COLLAPSE_LABEL);
-  button.setAttribute("title", COLLAPSE_LABEL);
+  button.setAttribute("aria-label", t(COLLAPSE_LABEL_KEY));
+  button.setAttribute("title", t(COLLAPSE_LABEL_KEY));
 
   var svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -373,9 +382,9 @@ function buttonOf(event, className) {
 /** Selector for the code blocks the build emits; the DOM layer queries with it. */
 var CODE_SELECTOR = "pre.code";
 
-/** Labels the button wears, in the language the rest of the reader is written in. */
-var COPY_LABEL = "Copy code";
-var COPIED_LABEL = "Copied";
+/** The dictionary keys the copy button's two states answer through. */
+var COPY_LABEL_KEY = "copy.code";
+var COPIED_LABEL_KEY = "copy.copied";
 
 /** How long the copied state stays on the button, in milliseconds. */
 var COPY_FEEDBACK_MS = 1600;
@@ -493,8 +502,8 @@ function createCopyButton(doc) {
   var button = doc.createElement("button");
   button.className = COPY_BUTTON_CLASS;
   button.setAttribute("type", "button");
-  button.setAttribute("aria-label", COPY_LABEL);
-  button.setAttribute("title", COPY_LABEL);
+  button.setAttribute("aria-label", t(COPY_LABEL_KEY));
+  button.setAttribute("title", t(COPY_LABEL_KEY));
 
   var svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -628,14 +637,14 @@ function markCopied(button) {
   }
 
   button.setAttribute("data-copied", "");
-  button.setAttribute("aria-label", COPIED_LABEL);
-  button.setAttribute("title", COPIED_LABEL);
+  button.setAttribute("aria-label", t(COPIED_LABEL_KEY));
+  button.setAttribute("title", t(COPIED_LABEL_KEY));
 
   button.__wikiccCopyTimer = globalThis.setTimeout(function () {
     button.__wikiccCopyTimer = null;
     button.removeAttribute("data-copied");
-    button.setAttribute("aria-label", COPY_LABEL);
-    button.setAttribute("title", COPY_LABEL);
+    button.setAttribute("aria-label", t(COPY_LABEL_KEY));
+    button.setAttribute("title", t(COPY_LABEL_KEY));
   }, COPY_FEEDBACK_MS);
 }
 
@@ -656,8 +665,53 @@ function markCopied(button) {
  *
  * Returns `body`, so a call can sit at the head of an expression.
  */
+
+/**
+ * Rewrite the copy the build wrote into the body's own attributes.
+ *
+ * Two slots in the markup the build serialises speak English: a dead link's
+ * `title`, which quotes the build warning's wording, and a tag chip's
+ * `title`. Both travel in the payload verbatim, but the dictionaries the
+ * reader was built with name the language the site was built in, so the
+ * enhancement rewrites them in that language before the body is inserted —
+ * no-JS pages and the build warning itself keep the English as the
+ * fallback, and an unknown reason code keeps the build's wording too.
+ *
+ * The walk is a plain recursion over the children, not a selector query:
+ * the body is inserted into the article, the search preview and the hover
+ * preview alike, and every one of them runs this before the body is seen.
+ */
+function localizeBuildCopy(root) {
+  var children =
+    root && root.children ? Array.prototype.slice.call(root.children) : [];
+  children.forEach(function (child) {
+    if (!child || typeof child.getAttribute !== "function") {
+      return;
+    }
+
+    if (
+      child.tagName === "A" &&
+      child.getAttribute(Links.INVALID_ATTRIBUTE) !== null
+    ) {
+      var title = Links.invalidTitle(
+        child.getAttribute(Links.INVALID_REASON_ATTRIBUTE),
+        child.getAttribute("href"),
+      );
+      if (title !== null) {
+        child.setAttribute("title", title);
+      }
+    } else if (child.getAttribute(TAG_CHIP_ATTRIBUTE) !== null) {
+      child.setAttribute("title", t("tags.browseTitle"));
+    }
+
+    localizeBuildCopy(child);
+  });
+}
+
 export function fillDocBody(body, html, options) {
   body.innerHTML = html;
+
+  localizeBuildCopy(body);
 
   if (options && options.codeCopy) {
     enhanceCodeCopy(body);

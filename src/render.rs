@@ -24,6 +24,8 @@
 //!   escaped so a document that contains `</script>` cannot terminate the
 //!   script element;
 //! - `{{ title }}` is the site title, escaped by the engine's HTML auto-escaper.
+//! - `{{ lang }}` is the language code the page's `lang` attribute carries:
+//!   the configured reader interface language, else `en`.
 //! - `{{ favicon|safe }}` is the address the page head's favicon link carries:
 //!   the opaque asset placeholder of the site favicon, which the writers
 //!   expand like every other resource. The pipeline resolves the value — the
@@ -166,7 +168,8 @@ pub fn render_site(bundle: &SiteBundle, favicon: &str) -> Result<RenderedSite> {
     }
 
     let payload = escape_json_for_script(&bundle.to_json());
-    let html = render_template(&bundle.title, css, js, &payload, favicon)?;
+    let lang = bundle.language.as_deref().unwrap_or("en");
+    let html = render_template(&bundle.title, lang, css, js, &payload, favicon)?;
 
     Ok(RenderedSite { html })
 }
@@ -256,6 +259,9 @@ struct Manifest<'a> {
     /// The configured home document, absent when `.wikicc.json` set none.
     #[serde(skip_serializing_if = "Option::is_none")]
     home: Option<&'a str>,
+    /// The reader interface language, absent when no setting named one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<&'a str>,
     mode: &'static str,
     docs: Vec<ManifestDoc<'a>>,
     edges: &'a [Edge],
@@ -419,6 +425,7 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
         v: PAYLOAD_FORMAT_VERSION,
         title: &bundle.title,
         home: bundle.home.as_deref(),
+        language: bundle.language.as_deref(),
         mode: MANIFEST_MODE,
         docs: bundle
             .docs
@@ -438,7 +445,8 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
     let payload = escape_json_for_script(
         &serde_json::to_string(&manifest).expect("a manifest always serialises to JSON"),
     );
-    let html = render_template(&bundle.title, css, js, &payload, favicon)?;
+    let lang = bundle.language.as_deref().unwrap_or("en");
+    let html = render_template(&bundle.title, lang, css, js, &payload, favicon)?;
 
     let corpus = SearchCorpus {
         v: PAYLOAD_FORMAT_VERSION,
@@ -475,6 +483,7 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
 /// costs microseconds next to the multi-megabyte bundle it carries.
 fn render_template(
     title: &str,
+    lang: &str,
     css: &str,
     js: &str,
     payload: &str,
@@ -492,6 +501,7 @@ fn render_template(
     template
         .render(context! {
             title => title,
+            lang => lang,
             css => css,
             js => js,
             payload => payload,
@@ -1185,6 +1195,58 @@ mod tests {
                 .get("home")
                 .is_none(),
             "no configuration means no home key: {manifest}"
+        );
+    }
+
+    #[test]
+    fn the_configured_language_reaches_the_page_and_the_manifest() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
+        let mut bundle = build.bundle;
+        bundle.language = Some("zh".to_string());
+
+        let site = render_site(&bundle, FAVICON).expect("render");
+        assert!(
+            site.html.contains(r#"<html lang="zh">"#),
+            "the page's lang attribute names the language"
+        );
+        let payload: serde_json::Value =
+            serde_json::from_str(payload_of(&site.html)).expect("payload JSON");
+        assert_eq!(payload["language"], "zh");
+
+        let rendered = render_pages(&bundle, FAVICON).expect("render");
+        assert!(
+            rendered.shell.html.contains(r#"<html lang="zh">"#),
+            "the pages shell carries the language too"
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
+        assert_eq!(manifest["language"], "zh");
+    }
+
+    #[test]
+    fn a_site_without_a_language_renders_english_and_no_key() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site("Site", dir.path(), &[source("a.md", "A", "# A\n")]);
+
+        let site = render_site(&build.bundle, FAVICON).expect("render");
+        assert!(
+            site.html.contains(r#"<html lang="en">"#),
+            "the default is the English reader"
+        );
+        let payload: serde_json::Value =
+            serde_json::from_str(payload_of(&site.html)).expect("payload JSON");
+        assert!(
+            payload.get("language").is_none(),
+            "no setting means no language key: {payload}"
+        );
+
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
+        let manifest: serde_json::Value =
+            serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
+        assert!(
+            manifest.get("language").is_none(),
+            "the manifest stays without the key as well: {manifest}"
         );
     }
 }

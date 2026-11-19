@@ -62,6 +62,7 @@
  * selection out of view.
  */
 import { ELLIPSIS } from "./search.js";
+import { t } from "./i18n.js";
 
 /** Class of the panel root. */
 export var PANEL_CLASS = "search-panel";
@@ -275,7 +276,7 @@ export function createSearchPanel(options) {
 
     container.textContent = "";
     container.setAttribute("role", "dialog");
-    container.setAttribute("aria-label", PANEL_LABEL);
+    container.setAttribute("aria-label", t("search.panelLabel"));
     container.hidden = true;
 
     var field = document.createElement("div");
@@ -303,8 +304,8 @@ export function createSearchPanel(options) {
     input = document.createElement("input");
     input.className = INPUT_CLASS;
     input.setAttribute("type", "search");
-    input.setAttribute("placeholder", INPUT_PLACEHOLDER);
-    input.setAttribute("aria-label", INPUT_PLACEHOLDER);
+    input.setAttribute("placeholder", t("search.placeholder"));
+    input.setAttribute("aria-label", t("search.placeholder"));
     input.setAttribute("autocomplete", "off");
     input.setAttribute("spellcheck", "false");
     input.setAttribute("role", "combobox");
@@ -316,7 +317,7 @@ export function createSearchPanel(options) {
     clearButton = document.createElement("button");
     clearButton.className = CLEAR_CLASS;
     clearButton.setAttribute("type", "button");
-    clearButton.setAttribute("aria-label", CLEAR_LABEL);
+    clearButton.setAttribute("aria-label", t("search.clear"));
     clearButton.setAttribute("title", CLEAR_LABEL);
     clearButton.hidden = true;
     clearButton.addEventListener("click", onClearClick);
@@ -338,7 +339,7 @@ export function createSearchPanel(options) {
     results = document.createElement("div");
     results.className = RESULTS_CLASS;
     results.setAttribute("role", "listbox");
-    results.setAttribute("aria-label", "Matching passages");
+    results.setAttribute("aria-label", t("search.matchingAria"));
 
     preview = document.createElement("div");
     preview.className = PREVIEW_CLASS;
@@ -361,7 +362,7 @@ export function createSearchPanel(options) {
     // already satisfied and skip, leaving an empty box on screen.
     var empty = document.createElement("p");
     empty.className = EMPTY_CLASS;
-    empty.textContent = RESULTS_IDLE_LABEL;
+    empty.textContent = t("search.resultsIdle");
     results.appendChild(empty);
     onPreview(null);
   }
@@ -483,8 +484,12 @@ export function createSearchPanel(options) {
     }
 
     var global = mode === GLOBAL_MODE;
-    var label = global ? MODE_GLOBAL_TITLE : MODE_LOCAL_TITLE;
-    modeButton.textContent = global ? MODE_GLOBAL_LABEL : MODE_LOCAL_LABEL;
+    var label = global
+      ? t("search.modeGlobalTitle")
+      : t("search.modeLocalTitle");
+    modeButton.textContent = global
+      ? t("search.modeGlobal")
+      : t("search.modeLocal");
     modeButton.setAttribute("aria-pressed", global ? "true" : "false");
     modeButton.setAttribute("aria-label", label);
     modeButton.setAttribute("title", label);
@@ -653,7 +658,7 @@ export function createSearchPanel(options) {
       selected = null;
       var empty = document.createElement("p");
       empty.className = EMPTY_CLASS;
-      empty.textContent = RESULTS_IDLE_LABEL;
+      empty.textContent = t("search.resultsIdle");
       results.appendChild(empty);
       onPreview(null);
       return;
@@ -767,8 +772,8 @@ export function createSearchPanel(options) {
   function lockedMarker() {
     var marker = document.createElement("span");
     marker.className = LOCKED_CLASS;
-    marker.setAttribute("title", LOCKED_TITLE);
-    marker.textContent = LOCKED_LABEL;
+    marker.setAttribute("title", t("search.lockedTitle"));
+    marker.textContent = t("search.lockedLabel");
     return marker;
   }
 
@@ -887,7 +892,7 @@ export function createSearchPanel(options) {
 
     var loading = document.createElement("p");
     loading.className = EMPTY_CLASS;
-    loading.textContent = RESULTS_LOADING_LABEL;
+    loading.textContent = t("search.resultsLoading");
     results.appendChild(loading);
     onPreview(null);
   }
