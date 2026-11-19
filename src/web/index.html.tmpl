@@ -99,7 +99,9 @@
          the page's flow, so opening it never moves the article. The
          backlinks panel is the window's third view: not a picture but the
          list of the documents that link to the one being read, which the
-         build resolved and the payload carries. -->
+         build resolved and the payload carries. The tags panel is the
+         fourth: the aggregation the build collected from the bodies, whose
+         rows filter the document list. -->
         <section class="panel graph-panel"
                  id="graph-local-panel"
                  aria-labelledby="graph-local-heading">
@@ -133,6 +135,13 @@
             <h2 class="panel-heading" id="backlinks-heading">Backlinks</h2>
           </div>
           <nav class="backlinks" id="backlinks" aria-label="Backlinks">
+          </nav>
+        </section>
+        <section class="panel" id="tags-panel" aria-labelledby="tags-heading">
+          <div class="panel-header">
+            <h2 class="panel-heading" id="tags-heading">Tags</h2>
+          </div>
+          <nav class="tags" id="tags" aria-label="Tags">
           </nav>
         </section>
       </aside>
@@ -204,6 +213,18 @@
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <rect x="11" y="5" width="10" height="14" rx="2" />
             <path d="M2 12h6M5.5 9.5 8 12l-2.5 2.5" />
+          </svg>
+        </button>
+        <button class="icon-button"
+                id="tags-toggle"
+                type="button"
+                aria-label="Show tags"
+                aria-expanded="false"
+                aria-controls="tags-panel"
+                title="Show tags">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 4h7l9 9-7 7-9-9V4Z" />
+            <circle cx="8" cy="8" r="1.6" />
           </svg>
         </button>
       </div>

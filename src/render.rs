@@ -53,7 +53,7 @@ use crate::markdown::highlight::{light_theme_css, theme_css};
 use crate::markdown::sections::Block;
 use crate::markdown::toc::TocEntry;
 use crate::site::{
-    Edge, EncryptedBlob, PAYLOAD_FORMAT_VERSION, SiteBundle, Stats, flatten_headings,
+    Edge, EncryptedBlob, PAYLOAD_FORMAT_VERSION, SiteBundle, Stats, TagEntry, flatten_headings,
 };
 
 /// Page skeleton, with the four template variables below.
@@ -259,7 +259,16 @@ struct Manifest<'a> {
     mode: &'static str,
     docs: Vec<ManifestDoc<'a>>,
     edges: &'a [Edge],
+    /// The tag aggregation, absent when the site carries no tags — browsing
+    /// tags must not wait on any chunk, exactly like the link graph.
+    #[serde(skip_serializing_if = "no_tags")]
+    tags: &'a [TagEntry],
     stats: &'a Stats,
+}
+
+/// Whether a manifest's tag aggregation carries nothing, for `skip_serializing_if`.
+fn no_tags(tags: &&[TagEntry]) -> bool {
+    tags.is_empty()
 }
 
 /// One document as the chunk file carries it.
@@ -423,6 +432,7 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
             })
             .collect(),
         edges: &bundle.edges,
+        tags: &bundle.tags,
         stats: &bundle.stats,
     };
     let payload = escape_json_for_script(
@@ -885,6 +895,10 @@ mod tests {
             manifest["edges"][0]["to"], "b.md",
             "the graph travels in the manifest"
         );
+        assert!(
+            manifest.get("tags").is_none(),
+            "a site without tags serialises the manifest without the aggregation"
+        );
         assert_eq!(manifest["stats"]["documents"], 2);
 
         // One chunk per document, carrying everything the reader needs to open it.
@@ -919,6 +933,31 @@ mod tests {
 
         // The manifest hash addresses the chunk, so the reader can bust caches.
         assert_eq!(manifest["docs"][0]["hash"], chunk.hash.as_str());
+    }
+
+    #[test]
+    fn a_tagged_site_carries_the_tags_aggregation_in_the_manifest() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site(
+            "Site",
+            dir.path(),
+            &[
+                source("a.md", "A", "# A\n\n#rust\n"),
+                source("b.md", "B", "# B\n\n#rust #beginner\n"),
+            ],
+        );
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
+
+        let manifest: serde_json::Value =
+            serde_json::from_str(payload_of(&rendered.shell.html)).expect("manifest JSON");
+        assert_eq!(
+            manifest["tags"],
+            serde_json::json!([
+                { "tag": "beginner", "docs": ["b.md"] },
+                { "tag": "rust", "docs": ["a.md", "b.md"] },
+            ]),
+            "browsing tags must not wait on any chunk"
+        );
     }
 
     #[test]

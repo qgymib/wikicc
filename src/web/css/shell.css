@@ -27,6 +27,7 @@
 #graph-local-toggle,
 #graph-global-toggle,
 #backlinks-toggle,
+#tags-toggle,
 #outline-toggle {
   display: none;
 }

@@ -15,6 +15,10 @@ their chapter outline.
 - **Search** over titles, headings and body text, including CJK.
 - **Link graph** of the folder with zoom, pan and drag; clicking a node opens
   that document.
+- **Tags**: every `#tag` in a body becomes a chip, and the build aggregates
+  them into the payload; the reader's tags panel browses the site by tag —
+  selecting one filters the document list — and a chip in the article answers
+  with the same filter. A sealed document's tags stay secret with its body.
 - **Chapter outline** of the current document, following the section being read.
 - **Chapter folding**: an arrow beside a heading folds that chapter — and
   everything nested under it — down to its title, and unfolds it again. The

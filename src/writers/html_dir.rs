@@ -130,6 +130,7 @@ mod tests {
                 home: None,
                 docs: Vec::new(),
                 edges: Vec::new(),
+                tags: Vec::new(),
                 stats: Stats::default(),
             },
             front_matters: Vec::new(),

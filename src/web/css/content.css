@@ -192,12 +192,31 @@
 }
 
 /* Obsidian tags (`#tag`) and Typora math, both own-layer constructs. The tag
-   reads as a small chip; the math elements are placeholders the reader's
-   bundled math engine typesets in the browser — until it has (or when it
-   fails on a formula) they read as code, which is the documented fallback. */
+   reads as a small chip and doubles as a control: the build writes the
+   button role and the data attribute the reader filters through, so the
+   chip answers a click or a keyboard press by browsing the tag. The math
+   elements are placeholders the reader's bundled math engine typesets in
+   the browser — until it has (or when it fails on a formula) they read as
+   code, which is the documented fallback. */
 .doc-body .doc-tag {
   color: var(--accent-alt);
   font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.doc-body .doc-tag:hover,
+.doc-body .doc-tag:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.doc-body .doc-tag:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .doc-body .math-inline,

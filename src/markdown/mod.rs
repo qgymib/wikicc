@@ -47,7 +47,7 @@ pub(crate) mod parse;
 pub(crate) mod refdefs;
 pub(crate) mod transform;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ast::{OwnKind, OwnNode};
 use markdown::mdast::Node;
@@ -86,6 +86,12 @@ pub struct RenderedDoc {
     /// Plain text of the document: every text and code run, with block
     /// boundaries turned into single spaces and whitespace collapsed.
     pub text: String,
+    /// Tag names the body carries, deduplicated and sorted in byte order.
+    ///
+    /// The same inline sugar pass that renders `#tag` chips produces them, so
+    /// the tags a document claims are exactly the chips its HTML shows. The
+    /// site aggregation folds these per-document sets into the payload.
+    pub tags: Vec<String>,
     /// Raw YAML text of the front matter, without the `---` fences, when the
     /// document opens with one.
     ///
@@ -123,14 +129,16 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
     let footnotes = footnote_numbers(&tree);
     let mut definitions = refdefs::collect(&tree);
 
-    let (html, text, blocks) =
+    let (html, text, blocks, tags) =
         html::serialize(&tree, &headings, &footnotes, &mut definitions, rewriter);
+    let unique = tags.into_iter().collect::<BTreeSet<_>>();
 
     RenderedDoc {
         html,
         toc: build_toc(&headings),
         blocks,
         text: collapse_whitespace(&text),
+        tags: unique.into_iter().collect(),
         front_matter,
     }
 }
@@ -150,7 +158,7 @@ pub fn render_engine_html(source: &str) -> String {
     let footnotes = footnote_numbers(&tree);
     let mut definitions = refdefs::collect(&tree);
 
-    let (html, _, _) = html::serialize(
+    let (html, _, _, _) = html::serialize(
         &tree,
         &headings,
         &footnotes,

@@ -37,6 +37,7 @@ import * as GraphView from "./graph-view.js";
 import * as PreviewView from "./preview-view.js";
 import * as SearchView from "./search-view.js";
 import * as Session from "./session.js";
+import * as Tags from "./tags.js";
 import * as Toc from "./toc.js";
 import { createDocRender } from "./doc-render.js";
 import { createNavigation } from "./navigation.js";
@@ -135,6 +136,10 @@ export function start() {
   var ids = docs.map(function (doc) {
     return doc.id;
   });
+  // The tag aggregation the build folded out of the bodies. A payload that
+  // predates the key — or a manifest that never carried one — reads as no
+  // tags at all.
+  var bundleTags = Array.isArray(bundle.tags) ? bundle.tags : [];
   // The document the reader opens at an empty or unknown address, from the
   // `home` key of .wikicc.json; anything else falls back to the first one.
   var home = typeof bundle.home === "string" ? bundle.home : null;
@@ -194,6 +199,7 @@ export function start() {
   var graphLocalToggle = document.getElementById("graph-local-toggle");
   var graphGlobalToggle = document.getElementById("graph-global-toggle");
   var backlinksToggle = document.getElementById("backlinks-toggle");
+  var tagsToggle = document.getElementById("tags-toggle");
   var outlineToggle = document.getElementById("outline-toggle");
   // The floating window the graph's two panels live in: a press outside it
   // folds the window (see `createPanels`).
@@ -240,6 +246,46 @@ export function start() {
       navigation.navigate(id, anchor);
     },
   });
+
+  /**
+   * The tag aggregation, and the one selection it answers to.
+   *
+   * `activeTag` is the composition root's own state: the panel draws it, the
+   * document list filters through it, and every answer — a row in the panel,
+   * a chip in the article — walks the same path. Selecting the selected tag
+   * again puts the filter away.
+   */
+  var activeTag = null;
+
+  /** The ids the document list keeps while `activeTag` filters it. */
+  function docFilter() {
+    return activeTag ? Tags.docsOfTag(bundleTags, activeTag) : null;
+  }
+
+  /** Select `tag`, or put the selection away when it was the one selected. */
+  function setTagFilter(tag) {
+    activeTag = activeTag === tag ? null : tag || null;
+    tagsPanel.render(activeTag);
+    var current = navigation ? navigation.currentDoc() : null;
+    docList.render(docFilter(), current ? current.id : null);
+  }
+
+  // The floating window's fourth view: the tags the build collected, each
+  // row answering with the tag it carries. Drawn once at the start — the
+  // aggregation never changes while the page is up — and redrawn only when
+  // a selection moves.
+  var tagsPanel = Tags.createTagsPanel({
+    container: document.getElementById("tags"),
+    docs: docs,
+    tags: bundleTags,
+    onSelect: function (tag) {
+      setTagFilter(tag);
+    },
+    onNavigate: function (id) {
+      navigation.navigate(id, null);
+    },
+  });
+  tagsPanel.render(null);
 
   var toc = Toc.createToc({
     container: document.getElementById("toc"),
@@ -367,6 +413,7 @@ export function start() {
     graphLocalToggle: graphLocalToggle,
     graphGlobalToggle: graphGlobalToggle,
     backlinksToggle: backlinksToggle,
+    tagsToggle: tagsToggle,
     session: session,
     globalGraph: globalGraph,
     inspector: inspector,
@@ -377,6 +424,7 @@ export function start() {
     ids: ids,
     home: home,
     docList: docList,
+    docFilter: docFilter,
     localGraph: localGraph,
     globalGraph: globalGraph,
     toc: toc,
@@ -406,6 +454,40 @@ export function start() {
     session: session,
     content: content,
     currentDoc: navigation.currentDoc,
+  });
+
+  /* ---------- tags: the article's chips ---------- */
+
+  /**
+   * Answer a chip the click started on, wherever in the article it sits.
+   *
+   * A chip in the article is the tag it carries: selecting it filters the
+   * document list and unfolds the tag in the panel, and both come into view.
+   * The `preventDefault` also cancels the navigation a chip inside a link
+   * would otherwise start — the reader asked for the tag, not the page.
+   */
+  function answerTagChip(event) {
+    var target = event && event.target;
+    var chip =
+      target && typeof target.closest === "function"
+        ? target.closest(Tags.TAG_CHIP_SELECTOR)
+        : null;
+    if (!chip) {
+      return;
+    }
+
+    event.preventDefault();
+    setTagFilter(chip.getAttribute(Tags.TAG_CHIP_ATTRIBUTE));
+    panels.openTagsView();
+  }
+
+  // The build writes the button role on every chip, so a keyboard press
+  // promises the same answer; `Space` would otherwise scroll the page.
+  article.addEventListener("click", answerTagChip);
+  article.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" || event.key === " ") {
+      answerTagChip(event);
+    }
   });
 
   // An unlock anywhere in the reader is heard twice, in the order below:

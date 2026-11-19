@@ -169,6 +169,7 @@ pub fn seal_bundle(
     // first `Err` is the first failing document — the message a sequential
     // pass would have printed. A document that sealed clears its plaintext
     // body and carries the blob beside the public title.
+    let mut sealed_ids: Vec<String> = Vec::new();
     for (doc, result) in build.bundle.docs.iter_mut().zip(sealed) {
         let Some(blob) = result? else {
             continue;
@@ -179,6 +180,21 @@ pub fn seal_bundle(
         doc.blocks = Vec::new();
         doc.text = String::new();
         doc.enc = Some(blob);
+        sealed_ids.push(doc.id.clone());
+    }
+
+    // A tag is body content: it was collected from the same walk that
+    // produced the body now sealed. The aggregation therefore loses every
+    // sealed document, and entries whose last document sealed are dropped —
+    // the public surface of a locked document is its id and title, never a
+    // word of what its body said.
+    if !sealed_ids.is_empty() {
+        for entry in &mut build.bundle.tags {
+            entry
+                .docs
+                .retain(|doc| !sealed_ids.iter().any(|id| id == doc));
+        }
+        build.bundle.tags.retain(|entry| !entry.docs.is_empty());
     }
 
     prune_assets(build, favicon_placeholder);
@@ -507,6 +523,42 @@ mod tests {
                 .salt
                 .is_empty(),
             "the salt travels in the artifact"
+        );
+    }
+
+    #[test]
+    fn a_sealed_document_loses_its_tags_but_a_public_one_keeps_them() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [
+            SourceDoc {
+                id: "00.md".to_string(),
+                path: dir.path().join("00.md"),
+                title: "Locked".to_string(),
+                text: "---\nencrypt: true\n---\n\n# Locked\n\nsecret #private #shared\n"
+                    .to_string(),
+            },
+            SourceDoc {
+                id: "01.md".to_string(),
+                path: dir.path().join("01.md"),
+                title: "Public".to_string(),
+                text: "# Public\n\nopen #shared\n".to_string(),
+            },
+        ];
+        let mut build = build_site("Site", dir.path(), &docs);
+        let favicon = build.register_favicon("logo.svg", b"<svg/>");
+        seal_bundle(&mut build, Some(GLOBAL), &favicon).expect("seals");
+
+        assert!(
+            build.bundle.docs[0].enc.is_some(),
+            "the first document is sealed"
+        );
+        assert_eq!(
+            build.bundle.tags,
+            vec![crate::site::TagEntry {
+                tag: "shared".to_string(),
+                docs: vec!["01.md".to_string()],
+            }],
+            "a tag is body content: the locked document's words never reach the payload"
         );
     }
 

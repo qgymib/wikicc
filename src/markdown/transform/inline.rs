@@ -676,9 +676,28 @@ mod tests {
         let doc = render_document("tagged #v2 here\n");
 
         assert!(
-            doc.html.contains("<span class=\"doc-tag\">#v2</span>"),
+            doc.html.contains("<span class=\"doc-tag\" data-tag=\"v2\" role=\"button\" tabindex=\"0\" title=\"Browse this tag\">#v2</span>"),
             "html: {}",
             doc.html
+        );
+        assert_eq!(doc.tags, vec!["v2"], "the walk reports what it rendered");
+    }
+
+    #[test]
+    fn tags_are_collected_deduplicated_and_sorted() {
+        let doc = render_document("#v2 first, #alpha second, #v2 again\n");
+
+        assert_eq!(doc.tags, vec!["alpha", "v2"]);
+        assert_eq!(
+            doc.html.matches("data-tag=").count(),
+            3,
+            "every chip keeps its own data attribute: {}",
+            doc.html
+        );
+        assert!(
+            doc.text.contains("#alpha") && doc.text.contains("#v2"),
+            "the search text keeps the tags as written: {}",
+            doc.text
         );
     }
 

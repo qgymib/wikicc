@@ -16,6 +16,10 @@ import {
   DOC_LINK_SELECTOR,
 } from "../../../src/web/js/links.js";
 import {
+  TAG_CHIP_ATTRIBUTE,
+  TAG_CHIP_SELECTOR,
+} from "../../../src/web/js/tags.js";
+import {
   createFakeElement,
   createFakeTimers,
   createTextNode,
@@ -44,12 +48,15 @@ const SHELL_IDS = [
   "graph-local-toggle",
   "graph-global-toggle",
   "backlinks-toggle",
+  "tags-toggle",
   "outline-toggle",
   "drawer-backdrop",
   "theme-toggle",
   "doc-list",
   "toc",
   "backlinks",
+  "tags",
+  "tags-panel",
   "graph-local",
   "graph-global",
   "graph-fit-local",
@@ -114,6 +121,12 @@ export function fakeElement(tagName) {
   element.closest = function (selector) {
     if (selector === "button") {
       return element.tagName === "BUTTON" ? element : null;
+    }
+    if (selector === TAG_CHIP_SELECTOR) {
+      return hasClass(element, "doc-tag") &&
+        element.getAttribute(TAG_CHIP_ATTRIBUTE) !== null
+        ? element
+        : null;
     }
     if (selector !== DOC_LINK_SELECTOR) {
       return null;
@@ -312,13 +325,16 @@ export async function withSession(options, body) {
   // `options.payload` replaces the whole payload, which is how a pages test
   // seeds its own manifest.
   let embedded = null;
-  if (options.docs || options.edges) {
+  if (options.docs || options.edges || options.tags) {
     embedded = payload();
     if (options.docs) {
       embedded.docs = options.docs;
     }
     if (options.edges) {
       embedded.edges = options.edges;
+    }
+    if (options.tags) {
+      embedded.tags = options.tags;
     }
   }
   payloadElement.textContent = JSON.stringify(

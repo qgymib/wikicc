@@ -7,6 +7,8 @@
 //!   the plain text used by the search index;
 //! - [`Edge`] per resolved internal link, deduplicated, self-loops dropped and
 //!   sorted by `(from, to)`;
+//! - [`TagEntry`] per collected `#tag`, sorted by name, each listing the
+//!   documents that carry it in id order;
 //! - [`Stats`]: how many documents and unique assets the site has, and how many
 //!   bytes the assets occupy.
 //!
@@ -21,7 +23,7 @@
 //! writers turn that into a `data:` URI or an `assets/…` path. [`SiteBuild`]
 //! therefore returns the [`AssetTable`] alongside the payload.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -94,6 +96,21 @@ pub struct Edge {
     pub to: String,
 }
 
+/// One collected `#tag` and the documents that carry it.
+///
+/// The aggregation lists the tag's documents in id order (the payload's scan
+/// order), so the reader can browse or filter by tag without recomputing
+/// anything. The list is absent from the JSON when the site carries no tags
+/// at all — the bundle field is skipped then — so a site without tags
+/// serialises exactly as before the feature existed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagEntry {
+    /// Tag name as the author wrote it after the `#`.
+    pub tag: String,
+    /// Ids of the documents that carry the tag, in id (scan) order.
+    pub docs: Vec<String>,
+}
+
 /// The sealed body of one encrypted document, as the artifact carries it.
 ///
 /// Everything except the format version is base64. The reader derives the key
@@ -151,6 +168,14 @@ pub struct SiteBundle {
     pub docs: Vec<DocModel>,
     /// Link graph, sorted by `(from, to)`.
     pub edges: Vec<Edge>,
+    /// Tag aggregation, sorted by tag name; each entry's documents follow id
+    /// order.
+    ///
+    /// Absent from the JSON when no document carries a tag, so a site without
+    /// tags serialises byte-identically to a build that never heard of the
+    /// feature — and a payload that predates the key still parses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<TagEntry>,
     /// Document and asset counters.
     pub stats: Stats,
 }
@@ -250,6 +275,31 @@ pub fn build_edges(links: &[(String, String)]) -> Vec<Edge> {
         .collect()
 }
 
+/// Fold the documents' collected tags into the payload's aggregation.
+///
+/// Every `(tag, doc)` pair lands in a [`BTreeMap`] keyed by the tag name with
+/// a [`BTreeSet`] of document ids, so the entries come out sorted by tag and
+/// each entry's documents by id, whatever order the per-document passes
+/// reported them in. A document that repeats a tag contributes one pair —
+/// the render pass has already deduplicated its own list.
+pub fn build_tags(pairs: &[(String, String)]) -> Vec<TagEntry> {
+    let mut aggregated: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (tag, doc) in pairs {
+        aggregated
+            .entry(tag.as_str())
+            .or_default()
+            .insert(doc.as_str());
+    }
+
+    aggregated
+        .into_iter()
+        .map(|(tag, docs)| TagEntry {
+            tag: tag.to_string(),
+            docs: docs.into_iter().map(str::to_string).collect(),
+        })
+        .collect()
+}
+
 /// Heading texts of `toc`, depth first, joined with single spaces.
 ///
 /// This is the build-side twin of the reader's `headingsText` in
@@ -319,6 +369,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
                 resolved: snapshot,
                 front_matter: rendered.front_matter,
                 targets,
+                tags: rendered.tags,
                 model: DocModel {
                     id: doc.id.clone(),
                     path: doc.id.clone(),
@@ -336,6 +387,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
     let mut models: Vec<DocModel> = Vec::with_capacity(docs.len());
     let mut front_matters: Vec<Option<String>> = Vec::with_capacity(docs.len());
     let mut links: Vec<(String, String)> = Vec::new();
+    let mut tag_pairs: Vec<(String, String)> = Vec::new();
 
     for (doc, outcome) in docs.iter().zip(outcomes) {
         links.extend(
@@ -344,12 +396,14 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
                 .into_iter()
                 .map(|target| (doc.id.clone(), target)),
         );
+        tag_pairs.extend(outcome.tags.into_iter().map(|tag| (tag, doc.id.clone())));
         front_matters.push(outcome.front_matter);
         models.push(outcome.model);
         context.merge(outcome.resolved);
     }
 
     let edges = build_edges(&links);
+    let tags = build_tags(&tag_pairs);
     let (assets, diagnostics) = context.into_parts();
     let stats = Stats {
         documents: models.len(),
@@ -366,6 +420,7 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
             home: None,
             docs: models,
             edges,
+            tags,
             stats,
         },
         front_matters,
@@ -383,6 +438,8 @@ struct DocOutcome {
     front_matter: Option<String>,
     /// Document ids the document links to successfully, in resolution order.
     targets: Vec<String>,
+    /// Tag names the document's body carries, deduplicated, in byte order.
+    tags: Vec<String>,
     /// The payload model of the document.
     model: DocModel,
 }
@@ -864,6 +921,91 @@ mod tests {
                 .iter()
                 .all(|key| *key != "enc"),
             "an unsealed document carries no enc key"
+        );
+        assert!(
+            value.get("tags").is_none(),
+            "a site without tags serialises without the aggregation"
+        );
+    }
+
+    #[test]
+    fn tags_aggregate_in_deterministic_order() {
+        let pairs = pairs(&[
+            ("rust", "b.md"),
+            ("rust", "a.md"),
+            ("rust", "a.md"),
+            ("intro", "b.md"),
+        ]);
+
+        assert_eq!(
+            build_tags(&pairs),
+            vec![
+                TagEntry {
+                    tag: "intro".to_string(),
+                    docs: vec!["b.md".to_string()],
+                },
+                TagEntry {
+                    tag: "rust".to_string(),
+                    docs: vec!["a.md".to_string(), "b.md".to_string()],
+                },
+            ],
+            "entries sort by tag, each entry's documents by id, duplicates collapse"
+        );
+    }
+
+    #[test]
+    fn build_site_collects_the_tags_the_bodies_carry() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [
+            source("a.md", "A", "# A\n\nreading #rust and #rust again\n"),
+            source("b.md", "B", "# B\n\nintro #rust, plus #beginner\n"),
+            source("c.md", "C", "# C\n\nno tags here\n"),
+        ];
+
+        let build = build_site("Site", dir.path(), &docs);
+
+        assert_eq!(
+            build.bundle.tags,
+            vec![
+                TagEntry {
+                    tag: "beginner".to_string(),
+                    docs: vec!["b.md".to_string()],
+                },
+                TagEntry {
+                    tag: "rust".to_string(),
+                    docs: vec!["a.md".to_string(), "b.md".to_string()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tagged_site_carries_the_tags_aggregation_in_the_json() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [
+            source("a.md", "A", "# A\n\n#rust\n"),
+            source("b.md", "B", "# B\n\n#rust #beginner\n"),
+        ];
+
+        let build = build_site("Site", dir.path(), &docs);
+        let value: serde_json::Value =
+            serde_json::from_str(&build.bundle.to_json()).expect("valid JSON");
+
+        assert_eq!(
+            value.as_object().map(|object| keys(object)),
+            Some(vec!["docs", "edges", "stats", "tags", "title", "v"]),
+            "the aggregation is one optional top-level key"
+        );
+        assert_eq!(
+            value["tags"][0].as_object().map(keys),
+            Some(vec!["docs", "tag"])
+        );
+        assert_eq!(value["tags"][0]["tag"], "beginner");
+        assert_eq!(value["tags"][0]["docs"], serde_json::json!(["b.md"]));
+        assert_eq!(value["tags"][1]["tag"], "rust");
+        assert_eq!(
+            value["tags"][1]["docs"],
+            serde_json::json!(["a.md", "b.md"])
         );
     }
 

@@ -29,6 +29,15 @@ export function createNavigation(deps) {
   // that changes the document refreshes it, whether or not its view of the
   // floating window is the one showing.
   var backlinks = deps.backlinks;
+  // The document list may be filtered by a selected tag; the composition
+  // root owns the selection and hands the ids the list keeps through here.
+  // The default answers "no filter", so a navigation built without one
+  // behaves exactly as before the tag aggregation existed.
+  var docFilter =
+    deps.docFilter ||
+    function () {
+      return null;
+    };
   var banner = deps.banner;
   var article = deps.article;
   var content = deps.content;
@@ -138,7 +147,7 @@ export function createNavigation(deps) {
       return;
     }
 
-    docList.render(null, doc.id);
+    docList.render(docFilter(), doc.id);
     localGraph.setActive(doc.id);
     globalGraph.setActive(doc.id);
 
@@ -350,7 +359,7 @@ export function createNavigation(deps) {
       empty.className = "doc-empty";
       empty.textContent = "This site has no documents.";
       article.appendChild(empty);
-      docList.render(null, null);
+      docList.render(docFilter(), null);
       // No document is on screen, so the panel answers nothing: the empty
       // panel is a cleared one, without a message about a document that
       // does not exist.
@@ -358,7 +367,7 @@ export function createNavigation(deps) {
       return;
     }
 
-    docList.render(null, route.id);
+    docList.render(docFilter(), route.id);
     localGraph.setActive(route.id);
     globalGraph.setActive(route.id);
 

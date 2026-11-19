@@ -23,6 +23,7 @@ export function createPanels(deps) {
   var graphLocalToggle = deps.graphLocalToggle;
   var graphGlobalToggle = deps.graphGlobalToggle;
   var backlinksToggle = deps.backlinksToggle;
+  var tagsToggle = deps.tagsToggle;
   var session = deps.session;
   var globalGraph = deps.globalGraph;
   var inspector = deps.inspector;
@@ -136,12 +137,13 @@ export function createPanels(deps) {
    * The view is one body attribute the stylesheet answers to, and the other
    * is the one that folds the panel column; the switches read both through
    * here, so a screen reader hears the same answer whichever switch asked.
-   * Three views share the window: the two graphs and the backlinks list —
-   * anything else reads as the local graph, the state a reader starts in.
+   * Four views share the window: the two graphs, the backlinks list and the
+   * tags list — anything else reads as the local graph, the state a reader
+   * starts in.
    */
   function currentGraphView() {
     var view = document.body.getAttribute("data-graph-view");
-    if (view === "global" || view === "backlinks") {
+    if (view === "global" || view === "backlinks" || view === "tags") {
       return view;
     }
     return "local";
@@ -195,6 +197,14 @@ export function createPanels(deps) {
       backlinksToggle.setAttribute("aria-label", backlinksLabel);
       backlinksToggle.setAttribute("title", backlinksLabel);
     }
+
+    var tagsLit = view === "tags" && visible;
+    var tagsLabel = tagsLit ? "Hide tags" : "Show tags";
+    if (tagsToggle) {
+      tagsToggle.setAttribute("aria-expanded", tagsLit ? "true" : "false");
+      tagsToggle.setAttribute("aria-label", tagsLabel);
+      tagsToggle.setAttribute("title", tagsLabel);
+    }
   }
 
   /**
@@ -212,6 +222,8 @@ export function createPanels(deps) {
       globalGraph.refresh();
     } else if (view === "backlinks") {
       document.body.setAttribute("data-graph-view", "backlinks");
+    } else if (view === "tags") {
+      document.body.setAttribute("data-graph-view", "tags");
     } else {
       document.body.setAttribute("data-graph-view", "local");
     }
@@ -275,10 +287,17 @@ export function createPanels(deps) {
     ) {
       return true;
     }
-    return Boolean(
+    if (
       backlinksToggle &&
-        typeof backlinksToggle.contains === "function" &&
-        backlinksToggle.contains(node),
+      typeof backlinksToggle.contains === "function" &&
+      backlinksToggle.contains(node)
+    ) {
+      return true;
+    }
+    return Boolean(
+      tagsToggle &&
+        typeof tagsToggle.contains === "function" &&
+        tagsToggle.contains(node),
     );
   }
 
@@ -393,6 +412,12 @@ export function createPanels(deps) {
     });
   }
 
+  if (tagsToggle) {
+    tagsToggle.addEventListener("click", function () {
+      selectGraph("tags");
+    });
+  }
+
   document.addEventListener("pointerdown", onDocumentPointerDown, true);
 
   /**
@@ -413,11 +438,28 @@ export function createPanels(deps) {
     hideGraph();
   }
 
+  /**
+   * Bring the tags view up, with the document list beside it.
+   *
+   * A tag the reader answers — a chip in the article, or a row in the panel
+   * itself — filters the document list, which only shows when the sidebar's
+   * document view is showing. The rail's own switch never reaches here, so
+   * the guard cannot fold a list that is already up: `selectSide` answers a
+   * switch, and this answers a filter.
+   */
+  function openTagsView() {
+    if (currentSideView() !== "docs" || !sideVisible()) {
+      selectSide("docs");
+    }
+    setGraphView("tags");
+  }
+
   return {
     /** Close the drawer, whatever the reader opened it from. */
     closeDrawer: function () {
       setDrawer(false);
     },
+    openTagsView: openTagsView,
     restore: restore,
   };
 }
