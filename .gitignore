@@ -34,3 +34,4 @@ tests/fixtures/**/dist
 # AI Agent
 /.codebuddy
 /.playwright-cli
+/.codegraph
