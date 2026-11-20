@@ -275,3 +275,30 @@
 .doc-body pre.code {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
+
+/* A media asset the build rendered as itself — an image or an embed of a
+   sound or a film — plays in place. The wrapper span is what the reader
+   hangs its viewer toolbar on, so it carries the positioning the toolbar
+   anchors to, and the players keep the column's width with their own
+   chrome. The hover rules mirror the diagrams': the toolbar appears while
+   the pointer is over the wrapper, or while focus is inside it. */
+.doc-media {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.doc-body .doc-media audio,
+.doc-body .doc-media video {
+  max-width: 100%;
+}
+
+.doc-body .doc-media audio {
+  width: min(420px, 100%);
+}
+
+.doc-body .doc-media:hover .viewer-hover,
+.doc-body .doc-media:has(:focus-visible) .viewer-hover {
+  opacity: 1;
+  pointer-events: auto;
+}

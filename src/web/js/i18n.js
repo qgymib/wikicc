@@ -186,6 +186,10 @@ var EN = {
   "viewer.openDefault": "Open in viewer",
   "viewer.openDiagram": "Open diagram in viewer",
   "viewer.diagramTitle": "Diagram",
+  "viewer.openAudio": "Open audio in viewer",
+  "viewer.openVideo": "Open video in viewer",
+  "viewer.audioTitle": "Audio",
+  "viewer.videoTitle": "Video",
 
   /* Reader tables: sorting headers and the column filter. */
   "table.apply": "Apply",
@@ -356,6 +360,10 @@ var ZH = {
   "viewer.openDefault": "在查看器中打开",
   "viewer.openDiagram": "在查看器中打开图表",
   "viewer.diagramTitle": "图表",
+  "viewer.openAudio": "在查看器中打开音频",
+  "viewer.openVideo": "在查看器中打开视频",
+  "viewer.audioTitle": "音频",
+  "viewer.videoTitle": "视频",
 
   "table.apply": "应用",
   "table.blanks": "（空白）",

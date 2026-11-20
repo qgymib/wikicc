@@ -119,3 +119,11 @@ body[data-viewer="open"] {
   max-width: none !important;
   display: block;
 }
+
+/* Sound and film on the stage. A video is measured at its own size and the
+   fit does the rest, so only the audio element — a chrome-only strip with
+   no picture to fit — is given a width of its own, one that keeps clear of
+   the window's edge on the narrow screens the viewer goes full-bleed on. */
+.viewer-content audio {
+  width: min(420px, 80vw);
+}

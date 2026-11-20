@@ -34,6 +34,7 @@ import * as Banner from "./banner.js";
 import * as DocList from "./doc-list.js";
 import * as DocStore from "./doc-store.js";
 import * as GraphView from "./graph-view.js";
+import * as MediaView from "./media-view.js";
 import { setLanguage, t } from "./i18n.js";
 import * as PreviewView from "./preview-view.js";
 import * as SearchView from "./search-view.js";
@@ -632,6 +633,12 @@ export function start() {
   globalThis.addEventListener("hashchange", function () {
     navigation.render();
   });
+
+  // A link to a media asset — a sound, a film — plays in place: the click
+  // opens the viewer's player instead of leaving the page. Registered before
+  // the inlined-asset takeover below, which steps aside for media `data:`
+  // URIs so one click has one answer.
+  MediaView.listenForMediaClicks(document);
 
   // The single-file build inlines assets as `data:` URIs, which a browser
   // refuses to navigate to; the delegated pair below is what makes a link to

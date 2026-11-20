@@ -325,6 +325,19 @@ one is stated as a contract rather than left to the implementation.
   with every font embedded as a data URL, so the offline guarantee holds.
   Colours are inherited from the text, so a theme switch needs no re-render,
   and a formula that fails to typeset keeps its source text.
+- **Media plays in place.** The build renders an image or an embed of a
+  sound or a film as a native `<audio controls>`/`<video controls>` element
+  wrapped in a `span.doc-media`; the decision is name-based (`media_kind` in
+  `src/assets.rs`, mirrored entry for entry by `media.js`), so every other
+  asset's markup is byte-identical to what it always was, and a media
+  destination the build could not resolve falls back to the marked dead
+  link. The reader arms the wrapper with the viewer's hover toolbar, exactly
+  like a diagram, and takes over the plain left click of a link to a media
+  asset, opening a fresh player in the viewer's lightbox — an audio window
+  carries the close button alone, a video keeps the zoom, pan and reset. A
+  modified click, another button and a dead link stay with the browser, and
+  an inlined PDF still opens in a new tab: the inlined-asset takeover steps
+  aside for media `data:` URIs so one click has one answer.
 - **Documents are looked up, then fetched.** `doc-store.js` is the one place
   that knows where a document's model comes from: the payload for the shell
   formats, a `pages/<id>.json` file for the pages format. The controller
@@ -358,11 +371,12 @@ one is stated as a contract rather than left to the implementation.
   the first document. Explicit links are never redirected; the setting only
   decides what an empty or unknown address opens.
 - **Layering rule.** Pure logic and DOM access live in separate modules
-  (`router.js`, `links.js`, `asset-links.js`, `search.js`, `doc-store.js`,
-  `lock.js`, `table.js`, `graph.js`, `preview.js`, `toc.js`, `anchor.js`,
-  `diagrams.js`, `math.js` versus `table-view.js`, `graph-view.js`,
-  `diagram-view.js`, `math-view.js`, `preview-view.js`, `search-view.js`,
-  `search-highlight.js`, `lock-view.js`, `banner.js`, `doc-list.js`), because
+  (`router.js`, `links.js`, `asset-links.js`, `media.js`, `search.js`,
+  `doc-store.js`, `lock.js`, `table.js`, `graph.js`, `preview.js`, `toc.js`,
+  `anchor.js`, `diagrams.js`, `math.js` versus `table-view.js`,
+  `graph-view.js`, `diagram-view.js`, `math-view.js`, `media-view.js`,
+  `preview-view.js`, `search-view.js`, `search-highlight.js`, `lock-view.js`,
+  `banner.js`, `doc-list.js`), because
   the JS test suite runs under `node --test` with no DOM. Anything that touches
   `document` belongs to a view module; a view is a projection of the pure
   functions beneath it, and the controller (`app.js`) is the only module that

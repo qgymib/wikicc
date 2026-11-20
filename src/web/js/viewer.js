@@ -15,6 +15,9 @@
  * - `matches(element)` — whether the viewer can show this element;
  * - `hoverLabel` — what the toolbar's button announces;
  * - `title(element)` — the heading the lightbox carries;
+ * - `standardActions(element)` — optional; answering `false` has the window
+ *   carry the close button alone, for content that has nothing to zoom —
+ *   an audio player — while the default keeps the zoom, pan and reset trio;
  * - `mount(element)` — build the content the viewer shows, detached; the
  *   viewer puts it on the stage and hands it to the transform engine;
  * - `extraActions()` — optional buttons beyond the standard ones, each

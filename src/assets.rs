@@ -342,6 +342,45 @@ pub fn asset_extension(path: &Path) -> String {
     named_extension(path).unwrap_or_else(|| FALLBACK_EXTENSION.to_string())
 }
 
+/// The kinds of local assets the build renders as native media elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaKind {
+    /// A sound recording: rendered as `<audio controls>`.
+    Audio,
+    /// A motion picture: rendered as `<video controls>`.
+    Video,
+}
+
+/// The media kind the path's extension names, or `None` for any other asset.
+///
+/// A pinned table, like [`MIME_FALLBACKS`]: stable across `mime_guess`
+/// upgrades and mirrored by `src/web/js/media.js`, whose reader-side
+/// classification must agree with the build's rendering decision — the
+/// reader takes over the click of exactly the links the build renders as
+/// media. Only extensions the build turns into playable elements are
+/// listed: a media file the table misses renders as an image or a link,
+/// exactly as before, which keeps the decision pure and name-based.
+pub fn media_kind(path: &str) -> Option<MediaKind> {
+    let raw = Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())?;
+    let cleaned: String = raw
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase())
+        .collect();
+
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    match cleaned.as_str() {
+        "mp3" | "m4a" | "ogg" | "oga" | "opus" | "wav" | "flac" | "aac" => Some(MediaKind::Audio),
+        "mp4" | "m4v" | "webm" | "mov" | "ogv" | "mkv" => Some(MediaKind::Video),
+        _ => None,
+    }
+}
+
 /// The file name extension of `path` as the name itself spells it, or `None`
 /// when there is nothing usable to spell.
 ///
@@ -606,6 +645,59 @@ mod tests {
             FALLBACK_EXTENSION
         );
         assert_eq!(asset_extension(Path::new("a.数据")), FALLBACK_EXTENSION);
+    }
+
+    #[test]
+    fn media_kind_reads_the_common_audio_and_video_extensions() {
+        for path in [
+            "song.mp3",
+            "voice.m4a",
+            "talk.ogg",
+            "talk.oga",
+            "take.opus",
+            "tone.wav",
+            "album.flac",
+            "book.aac",
+        ] {
+            assert_eq!(media_kind(path), Some(MediaKind::Audio), "path: {path}");
+        }
+        for path in [
+            "film.mp4",
+            "clip.m4v",
+            "recording.webm",
+            "takes.mov",
+            "clip.ogv",
+            "movie.mkv",
+        ] {
+            assert_eq!(media_kind(path), Some(MediaKind::Video), "path: {path}");
+        }
+    }
+
+    #[test]
+    fn media_kind_lookup_is_case_insensitive_and_sanitised() {
+        assert_eq!(media_kind("SONG.MP3"), Some(MediaKind::Audio));
+        assert_eq!(media_kind("FILM.Mp4"), Some(MediaKind::Video));
+    }
+
+    #[test]
+    fn media_kind_answers_nothing_for_other_assets() {
+        for path in [
+            "photo.png",
+            "notes.pdf",
+            "logo.svg",
+            "readme",
+            "archive.zip",
+            "a.",
+            "no-extension",
+        ] {
+            assert_eq!(media_kind(path), None, "path: {path}");
+        }
+    }
+
+    #[test]
+    fn media_kind_reads_the_last_path_segment_only() {
+        assert_eq!(media_kind("media/a/song.mp3"), Some(MediaKind::Audio));
+        assert_eq!(media_kind("mp3"), None, "no extension, only a stem");
     }
 
     #[test]

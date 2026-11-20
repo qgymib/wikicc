@@ -15,6 +15,10 @@
  * `blob:` URL in a new tab. A `blob:` URL's top-frame navigation is allowed,
  * and a PDF opens in the browser's own viewer, so the reader keeps its page.
  *
+ * A sound or a film is not this module's click: the media viewer plays those
+ * in place (`media-view.js`), and this module steps aside for their `data:`
+ * URIs rather than open the same bytes twice.
+ *
  * Synchronous is the point: `open` called after an `await` — say,
  * `fetch(href).then(...)` for the bytes — has lost the gesture and is
  * treated as a popup. Decoding is one `atob` pass over the payload, at most
@@ -26,6 +30,8 @@
  * without a DOM. Registration lives in `app.js`, which owns the page's
  * listeners.
  */
+
+import { isMediaDataUri } from "./media.js";
 
 /** Selector matching any anchor that carries an `href`. */
 export var INLINE_LINK_SELECTOR = "a[href]";
@@ -135,6 +141,14 @@ export function handleInlineDataClick(event, deps) {
 
   var anchor = target.closest(INLINE_LINK_SELECTOR);
   if (!anchor) {
+    return false;
+  }
+
+  // A sound or a film inlined as a `data:` URI is the media viewer's click:
+  // `media-view.js` opens the player in place, and handing the same bytes
+  // to a new tab as well would play the asset twice. Everything else — the
+  // PDFs, the archives — is still this module's to open.
+  if (isMediaDataUri(anchor.getAttribute("href"))) {
     return false;
   }
 

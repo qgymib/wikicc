@@ -240,3 +240,22 @@ test("an anchor without an href is untouched", () => {
   assert.equal(handleInlineDataClick(event, deps), false);
   assert.equal(state.prevented, 0);
 });
+
+test("an inlined sound or film is left to the media viewer", () => {
+  // The media viewer plays those in place; opening the same bytes in a new
+  // tab as well would hand the reader two answers to one click.
+  for (const href of [
+    "data:audio/mpeg;base64,AAAA",
+    "data:video/mp4;base64,AAAA",
+    "DATA:VIDEO/WEBM;base64,AAAA",
+  ]) {
+    const anchor = anchorStub(href);
+    const { event, state } = clickEvent(anchor);
+    const { calls, deps } = recordingDeps("blob:reader/8");
+
+    assert.equal(handleInlineDataClick(event, deps), false, `href: ${href}`);
+    assert.equal(state.prevented, 0, `href: ${href}`);
+    assert.equal(calls.blob, null, `href: ${href}`);
+    assert.equal(calls.opened.length, 0, `href: ${href}`);
+  }
+});

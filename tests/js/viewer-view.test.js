@@ -527,3 +527,43 @@ test("a provider's extra actions ride the same engine", () => {
   // so it cannot shadow the diagram provider, and the registry has no way
   // to restore the built-in one a reset would take away.
 });
+
+test("a provider may carry the close button alone, and close always stays", () => {
+  const page = makePage();
+  const block = createFakeElement("div");
+  block.className = "plain-block";
+  Viewer.registerProvider({
+    type: "test-plain",
+    matches: function (element) {
+      return element.classList.contains("plain-block");
+    },
+    title: function () {
+      return "Plain";
+    },
+    standardActions: function () {
+      return false;
+    },
+    mount: function () {
+      return page.doc.createElement("div");
+    },
+  });
+
+  withGlobals({ document: page.doc }, function () {
+    page.view.openFor(block);
+
+    const parts = partsOf(page);
+    assert.deepEqual(
+      Array.prototype.map.call(parts.actions.children, function (button) {
+        return button.getAttribute("aria-label");
+      }),
+      ["Close viewer"],
+    );
+
+    // The close is the viewer's own gesture: the focus starts on it and
+    // the window goes away with it, whatever the provider answered.
+    assert.equal(parts.actions.children[0].focused, true);
+    parts.actions.children[0].fire("click");
+    assert.equal(page.view.isOpen(), false);
+    assert.equal(page.doc.body.children.length, 0);
+  });
+});

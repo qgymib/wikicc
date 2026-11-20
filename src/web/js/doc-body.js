@@ -36,6 +36,7 @@
 import * as TableView from "./table-view.js";
 import * as DiagramView from "./diagram-view.js";
 import * as MathView from "./math-view.js";
+import * as MediaView from "./media-view.js";
 import * as Links from "./links.js";
 import { TAG_CHIP_ATTRIBUTE } from "./tags.js";
 import { t } from "./i18n.js";
@@ -724,6 +725,12 @@ export function fillDocBody(body, html, options) {
   if (options && options.collapsible) {
     body.__wikiccChapters = enhanceChapters(body);
   }
+
+  // The media wrappers the build wrote gain their hover toolbar in the same
+  // breath: the toolbar is plain markup, needs no layout, and every surface
+  // that fills a body this way arms its own. Links to media assets are not
+  // armed — the click itself is their gesture, taken over on the document.
+  MediaView.armMedia(body);
 
   return body;
 }

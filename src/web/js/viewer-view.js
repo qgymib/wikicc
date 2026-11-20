@@ -428,7 +428,7 @@ export function createViewerView(options) {
     frame.appendChild(stage);
     backdrop.appendChild(frame);
 
-    var closeButton = buildActions(actions, provider);
+    var closeButton = buildActions(actions, provider, element);
     return {
       backdrop: backdrop,
       frame: frame,
@@ -438,9 +438,19 @@ export function createViewerView(options) {
   }
 
   /** The standard actions, then the provider's extras, if it has any. */
-  function buildActions(actions, provider) {
+  function buildActions(actions, provider, element) {
     var closeButton = null;
+    // A provider may answer its `standardActions` question with `false` to
+    // have the zoom trio off — an audio player has nothing to zoom — but
+    // the close action is the viewer's own gesture and never disappears.
+    var standard =
+      !provider ||
+      typeof provider.standardActions !== "function" ||
+      provider.standardActions(element) !== false;
     Viewer.STANDARD_ACTIONS.forEach(function (action) {
+      if (!standard && action.id !== "close") {
+        return;
+      }
       var button = makeActionButton(
         action.labelKey ? t(action.labelKey) : action.label,
         action.icon,

@@ -303,7 +303,11 @@ test("fillDocBody enhances the tables when the caller says so", () => {
     fillDocBody(body, "<table></table>", { enhanceTables: true });
 
     assert.equal(body.innerHTML, "<table></table>");
-    assert.deepEqual(body.queries, ["table"], "the enhancer walked the body");
+    assert.deepEqual(
+      body.queries,
+      ["table", ".doc-media"],
+      "the enhancer walked the body, and the media walk always follows",
+    );
   });
 });
 
@@ -312,12 +316,16 @@ test("fillDocBody leaves the tables alone unless asked", () => {
     const body = fakeElement("div");
 
     fillDocBody(body, "<table></table>");
-    assert.deepEqual(body.queries, [], "no walk without the option");
+    assert.deepEqual(
+      body.queries,
+      [".doc-media"],
+      "no table walk without the option; the media arming is unconditional",
+    );
 
     fillDocBody(body, "<p>alpha</p>", { enhanceTables: false });
     assert.deepEqual(
       body.queries,
-      [],
+      [".doc-media", ".doc-media"],
       "an explicit false is the same as absent",
     );
   });
@@ -832,7 +840,11 @@ test("fillDocBody leaves the code blocks alone unless asked", () => {
       fillDocBody(body, "<ignored/>", { enhanceTables: false });
 
       assert.equal(out.pre.parentNode, body, "the block stands where it was");
-      assert.deepEqual(body.queries, [], "no walk without the option");
+      assert.deepEqual(
+        body.queries,
+        [".doc-media"],
+        "no code walk without the option; the media arming is unconditional",
+      );
       assert.equal(copyButtonOfBlock(out.pre), null, "no button was added");
     },
     function (body, doc) {

@@ -21,6 +21,8 @@ use std::collections::BTreeMap;
 
 use markdown::mdast::{AlignKind, ReferenceKind};
 
+use crate::assets::{MediaKind, media_kind};
+
 use super::ast::{OwnKind, OwnNode};
 use super::highlight::{code_block_html, escape_into};
 use super::links::{LinkClass, classify};
@@ -409,11 +411,28 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
             OwnKind::Image { url, title, alt } => {
                 let target = self.rewriter.rewrite(url, node.line);
                 self.text.push_str(alt);
-                self.html.push_str("<img src=\"");
-                escape_into(&mut self.html, &target.dest);
-                self.html.push_str("\" alt=\"");
-                escape_into(&mut self.html, alt);
-                self.image_title(title.as_deref());
+                match destination_media_kind(url) {
+                    // An image the build can play renders as itself: a native
+                    // element plays in place, with or without the reader.
+                    Some(kind) if target.invalid.is_none() => {
+                        self.media_element(kind, &target, title.as_deref());
+                    }
+                    // A media destination the build could not resolve has no
+                    // bytes to play; the marked dead link beats a silent
+                    // player pointing at nothing.
+                    Some(_) => {
+                        self.open_anchor(&target, title.as_deref());
+                        escape_text(&mut self.html, alt);
+                        self.html.push_str("</a>");
+                    }
+                    None => {
+                        self.html.push_str("<img src=\"");
+                        escape_into(&mut self.html, &target.dest);
+                        self.html.push_str("\" alt=\"");
+                        escape_into(&mut self.html, alt);
+                        self.image_title(title.as_deref());
+                    }
+                }
             }
             OwnKind::ImageReference {
                 identifier,
@@ -424,11 +443,23 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
                     let (url, title) = (resolved.url.clone(), resolved.title.clone());
                     let target = self.rewriter.rewrite(&url, node.line);
                     self.text.push_str(alt);
-                    self.html.push_str("<img src=\"");
-                    escape_into(&mut self.html, &target.dest);
-                    self.html.push_str("\" alt=\"");
-                    escape_into(&mut self.html, alt);
-                    self.image_title(title.as_deref());
+                    match destination_media_kind(&url) {
+                        Some(kind) if target.invalid.is_none() => {
+                            self.media_element(kind, &target, title.as_deref());
+                        }
+                        Some(_) => {
+                            self.open_anchor(&target, title.as_deref());
+                            escape_text(&mut self.html, alt);
+                            self.html.push_str("</a>");
+                        }
+                        None => {
+                            self.html.push_str("<img src=\"");
+                            escape_into(&mut self.html, &target.dest);
+                            self.html.push_str("\" alt=\"");
+                            escape_into(&mut self.html, alt);
+                            self.image_title(title.as_deref());
+                        }
+                    }
                 }
                 None => {
                     // An unresolved image reference is the author's text.
@@ -506,13 +537,28 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
                 self.text.push_str(target);
                 match classify(&destination) {
                     // An embed of a local file shows the file itself.
-                    LinkClass::LocalAsset { .. } => {
-                        self.html.push_str("<img src=\"");
-                        escape_into(&mut self.html, &rewritten.dest);
-                        self.html.push_str("\" alt=\"");
-                        escape_into(&mut self.html, target);
-                        self.html.push_str("\" />");
-                    }
+                    LinkClass::LocalAsset { path } => match media_kind(&path) {
+                        // A playable embed renders as itself, in place.
+                        Some(kind) if rewritten.invalid.is_none() => {
+                            self.media_element(kind, &rewritten, None);
+                        }
+                        // A media embed the build could not resolve falls
+                        // back to the marked dead link: no bytes to play,
+                        // and a silent player pointing at nothing says less
+                        // than the reader's own dead-end marking.
+                        Some(_) => {
+                            self.open_anchor(&rewritten, None);
+                            escape_text(&mut self.html, target);
+                            self.html.push_str("</a>");
+                        }
+                        None => {
+                            self.html.push_str("<img src=\"");
+                            escape_into(&mut self.html, &rewritten.dest);
+                            self.html.push_str("\" alt=\"");
+                            escape_into(&mut self.html, target);
+                            self.html.push_str("\" />");
+                        }
+                    },
                     // Anything else cannot be embedded; a link is what is
                     // still true about it.
                     _ => {
@@ -584,6 +630,39 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
         }
     }
 
+    /// Render one native media element inside its wrapper span.
+    ///
+    /// The wrapper is the block the reader hangs its hover toolbar on and
+    /// the hook the stylesheet styles; the span keeps every context valid,
+    /// since an embed sits inside paragraphs as often as alone. The
+    /// attribute names the kind the reader and the stylesheet both answer
+    /// to, mirroring `MEDIA_KIND_ATTRIBUTE` in `src/web/js/media.js`.
+    /// Controls stay on the element so the no-script page plays too, and
+    /// the authored title rides along when there is one.
+    fn media_element(&mut self, kind: MediaKind, target: &super::LinkTarget, title: Option<&str>) {
+        let (tag, kind_name) = match kind {
+            MediaKind::Audio => ("audio", "audio"),
+            MediaKind::Video => ("video", "video"),
+        };
+
+        self.html
+            .push_str("<span class=\"doc-media\" data-wikicc-media=\"");
+        self.html.push_str(kind_name);
+        self.html.push_str("\"><");
+        self.html.push_str(tag);
+        self.html.push_str(" controls=\"\" src=\"");
+        escape_into(&mut self.html, &target.dest);
+        self.html.push('"');
+        if let Some(title) = title {
+            self.html.push_str(" title=\"");
+            escape_into(&mut self.html, title);
+            self.html.push('"');
+        }
+        self.html.push_str("></");
+        self.html.push_str(tag);
+        self.html.push_str("></span>");
+    }
+
     /// Render children inside one inline element.
     fn wrapped(&mut self, element: &str, children: &[OwnNode]) {
         self.html.push('<');
@@ -623,6 +702,20 @@ fn wikilink_destination(target: &str) -> String {
         format!("{target}.md")
     } else {
         target.to_string()
+    }
+}
+
+/// The media kind an authored image or embed destination names, or `None`.
+///
+/// Only a local asset whose extension the build plays counts: the decision
+/// is name-based, so it agrees with the resolver's classification and with
+/// the reader's own extension table. A fragment or query rides along in the
+/// authored destination but not in the classified path, so
+/// `song.mp3#t=10` is audio all the same.
+fn destination_media_kind(destination: &str) -> Option<MediaKind> {
+    match classify(destination) {
+        LinkClass::LocalAsset { path } => media_kind(&path),
+        _ => None,
     }
 }
 
@@ -1191,6 +1284,133 @@ fn main() {}
             "<p class=\"link-ref-def\"><span class=\"link-ref-def-label\">[1]:</span> \
              <a href=\"rewritten:a.md\">a.md</a></p>\n\
              <p>see <a href=\"rewritten:a.md\">1</a></p>\n",
+            "html: {}",
+            doc.html
+        );
+    }
+
+    // Native media elements.
+
+    /// Rewriter that reports every destination as a missing asset, so the
+    /// fallback a dead media destination produces can be inspected directly.
+    struct DeadAsset;
+
+    impl LinkRewriter for DeadAsset {
+        fn rewrite(&mut self, destination: &str, _line: usize) -> LinkTarget {
+            LinkTarget::invalid(
+                destination,
+                crate::markdown::links::MissingReason::UnknownAsset,
+                format!("asset not found: '{destination}'"),
+            )
+        }
+    }
+
+    #[test]
+    fn an_audio_image_renders_a_wrapped_native_element() {
+        let doc = render_document("listen ![this](song.mp3) now\n");
+
+        assert_eq!(
+            doc.html,
+            "<p>listen <span class=\"doc-media\" data-wikicc-media=\"audio\">\
+             <audio controls=\"\" src=\"song.mp3\"></audio></span> now</p>\n",
+            "html: {}",
+            doc.html
+        );
+        assert!(
+            doc.text.contains("listen this now"),
+            "the alt text stays in the search index: {}",
+            doc.text
+        );
+    }
+
+    #[test]
+    fn a_video_embed_renders_a_wrapped_native_element() {
+        let doc = render_document("![[clip.mp4]]\n");
+
+        assert_eq!(
+            doc.html,
+            "<p><span class=\"doc-media\" data-wikicc-media=\"video\">\
+             <video controls=\"\" src=\"clip.mp4\"></video></span></p>\n",
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_media_title_rides_along() {
+        let doc = render_document("![Listen](song.mp3 \"A song\")\n");
+
+        assert!(
+            doc.html
+                .contains("<audio controls=\"\" src=\"song.mp3\" title=\"A song\">"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn non_media_images_render_exactly_as_before() {
+        let doc = render_document("![logo](i.png)\n");
+
+        assert_eq!(doc.html, "<p><img src=\"i.png\" alt=\"logo\" /></p>\n");
+    }
+
+    #[test]
+    fn an_image_reference_to_media_renders_the_native_element() {
+        let doc = render_document("[snd]: song.mp3\n\n![Listen][snd]\n");
+
+        assert!(
+            doc.html
+                .contains("<span class=\"doc-media\" data-wikicc-media=\"audio\"><audio controls=\"\" src=\"song.mp3\">"),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_media_destination_in_a_fragment_keeps_its_kind() {
+        let doc = render_document("![clip](song.mp3#t=10)\n");
+
+        assert!(
+            doc.html.contains("data-wikicc-media=\"audio\""),
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_dead_media_image_falls_back_to_the_marked_link() {
+        let doc = render_document_with("![Listen](missing.mp3)\n", &mut DeadAsset);
+
+        assert_eq!(
+            doc.html,
+            "<p><a href=\"missing.mp3\" class=\"doc-link-invalid\" data-wikicc-invalid \
+             aria-disabled=\"true\" data-wikicc-invalid-reason=\"unknown-asset\" \
+             title=\"asset not found: &#39;missing.mp3&#39;\">Listen</a></p>\n",
+            "html: {}",
+            doc.html
+        );
+    }
+
+    #[test]
+    fn a_dead_media_embed_falls_back_to_the_marked_link() {
+        let doc = render_document_with("![[missing.mp4]]\n", &mut DeadAsset);
+
+        assert!(
+            doc.html.contains("data-wikicc-invalid"),
+            "html: {}",
+            doc.html
+        );
+        assert!(!doc.html.contains("<video"), "html: {}", doc.html);
+        assert!(!doc.html.contains("<img"), "html: {}", doc.html);
+    }
+
+    #[test]
+    fn a_dead_non_media_embed_still_renders_its_img() {
+        let doc = render_document_with("![[missing.png]]\n", &mut DeadAsset);
+
+        assert_eq!(
+            doc.html, "<p><img src=\"missing.png\" alt=\"missing.png\" /></p>\n",
             "html: {}",
             doc.html
         );
