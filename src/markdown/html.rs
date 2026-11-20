@@ -1,10 +1,9 @@
 //! Own-layer HTML serialisation: the one place markup is decided.
 //!
 //! The serialiser walks the own-layer tree once and emits the body HTML,
-//! the plain text for the search index, the byte offset of every heading,
-//! and the Obsidian tags the body carries — all four from the same walk,
-//! so `html`, `text`, `blocks` and `tags` always describe exactly the same
-//! source.
+//! the plain text for the search index, the byte offset of every heading
+//! and the chapter blocks — all from the same walk, so `html`, `text` and
+//! `blocks` always describe exactly the same source.
 //!
 //! Markup is built structurally, never by rewriting HTML strings: every
 //! attribute value is escaped on the way in, every link destination is
@@ -33,18 +32,17 @@ use super::{LinkRewriter, invalid_link_attributes, missing_link_attributes};
 
 /// Serialise the document root.
 ///
-/// Returns the body HTML, the plain text (before whitespace collapsing), the
-/// chapter blocks and the tags the body carries, in first-appearance order.
-/// `headings` supplies each heading's anchor in document order, exactly as
-/// the anchor collection produced them; `footnotes` holds each footnote
-/// definition's 1-based display number, in definition order.
+/// Returns the body HTML, the plain text (before whitespace collapsing) and
+/// the chapter blocks. `headings` supplies each heading's anchor in document
+/// order, exactly as the anchor collection produced them; `footnotes` holds
+/// each footnote definition's 1-based display number, in definition order.
 pub(crate) fn serialize<R: LinkRewriter + ?Sized>(
     root: &OwnNode,
     headings: &[Heading],
     footnotes: &BTreeMap<String, u32>,
     definitions: &mut ReferenceTable,
     rewriter: &mut R,
-) -> (String, String, Vec<sections::Block>, Vec<String>) {
+) -> (String, String, Vec<sections::Block>) {
     let mut serializer = Serializer {
         rewriter,
         definitions,
@@ -56,7 +54,6 @@ pub(crate) fn serialize<R: LinkRewriter + ?Sized>(
         starts: Vec::new(),
         ids: Vec::new(),
         levels: Vec::new(),
-        tags: Vec::new(),
     };
 
     if let OwnKind::Root(children) = &root.kind {
@@ -69,11 +66,10 @@ pub(crate) fn serialize<R: LinkRewriter + ?Sized>(
         starts,
         ids,
         levels,
-        tags,
         ..
     } = serializer;
     let blocks = sections::slice(&html, &starts, &ids, &levels);
-    (html, text, blocks, tags)
+    (html, text, blocks)
 }
 
 /// The serialiser state for one document.
@@ -97,12 +93,6 @@ struct Serializer<'a, R: LinkRewriter + ?Sized> {
     ids: Vec<String>,
     /// Level of every heading, in document order.
     levels: Vec<u32>,
-    /// Tag names as the body writes them, in first-appearance order.
-    ///
-    /// The site aggregation deduplicates and sorts downstream; here the walk
-    /// simply reports what it rendered, like the rewriter reports
-    /// destinations.
-    tags: Vec<String>,
 }
 
 impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
@@ -314,7 +304,6 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
             | OwnKind::Highlight(_)
             | OwnKind::Sub(_)
             | OwnKind::Sup(_)
-            | OwnKind::Tag(_)
             | OwnKind::Shortcode { .. }
             | OwnKind::Wikilink { .. }
             | OwnKind::Embed { .. } => {
@@ -503,22 +492,6 @@ impl<R: LinkRewriter + ?Sized> Serializer<'_, R> {
                     self.html.push_str(&reference_suffix(*kind, identifier));
                 }
             },
-            OwnKind::Tag(name) => {
-                // The chip doubles as a filter control in the reader: the
-                // data attribute carries the tag the aggregation collected,
-                // the button role promises the interaction, and the reader
-                // answers clicks and keyboard presses alike. The plain text
-                // keeps `#name`, so the search index is untouched.
-                self.text.push('#');
-                self.text.push_str(name);
-                self.html.push_str("<span class=\"doc-tag\" data-tag=\"");
-                escape_into(&mut self.html, name);
-                self.html
-                    .push_str("\" role=\"button\" tabindex=\"0\" title=\"Browse this tag\">#");
-                escape_text(&mut self.html, name);
-                self.html.push_str("</span>");
-                self.tags.push(name.clone());
-            }
             OwnKind::Shortcode { emoji, .. } => {
                 self.text.push(*emoji);
                 self.html.push(*emoji);

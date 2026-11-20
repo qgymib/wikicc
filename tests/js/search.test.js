@@ -70,7 +70,13 @@ test("every document the index sees maps through one record shape", () => {
       toc: [{ text: "One", children: [{ text: "Two", children: [] }] }],
       text: "body",
     }),
-    { id: "a.md", title: "Intro", headings: "One Two", text: "body" },
+    {
+      id: "a.md",
+      title: "Intro",
+      description: "",
+      headings: "One Two",
+      text: "body",
+    },
     "an embedded document flattens its outline",
   );
   assert.deepEqual(
@@ -80,12 +86,35 @@ test("every document the index sees maps through one record shape", () => {
       headings: "One Two",
       text: "body",
     }),
-    { id: "a.md", title: "Intro", headings: "One Two", text: "body" },
+    {
+      id: "a.md",
+      title: "Intro",
+      description: "",
+      headings: "One Two",
+      text: "body",
+    },
     "a corpus record keeps its pre-flattened headings",
   );
   assert.deepEqual(
+    search.recordOf({
+      id: "a.md",
+      title: "Intro",
+      description: "A short guide",
+      headings: "One Two",
+      text: "body",
+    }),
+    {
+      id: "a.md",
+      title: "Intro",
+      description: "A short guide",
+      headings: "One Two",
+      text: "body",
+    },
+    "the description a document declares rides with the record",
+  );
+  assert.deepEqual(
     search.recordOf({ id: "a.md" }),
-    { id: "a.md", title: "", headings: "", text: "" },
+    { id: "a.md", title: "", description: "", headings: "", text: "" },
     "a sealed document's record carries its title alone",
   );
 });
@@ -101,6 +130,24 @@ test("a corpus record's pre-flattened headings are indexed", () => {
   ]);
 
   assert.deepEqual(search.search(corpus, "getting started"), ["a.md"]);
+});
+
+test("a declared description is indexed and ranks with the headings", () => {
+  const described = search.createSearch([
+    doc("body.md", "Other", "setup notes"),
+    {
+      id: "described.md",
+      title: "Other",
+      description: "A guide to deployment",
+      text: "nothing of interest",
+    },
+  ]);
+
+  assert.deepEqual(
+    search.search(described, "deployment"),
+    ["described.md"],
+    "a word only the description holds finds the document",
+  );
 });
 
 test("a decrypted record replaces the sealed one without duplicating it", () => {
@@ -625,6 +672,25 @@ test("occurrences falls back to the outline when the body holds no hit", () => {
   assert.equal(entries.length, 1);
   assert.equal(entries[0].hit, -1);
   assert.equal(entries[0].snippet.hit, "Deployment");
+});
+
+test("a declared description is the fallback before the outline", () => {
+  const local = [
+    doc("described.md", "Other", "unrelated words", [
+      { text: "Deployment", children: [] },
+    ]),
+  ];
+  local[0].description = "A guide to deployment";
+
+  const entries = search.occurrences(local, ["described.md"], "deployment");
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].hit, -1);
+  assert.equal(
+    entries[0].snippet.hit,
+    "deployment",
+    "the summary the author wrote is what the row shows",
+  );
 });
 
 test("a document matched only on its title is listed without a snippet", () => {

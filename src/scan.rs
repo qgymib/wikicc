@@ -91,6 +91,23 @@ impl fmt::Display for Diagnostic {
     }
 }
 
+/// Front matter metadata of one document, as the scan read it.
+///
+/// Metadata is display data the build carries verbatim: a description, a
+/// publication date, an author line and the tags the author declared. The
+/// scan validated the shapes; everything here is what the author wrote.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocMeta {
+    /// Front matter `description`, when the author named one.
+    pub description: Option<String>,
+    /// Front matter `date`, when it carried an ISO 8601 shape.
+    pub date: Option<String>,
+    /// Front matter `author`, when the author named one.
+    pub author: Option<String>,
+    /// Front matter `tags`, normalized, in first-occurrence order.
+    pub tags: Vec<String>,
+}
+
 /// One Markdown document discovered on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceDoc {
@@ -101,6 +118,8 @@ pub struct SourceDoc {
     /// Front matter `title` when it is usable text, else the first level-one
     /// heading text, else the file stem, else `Untitled`.
     pub title: String,
+    /// Front matter metadata the scan read: description, date, author, tags.
+    pub metadata: DocMeta,
     /// Raw Markdown source.
     pub text: String,
 }
@@ -241,14 +260,13 @@ pub fn scan_with(input: &Path, out: &Path, excludes: &[String]) -> Result<ScanRe
             }
         };
 
-        let (title, title_warning) = extract_title(&text, &id, entry.path());
-        if let Some(warning) = title_warning {
-            diagnostics.push(warning);
-        }
+        let meta = extract_metadata(&text, &id, entry.path());
+        diagnostics.extend(meta.warnings);
         docs.push(SourceDoc {
             id,
             path: entry.path().to_path_buf(),
-            title,
+            title: meta.title,
+            metadata: meta.metadata,
             text,
         });
     }
@@ -320,25 +338,71 @@ pub fn document_id(root: &Path, path: &Path) -> Option<String> {
     if id.is_empty() { None } else { Some(id) }
 }
 
-/// Document title: the front matter `title` when it is usable text, else the
-/// first level-one heading text, else the file stem, else
-/// [`FALLBACK_DOC_TITLE`].
+/// Document metadata and title, with a warning for every front matter field
+/// that was named but cannot become what it promises.
 ///
-/// The heading text is collected from the parsed tree, so inline markup
-/// (`**bold**`, `` `code` ``, links) is stripped for free and a `#` inside a
-/// fenced code block is never mistaken for a heading. A front matter `title`
-/// that cannot become a title — an empty or whitespace string, a list, a
-/// mapping — becomes a warning naming the document, and the heading decides.
-pub fn extract_title(text: &str, id: &str, path: &Path) -> (String, Option<Diagnostic>) {
-    let found = crate::markdown::document_title(text);
+/// The title is the front matter `title` when it is usable text, else the
+/// first level-one heading text, else the file stem, else
+/// [`FALLBACK_DOC_TITLE`]. The heading text is collected from the parsed
+/// tree, so inline markup (`**bold**`, `` `code` ``, links) is stripped for
+/// free and a `#` inside a fenced code block is never mistaken for a
+/// heading. A front matter `title` that cannot become a title — an empty or
+/// whitespace string, a list, a mapping — warns, and the heading decides.
+/// Every other field degrades the same way: a rejected value is dropped and
+/// named in a warning, never silently kept or guessed at.
+pub struct ExtractedMeta {
+    /// Document title: front matter, heading, file stem or `Untitled`.
+    pub title: String,
+    /// The metadata the front matter carried.
+    pub metadata: DocMeta,
+    /// One warning per rejected field, in field order.
+    pub warnings: Vec<Diagnostic>,
+}
+
+/// Read [`ExtractedMeta`] out of `text`, naming `id` in every warning and
+/// falling back to `path`'s file stem when no title speaks.
+pub fn extract_metadata(text: &str, id: &str, path: &Path) -> ExtractedMeta {
+    let found = crate::markdown::document_front_matter(text);
     let title = found.title.unwrap_or_else(|| fallback_title(path));
-    let warning = found.rejected.then(|| {
-        Diagnostic::warning(format!(
+
+    let mut warnings = Vec::new();
+    if found.title_rejected {
+        warnings.push(Diagnostic::warning(format!(
             "'{id}': front matter title cannot be turned into text; \
              the heading or the file name decides"
-        ))
-    });
-    (title, warning)
+        )));
+    }
+    if found.description_rejected {
+        warnings.push(Diagnostic::warning(format!(
+            "'{id}': front matter description cannot be turned into text; ignoring it"
+        )));
+    }
+    if found.date_rejected {
+        warnings.push(Diagnostic::warning(format!(
+            "'{id}': front matter date is not an ISO 8601 date; ignoring it"
+        )));
+    }
+    if found.author_rejected {
+        warnings.push(Diagnostic::warning(format!(
+            "'{id}': front matter author cannot be turned into text; ignoring it"
+        )));
+    }
+    if found.tags_rejected {
+        warnings.push(Diagnostic::warning(format!(
+            "'{id}': front matter tags cannot be turned into a tag list; ignoring it"
+        )));
+    }
+
+    ExtractedMeta {
+        title,
+        metadata: DocMeta {
+            description: found.description,
+            date: found.date,
+            author: found.author,
+            tags: found.tags,
+        },
+        warnings,
+    }
 }
 
 /// File stem, or [`FALLBACK_DOC_TITLE`] when there is none.
@@ -537,16 +601,23 @@ mod tests {
         assert_eq!(document_id(Path::new("docs"), Path::new("docs")), None);
     }
 
-    /// The title half of [`extract_title`], with the id the scan would give
-    /// the path.
-    fn title_of(text: &str, path: &Path) -> String {
-        extract_title(text, &id_of(path), path).0
+    /// The full [`ExtractedMeta`], with the id the scan would give the path.
+    fn meta_of(text: &str, path: &Path) -> ExtractedMeta {
+        extract_metadata(text, &id_of(path), path)
     }
 
-    /// The warning half of [`extract_title`], with the id the scan would
+    /// The title half of [`extract_metadata`], with the id the scan would
     /// give the path.
+    fn title_of(text: &str, path: &Path) -> String {
+        meta_of(text, path).title
+    }
+
+    /// The title warning of [`extract_metadata`], if there was one.
     fn title_warning_of(text: &str, path: &Path) -> Option<Diagnostic> {
-        extract_title(text, &id_of(path), path).1
+        meta_of(text, path)
+            .warnings
+            .into_iter()
+            .find(|diagnostic| diagnostic.message.contains("title"))
     }
 
     /// The document id the scan would give a test path.
@@ -980,6 +1051,87 @@ mod tests {
         assert_eq!(doc.title, "Intro");
         assert_eq!(doc.text, "# Intro\n\nBody\n");
         assert_eq!(doc.path, dir.path().join("guide").join("intro.md"));
+    }
+
+    #[test]
+    fn metadata_extraction_carries_the_front_matter_fields() {
+        let path = Path::new("intro.md");
+        let meta = meta_of(
+            "---\ndescription: A guide\ndate: 2026-01-02T15:04\nauthor: 王五\n\
+             tags: [rust, \"#guide\"]\n---\n\n# Intro\n",
+            path,
+        );
+
+        assert_eq!(meta.title, "Intro");
+        assert_eq!(meta.metadata.description.as_deref(), Some("A guide"));
+        assert_eq!(meta.metadata.date.as_deref(), Some("2026-01-02T15:04"));
+        assert_eq!(meta.metadata.author.as_deref(), Some("王五"));
+        assert_eq!(meta.metadata.tags, ["rust", "guide"]);
+        assert!(meta.warnings.is_empty());
+    }
+
+    #[test]
+    fn metadata_extraction_warns_once_per_rejected_field() {
+        let path = Path::new("intro.md");
+        let meta = meta_of(
+            "---\ndescription: [a]\ndate: yesterday\nauthor: {x: 1}\ntags: {a: b}\n---\n\n# Intro\n",
+            path,
+        );
+
+        assert_eq!(meta.metadata, DocMeta::default());
+        assert_eq!(meta.warnings.len(), 4);
+        for warning in &meta.warnings {
+            assert!(
+                warning.message.starts_with("'intro.md': front matter "),
+                "unexpected message: {}",
+                warning.message
+            );
+            assert_eq!(warning.severity, Severity::Warning);
+        }
+        assert!(
+            meta.warnings
+                .iter()
+                .any(|warning| warning.message.contains("date is not an ISO 8601 date")),
+            "unexpected messages: {:?}",
+            meta.warnings
+        );
+    }
+
+    #[test]
+    fn metadata_travels_with_the_scanned_documents() {
+        let dir = site(&[(
+            "intro.md",
+            "---\ntitle: Intro\ndescription: A guide\ndate: 2026-01-02\nauthor: 王五\n\
+             tags: [rust, go]\n---\n\n# Intro\n",
+        )]);
+        let report = scan(dir.path(), &dir.path().join("dist")).expect("scan");
+        let doc = &report.docs[0];
+
+        assert_eq!(doc.title, "Intro");
+        assert_eq!(doc.metadata.description.as_deref(), Some("A guide"));
+        assert_eq!(doc.metadata.date.as_deref(), Some("2026-01-02"));
+        assert_eq!(doc.metadata.author.as_deref(), Some("王五"));
+        assert_eq!(doc.metadata.tags, ["rust", "go"]);
+        assert!(report.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_rejected_metadata_field_becomes_a_scan_warning() {
+        let dir = site(&[(
+            "intro.md",
+            "---\ndescription: [a]\ndate: yesterday\nauthor: {x: 1}\ntags: {a: b}\n---\n\n# Intro\n",
+        )]);
+        let report = scan(dir.path(), &dir.path().join("dist")).expect("scan");
+
+        assert_eq!(report.docs[0].metadata, DocMeta::default());
+        assert_eq!(report.warning_count(), 4);
+        assert!(
+            messages(&report)
+                .iter()
+                .all(|message| message.contains("'intro.md'")),
+            "unexpected diagnostics: {:?}",
+            messages(&report)
+        );
     }
 
     #[test]

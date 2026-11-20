@@ -224,7 +224,8 @@ pub struct RenderedPages {
     pub shell: RenderedSite,
     /// One chunk per document, in scan order.
     pub chunks: Vec<ChunkArtifact>,
-    /// The search corpus JSON: `{docs: [{id, title, headings, text}]}`.
+    /// The search corpus JSON: `{docs: [{id, title, description, headings,
+    /// text}]}`.
     pub search_json: String,
 }
 
@@ -307,6 +308,11 @@ struct ChunkPayload<'a> {
 struct SearchRecord<'a> {
     id: &'a str,
     title: &'a str,
+    /// Front matter description; absent when the author named none, and
+    /// absent for a sealed document, whose description is sealed with the
+    /// body it summarizes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
     /// Pre-flattened outline text; absent for a sealed document.
     #[serde(skip_serializing_if = "Option::is_none")]
     headings: Option<String>,
@@ -458,6 +464,11 @@ pub fn render_pages(bundle: &SiteBundle, favicon: &str) -> Result<RenderedPages>
                 SearchRecord {
                     id: &doc.id,
                     title: &doc.title,
+                    description: if sealed {
+                        None
+                    } else {
+                        doc.description.as_deref()
+                    },
                     headings: (!sealed).then(|| flatten_headings(&doc.toc)),
                     text: (!sealed).then_some(doc.text.as_str()),
                 }
@@ -537,7 +548,7 @@ pub fn escape_json_for_script(json: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scan::SourceDoc;
+    use crate::scan::{DocMeta, SourceDoc};
     use crate::site::build_site;
     use std::path::PathBuf;
 
@@ -546,6 +557,18 @@ mod tests {
             id: id.to_string(),
             path: PathBuf::from(id),
             title: title.to_string(),
+            metadata: DocMeta::default(),
+            text: text.to_string(),
+        }
+    }
+
+    /// A document with the given front matter metadata.
+    fn sourced(id: &str, title: &str, metadata: DocMeta, text: &str) -> SourceDoc {
+        SourceDoc {
+            id: id.to_string(),
+            path: PathBuf::from(id),
+            title: title.to_string(),
+            metadata,
             text: text.to_string(),
         }
     }
@@ -946,14 +969,60 @@ mod tests {
     }
 
     #[test]
+    fn a_described_document_carries_the_description_in_the_corpus() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let build = build_site(
+            "Site",
+            dir.path(),
+            &[sourced(
+                "a.md",
+                "A",
+                DocMeta {
+                    description: Some("A short guide".to_string()),
+                    ..DocMeta::default()
+                },
+                "# A\n",
+            )],
+        );
+        let rendered = render_pages(&build.bundle, FAVICON).expect("render");
+
+        let corpus: serde_json::Value =
+            serde_json::from_str(&rendered.search_json).expect("corpus JSON");
+        assert_eq!(
+            corpus["docs"][0]
+                .as_object()
+                .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>()),
+            Some(vec!["description", "headings", "id", "text", "title"]),
+            "the description rides beside the text fields"
+        );
+        assert_eq!(corpus["docs"][0]["description"], "A short guide");
+    }
+
+    #[test]
     fn a_tagged_site_carries_the_tags_aggregation_in_the_manifest() {
         let dir = tempfile::tempdir().expect("temp dir");
         let build = build_site(
             "Site",
             dir.path(),
             &[
-                source("a.md", "A", "# A\n\n#rust\n"),
-                source("b.md", "B", "# B\n\n#rust #beginner\n"),
+                sourced(
+                    "a.md",
+                    "A",
+                    crate::scan::DocMeta {
+                        tags: vec!["rust".to_string()],
+                        ..crate::scan::DocMeta::default()
+                    },
+                    "# A\n",
+                ),
+                sourced(
+                    "b.md",
+                    "B",
+                    crate::scan::DocMeta {
+                        tags: vec!["rust".to_string(), "beginner".to_string()],
+                        ..crate::scan::DocMeta::default()
+                    },
+                    "# B\n",
+                ),
             ],
         );
         let rendered = render_pages(&build.bundle, FAVICON).expect("render");

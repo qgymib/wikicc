@@ -142,8 +142,6 @@ pub(crate) enum OwnKind {
     Sub(Vec<OwnNode>),
     /// `^…^`, rendered as `<sup>`.
     Sup(Vec<OwnNode>),
-    /// `#tag`, rendered as a tagged span.
-    Tag(String),
     /// `:name:`, rendered as the emoji.
     Shortcode { name: String, emoji: char },
     /// `[[target]]` / `[[target|alias]]`.

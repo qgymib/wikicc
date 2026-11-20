@@ -7,8 +7,8 @@
 //!   the plain text used by the search index;
 //! - [`Edge`] per resolved internal link, deduplicated, self-loops dropped and
 //!   sorted by `(from, to)`;
-//! - [`TagEntry`] per collected `#tag`, sorted by name, each listing the
-//!   documents that carry it in id order;
+//! - [`TagEntry`] per front matter tag, sorted by name, each listing the
+//!   documents that declare it in id order;
 //! - [`Stats`]: how many documents and unique assets the site has, and how many
 //!   bytes the assets occupy.
 //!
@@ -57,6 +57,31 @@ pub struct DocModel {
     /// Front matter `title` when it is usable text, else the first level-one
     /// heading, else the file stem.
     pub title: String,
+    /// Front matter `description` when the author named one.
+    ///
+    /// Absent from the JSON when no description was declared, so a site
+    /// without the field serialises byte-identically to a build that never
+    /// heard of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Front matter `date` when it carried an ISO 8601 shape.
+    ///
+    /// Absent from the JSON when no date was declared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// Front matter `author` when the author named one.
+    ///
+    /// Absent from the JSON when no author was declared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Front matter `tags`, normalized, in first-occurrence order.
+    ///
+    /// The tags a document declares are exactly the ones its reader entry
+    /// shows and the aggregation lists. Empty for every document that
+    /// declares none — and for every sealed document, whose tags are
+    /// stripped like the body they once described.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// Rendered body HTML, with links rewritten to hash routes and assets
     /// addressed by their opaque placeholder.
     pub html: String,
@@ -283,13 +308,13 @@ pub fn build_edges(links: &[(String, String)]) -> Vec<Edge> {
         .collect()
 }
 
-/// Fold the documents' collected tags into the payload's aggregation.
+/// Fold the documents' declared tags into the payload's aggregation.
 ///
 /// Every `(tag, doc)` pair lands in a [`BTreeMap`] keyed by the tag name with
 /// a [`BTreeSet`] of document ids, so the entries come out sorted by tag and
 /// each entry's documents by id, whatever order the per-document passes
 /// reported them in. A document that repeats a tag contributes one pair —
-/// the render pass has already deduplicated its own list.
+/// the scan has already deduplicated its own list.
 pub fn build_tags(pairs: &[(String, String)]) -> Vec<TagEntry> {
     let mut aggregated: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (tag, doc) in pairs {
@@ -377,11 +402,14 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
                 resolved: snapshot,
                 front_matter: rendered.front_matter,
                 targets,
-                tags: rendered.tags,
                 model: DocModel {
                     id: doc.id.clone(),
                     path: doc.id.clone(),
                     title: doc.title.clone(),
+                    description: doc.metadata.description.clone(),
+                    date: doc.metadata.date.clone(),
+                    author: doc.metadata.author.clone(),
+                    tags: doc.metadata.tags.clone(),
                     html: rendered.html,
                     toc: rendered.toc,
                     blocks: rendered.blocks,
@@ -404,7 +432,12 @@ pub fn build_site(title: &str, root: &Path, docs: &[SourceDoc]) -> SiteBuild {
                 .into_iter()
                 .map(|target| (doc.id.clone(), target)),
         );
-        tag_pairs.extend(outcome.tags.into_iter().map(|tag| (tag, doc.id.clone())));
+        tag_pairs.extend(
+            doc.metadata
+                .tags
+                .iter()
+                .map(|tag| (tag.clone(), doc.id.clone())),
+        );
         front_matters.push(outcome.front_matter);
         models.push(outcome.model);
         context.merge(outcome.resolved);
@@ -447,8 +480,6 @@ struct DocOutcome {
     front_matter: Option<String>,
     /// Document ids the document links to successfully, in resolution order.
     targets: Vec<String>,
-    /// Tag names the document's body carries, deduplicated, in byte order.
-    tags: Vec<String>,
     /// The payload model of the document.
     model: DocModel,
 }
@@ -458,6 +489,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use crate::scan::DocMeta;
+
     use super::*;
 
     fn source(id: &str, title: &str, text: &str) -> SourceDoc {
@@ -465,6 +498,7 @@ mod tests {
             id: id.to_string(),
             path: PathBuf::from(id),
             title: title.to_string(),
+            metadata: DocMeta::default(),
             text: text.to_string(),
         }
     }
@@ -791,6 +825,7 @@ mod tests {
                     id: id.clone(),
                     path: dir.join(&id),
                     title: format!("Doc {index}"),
+                    metadata: DocMeta::default(),
                     text,
                 }
             })
@@ -962,13 +997,40 @@ mod tests {
         );
     }
 
+    /// A document with the given front matter metadata.
+    fn sourced(id: &str, title: &str, metadata: DocMeta, text: &str) -> SourceDoc {
+        SourceDoc {
+            id: id.to_string(),
+            path: PathBuf::from(id),
+            title: title.to_string(),
+            metadata,
+            text: text.to_string(),
+        }
+    }
+
     #[test]
-    fn build_site_collects_the_tags_the_bodies_carry() {
+    fn build_site_collects_the_tags_the_front_matter_declares() {
         let dir = tempfile::tempdir().expect("temp dir");
         let docs = [
-            source("a.md", "A", "# A\n\nreading #rust and #rust again\n"),
-            source("b.md", "B", "# B\n\nintro #rust, plus #beginner\n"),
-            source("c.md", "C", "# C\n\nno tags here\n"),
+            sourced(
+                "a.md",
+                "A",
+                DocMeta {
+                    tags: vec!["rust".to_string()],
+                    ..DocMeta::default()
+                },
+                "# A\n\nreading #rust in the body changes nothing\n",
+            ),
+            sourced(
+                "b.md",
+                "B",
+                DocMeta {
+                    tags: vec!["rust".to_string(), "beginner".to_string()],
+                    ..DocMeta::default()
+                },
+                "# B\n\nintro\n",
+            ),
+            sourced("c.md", "C", DocMeta::default(), "# C\n\nno tags here\n"),
         ];
 
         let build = build_site("Site", dir.path(), &docs);
@@ -984,7 +1046,13 @@ mod tests {
                     tag: "rust".to_string(),
                     docs: vec!["a.md".to_string(), "b.md".to_string()],
                 },
-            ]
+            ],
+            "only the front matter declares tags; a body `#word` is plain text"
+        );
+        assert!(
+            !build.bundle.docs[0].html.contains("doc-tag"),
+            "no body chip is rendered: {}",
+            build.bundle.docs[0].html
         );
     }
 
@@ -992,8 +1060,24 @@ mod tests {
     fn a_tagged_site_carries_the_tags_aggregation_in_the_json() {
         let dir = tempfile::tempdir().expect("temp dir");
         let docs = [
-            source("a.md", "A", "# A\n\n#rust\n"),
-            source("b.md", "B", "# B\n\n#rust #beginner\n"),
+            sourced(
+                "a.md",
+                "A",
+                DocMeta {
+                    tags: vec!["rust".to_string()],
+                    ..DocMeta::default()
+                },
+                "# A\n",
+            ),
+            sourced(
+                "b.md",
+                "B",
+                DocMeta {
+                    tags: vec!["rust".to_string(), "beginner".to_string()],
+                    ..DocMeta::default()
+                },
+                "# B\n",
+            ),
         ];
 
         let build = build_site("Site", dir.path(), &docs);
@@ -1015,6 +1099,85 @@ mod tests {
         assert_eq!(
             value["tags"][1]["docs"],
             serde_json::json!(["a.md", "b.md"])
+        );
+        assert!(
+            value["docs"][0]
+                .as_object()
+                .map(keys)
+                .unwrap()
+                .contains(&"tags"),
+            "the document carries its own declared tags"
+        );
+    }
+
+    #[test]
+    fn front_matter_metadata_travels_in_the_payload() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [sourced(
+            "a.md",
+            "A",
+            DocMeta {
+                description: Some("A short guide".to_string()),
+                date: Some("2026-01-02".to_string()),
+                author: Some("王五".to_string()),
+                tags: vec!["rust".to_string()],
+            },
+            "# A\n",
+        )];
+
+        let build = build_site("Site", dir.path(), &docs);
+        let doc = &build.bundle.docs[0];
+
+        assert_eq!(doc.description.as_deref(), Some("A short guide"));
+        assert_eq!(doc.date.as_deref(), Some("2026-01-02"));
+        assert_eq!(doc.author.as_deref(), Some("王五"));
+        assert_eq!(doc.tags, ["rust"]);
+
+        let value: serde_json::Value =
+            serde_json::from_str(&build.bundle.to_json()).expect("valid JSON");
+        assert_eq!(
+            value["docs"][0].as_object().map(keys),
+            Some(vec![
+                "author",
+                "blocks",
+                "date",
+                "description",
+                "html",
+                "id",
+                "path",
+                "tags",
+                "text",
+                "title",
+                "toc"
+            ]),
+            "the metadata keys ride beside the body fields"
+        );
+        assert_eq!(value["docs"][0]["description"], "A short guide");
+        assert_eq!(value["docs"][0]["date"], "2026-01-02");
+        assert_eq!(value["docs"][0]["author"], "王五");
+        assert_eq!(value["docs"][0]["tags"], serde_json::json!(["rust"]));
+    }
+
+    #[test]
+    fn a_site_without_metadata_serialises_without_the_metadata_keys() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let docs = [source("a.md", "A", "# A\n")];
+
+        let build = build_site("Site", dir.path(), &docs);
+        let value: serde_json::Value =
+            serde_json::from_str(&build.bundle.to_json()).expect("valid JSON");
+
+        let object = value["docs"][0].as_object().map(keys).unwrap();
+        for key in ["description", "date", "author", "tags"] {
+            assert!(
+                !object.contains(&key),
+                "a document without the field serialises without it: {key}"
+            );
+        }
+        assert_eq!(
+            build.bundle.to_json(),
+            r#"{"v":1,"title":"Site","docs":[{"id":"a.md","path":"a.md","title":"A","html":"<h1 id=\"a\">A</h1>\n","toc":[{"id":"a","text":"A","level":1,"children":[]}],"blocks":[{"id":"a","level":1,"parent":null,"html":"<h1 id=\"a\">A</h1>\n","subtree":[0]}],"text":"A"}],"edges":[],"stats":{"documents":1,"assets":0,"asset_bytes":0}}"#,
+            "an untagged site serialises exactly as before the feature"
         );
     }
 

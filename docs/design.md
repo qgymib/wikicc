@@ -67,7 +67,8 @@ src/options/                the shared Settings of the CLI, the WIKICC_* environ
                             merge, defaults, path guards
 src/error.rs                error type and exit-code mapping
 src/pipeline.rs             stage order, strict gate, summary lines
-src/scan.rs                 discovery, ordering, ids, titles, diagnostics
+src/scan.rs                 discovery, ordering, ids, titles, front matter
+                            metadata, diagnostics
 src/config.rs               the optional `.wikicc.json` site configuration and its initializer
 src/env.rs                  the WIKICC_* environment variables: reading, parsing,
                             blank-value and unknown-name policy, error messages

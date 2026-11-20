@@ -1,7 +1,8 @@
 # Search — how to find things in the reader
 
 The reader ships a search panel that looks through the titles, the chapter
-outlines and the body text of every document in the folder. This page describes
+outlines, the front matter descriptions and the body text of every document
+in the folder. This page describes
 how to use it and what a query means; `docs/design.md` describes how the reader
 is built.
 
@@ -37,8 +38,9 @@ appear, and the answer replaces it when the corpus lands.
 The list shows **one row per place** the query is found, not one row per
 document: each row carries the passage around a hit, with the hit emphasised,
 and the file it was found in. Rows are ordered by relevance — a hit in a
-document's title outranks one in a chapter heading, which outranks one in the
-body — and the hits of one document stay together.
+document's title outranks one in a chapter heading or the front matter
+description, which outrank one in the body — and the hits of one document stay
+together.
 
 Selecting is deliberate: click a row (or move with <kbd>↑</kbd>/<kbd>↓</kbd>,
 <kbd>Home</kbd>/<kbd>End</kbd>) and the preview below the list shows the whole
@@ -49,9 +51,11 @@ that passage — the article opens with the query's occurrences marked the same
 way, the passage you picked standing out. A mark covers what you typed and no
 more: query `instal` and "installation" is marked over its first six letters
 alone, the tail of the word left unmarked. The marks are the arrival's, not
-the reading's: they go when you navigate on. A row whose match is in the title or
-the outline alone has no passage in the body to land on; that document opens
-at its top.
+the reading's: they go when you navigate on. A row whose match is in the title,
+the outline or the description alone has no passage in the body to land on;
+that document opens at its top. The row's passage itself falls back the same
+way: a document that declares a front matter `description` shows it as the row
+summary when the body holds no hit, then the outline, then just the file path.
 
 ## Query syntax
 

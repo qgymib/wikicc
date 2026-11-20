@@ -30,6 +30,7 @@ import {
   CODE_BLOCK_CLASS,
   COLLAPSIBLE_CLASS,
   COPY_BUTTON_CLASS,
+  DOC_META_CLASS,
   TOGGLE_CLASS,
   chapterRanges,
   createDocBody,
@@ -51,7 +52,6 @@ import {
   INVALID_ATTRIBUTE,
   INVALID_REASON_ATTRIBUTE,
 } from "../../src/web/js/links.js";
-import { TAG_CHIP_ATTRIBUTE } from "../../src/web/js/tags.js";
 import { setLanguage } from "../../src/web/js/i18n.js";
 
 /**
@@ -346,14 +346,15 @@ function addDeadLink(body, doc, destination, reason) {
   return link;
 }
 
-/** A tag chip shaped the way the build serialises one. */
-function addTagChip(body, doc, tag) {
-  const chip = doc.createElement("span");
-  chip.className = "doc-tag";
-  chip.setAttribute(TAG_CHIP_ATTRIBUTE, tag);
-  chip.setAttribute("title", "Browse this tag");
-  body.appendChild(chip);
-  return chip;
+/** A meta block shaped the way the article builds one. */
+function addMetaBlock(doc) {
+  const meta = doc.createElement("div");
+  meta.className = DOC_META_CLASS;
+  const line = doc.createElement("p");
+  line.className = "doc-byline";
+  line.textContent = "Alice · 2026-01-02";
+  meta.appendChild(line);
+  return meta;
 }
 
 test("fillDocBody rewrites a dead link's title in the language in effect", () => {
@@ -410,32 +411,126 @@ test("fillDocBody keeps the build's wording for an unknown reason code", () => {
   });
 });
 
-test("fillDocBody rewrites a tag chip's title in the language in effect", () => {
-  withDocument(function (doc) {
-    const body = doc.createElement("div");
-    body.className = BODY_CLASS;
-    const chip = addTagChip(body, doc, "rust");
+test("fillDocBody inserts the caller's meta under the first heading", () => {
+  withBody(
+    function (body) {
+      const meta = addMetaBlock(body.ownerDocument);
+      fillDocBody(body, "<ignored/>", { meta });
+
+      assert.equal(body.children[0].tagName, "H1", "the heading still leads");
+      assert.equal(
+        body.children[1],
+        meta,
+        "the meta block sits right behind the title",
+      );
+      assert.equal(body.children[2].tagName, "P", "the prose follows");
+    },
+    function (body, doc) {
+      addHeading(body, doc, 1, "a");
+      addParagraph(body, doc, "alpha");
+    },
+  );
+});
+
+test("fillDocBody puts the meta first when the markup opens with no heading", () => {
+  withBody(
+    function (body) {
+      const meta = addMetaBlock(body.ownerDocument);
+      fillDocBody(body, "<ignored/>", { meta });
+
+      assert.equal(
+        body.children[0],
+        meta,
+        "without a title to sit under, the block leads the body",
+      );
+    },
+    function (body, doc) {
+      addParagraph(body, doc, "alpha");
+    },
+  );
+});
+
+test("fillDocBody inserts no meta when the caller hands none", () => {
+  withBody(function (body) {
     fillDocBody(body, "<ignored/>");
 
     assert.equal(
-      chip.getAttribute("title"),
-      "Browse this tag",
-      "the English copy is verbatim what the build wrote",
+      body.children.length,
+      0,
+      "a caller without meta is none the wiser",
     );
+  });
+});
 
-    setLanguage("zh");
-    try {
-      fillDocBody(body, "<ignored/>");
+test("a fold never hides the meta block that follows its heading", () => {
+  withBody(
+    function (body) {
+      const meta = addMetaBlock(body.ownerDocument);
+      fillDocBody(body, "<ignored/>", {
+        meta: meta,
+        collapsible: true,
+      });
+
+      assert.equal(body.children.length, 5, "heading, meta, two chapters");
+      assert.equal(
+        body.children[1],
+        meta,
+        "the block sits between the title and the prose",
+      );
+
+      const first = toggleOf(body.children[0]);
+      assert.notEqual(first, null, "the chapter after the title folds");
+      press(body, first);
 
       assert.equal(
-        chip.getAttribute("title"),
-        "浏览此标签",
-        "the chip answers in the site's language",
+        meta.getAttribute("hidden"),
+        null,
+        "the byline is never folded away with the chapter",
       );
-    } finally {
-      setLanguage("en");
-    }
-  });
+      assert.equal(
+        body.children[2].getAttribute("hidden"),
+        "",
+        "the chapter's own prose is what the fold hides",
+      );
+      assert.equal(
+        body.children[3].getAttribute("hidden"),
+        "",
+        "the nested heading hides with the chapter that owns it",
+      );
+      assert.equal(
+        body.children[4].getAttribute("hidden"),
+        "",
+        "so does the prose below the nested heading",
+      );
+    },
+    function (body, doc) {
+      addHeading(body, doc, 1, "a");
+      addParagraph(body, doc, "alpha");
+      addHeading(body, doc, 2, "b");
+      addParagraph(body, doc, "beta");
+    },
+  );
+});
+
+test("a heading followed only by the meta earns no arrow", () => {
+  withBody(
+    function (body) {
+      const meta = addMetaBlock(body.ownerDocument);
+      fillDocBody(body, "<ignored/>", {
+        meta: meta,
+        collapsible: true,
+      });
+
+      assert.equal(
+        toggleOf(body.children[0]),
+        null,
+        "the block is furniture, not chapter content",
+      );
+    },
+    function (body, doc) {
+      addHeading(body, doc, 1, "a");
+    },
+  );
 });
 
 test("fillDocBody leaves the chapters alone unless asked", () => {

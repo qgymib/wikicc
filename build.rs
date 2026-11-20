@@ -160,12 +160,13 @@ const STAGED_TEXT_ASSETS: [(&str, &str); 2] = [
 /// sequence. The split itself is purely mechanical: no rule moved relative
 /// to any other, and joining the layers reproduces the single-file sheet's
 /// bytes.
-const CSS_LAYERS: [&str; 17] = [
+const CSS_LAYERS: [&str; 18] = [
     "base.css",
     "shell.css",
     "rail-sidebar.css",
     "sealed-documents.css",
     "content.css",
+    "doc-meta.css",
     "chapter-folding.css",
     "code-block-copying.css",
     "mermaid-diagrams.css",

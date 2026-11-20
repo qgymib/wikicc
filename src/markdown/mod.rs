@@ -9,8 +9,7 @@
 //! 2. [`transform::wikilink`] claims the Obsidian `[[wikilink]]`,
 //!    `[[wikilink|alias]]` and `![[embed]]` runs the fold left behind,
 //! 3. [`transform::inline`] claims the Typora sugar (`==highlight==`,
-//!    `~subscript~`, `^superscript^`, `%%comments%%`, `#tags`,
-//!    `:shortcodes:`),
+//!    `~subscript~`, `^superscript^`, `%%comments%%`, `:shortcodes:`),
 //! 4. [`transform::lenient`] claims the spaced inline destinations
 //!    (`![alt](a b.png)`) CommonMark declines,
 //! 5. [`transform::callout`] rewrites Obsidian callout block quotes.
@@ -47,12 +46,12 @@ pub(crate) mod parse;
 pub(crate) mod refdefs;
 pub(crate) mod transform;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use ast::{OwnKind, OwnNode};
 use markdown::mdast::Node;
 use sections::Block;
-use serde_yaml::Value;
+use serde_yaml::{Mapping, Value};
 use toc::{Heading, collect_headings};
 
 pub use links::{
@@ -86,12 +85,6 @@ pub struct RenderedDoc {
     /// Plain text of the document: every text and code run, with block
     /// boundaries turned into single spaces and whitespace collapsed.
     pub text: String,
-    /// Tag names the body carries, deduplicated and sorted in byte order.
-    ///
-    /// The same inline sugar pass that renders `#tag` chips produces them, so
-    /// the tags a document claims are exactly the chips its HTML shows. The
-    /// site aggregation folds these per-document sets into the payload.
-    pub tags: Vec<String>,
     /// Raw YAML text of the front matter, without the `---` fences, when the
     /// document opens with one.
     ///
@@ -129,16 +122,14 @@ pub fn render_document_with<R: LinkRewriter + ?Sized>(
     let footnotes = footnote_numbers(&tree);
     let mut definitions = refdefs::collect(&tree);
 
-    let (html, text, blocks, tags) =
+    let (html, text, blocks) =
         html::serialize(&tree, &headings, &footnotes, &mut definitions, rewriter);
-    let unique = tags.into_iter().collect::<BTreeSet<_>>();
 
     RenderedDoc {
         html,
         toc: build_toc(&headings),
         blocks,
         text: collapse_whitespace(&text),
-        tags: unique.into_iter().collect(),
         front_matter,
     }
 }
@@ -158,7 +149,7 @@ pub fn render_engine_html(source: &str) -> String {
     let footnotes = footnote_numbers(&tree);
     let mut definitions = refdefs::collect(&tree);
 
-    let (html, _, _, _) = html::serialize(
+    let (html, _, _) = html::serialize(
         &tree,
         &headings,
         &footnotes,
@@ -187,101 +178,293 @@ pub fn sections_of(source: &str) -> Vec<String> {
     headings.into_iter().map(|heading| heading.id).collect()
 }
 
-/// The title a document asks for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DocTitle {
+/// The front matter metadata and title a document asks for.
+///
+/// `title` falls back to the first level-one heading when the front matter
+/// does not name one; every other field is carried as read. A field the
+/// author named but that cannot become what it promises leaves `None` (or an
+/// empty tag list) and raises its `*_rejected` flag, which the scan reports
+/// as a warning — a broken instruction must not build into a silent
+/// surprise.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DocFrontMatter {
     /// The title to use: the front matter `title` when it is usable text,
     /// else the first level-one heading. `None` leaves the scan to the file
     /// stem and `Untitled`.
     pub title: Option<String>,
     /// A `title` key existed but its value cannot become a title; the scan
     /// reports that and falls back.
-    pub rejected: bool,
+    pub title_rejected: bool,
+    /// Front matter `description` when it is usable text.
+    pub description: Option<String>,
+    /// A `description` key existed but its value cannot become text.
+    pub description_rejected: bool,
+    /// Front matter `date` when it carries an ISO 8601 date shape.
+    pub date: Option<String>,
+    /// A `date` key existed but its value does not spell an ISO 8601 date.
+    pub date_rejected: bool,
+    /// Front matter `author` when it is usable text.
+    pub author: Option<String>,
+    /// An `author` key existed but its value cannot become text.
+    pub author_rejected: bool,
+    /// Front matter `tags`, normalized: trimmed, a leading `#` stripped,
+    /// empties dropped, first occurrences kept.
+    pub tags: Vec<String>,
+    /// A `tags` key existed but its value cannot become a list of names.
+    pub tags_rejected: bool,
 }
 
-/// The title a document asks for: the front matter `title` when it is usable
-/// text, else the first level-one heading.
+/// The front matter metadata and title a document asks for.
 ///
-/// Used by the scan for a document's title. The heading text is collected
-/// from the parsed tree, so inline markup (`**bold**`, `` `code` ``, links)
-/// is stripped for free and a `#` inside a fenced code block is never
-/// mistaken for a heading. Raw HTML contributes nothing: a title is
-/// metadata, and markup fragments have no business in it.
+/// Used by the scan for every document-level field. One parse serves them
+/// all: the raw YAML text is taken off the parsed tree and read once, and
+/// the heading fallback reuses the same tree.
 ///
-/// The front matter `title` wins when it turns into text: a non-empty string
+/// The heading text is collected from the parsed tree, so inline markup
+/// (`**bold**`, `` `code` ``, links) is stripped for free and a `#` inside a
+/// fenced code block is never mistaken for a heading. Raw HTML contributes
+/// nothing: metadata is metadata, and markup fragments have no business in
+/// it.
+///
+/// A front matter `title` wins when it turns into text: a non-empty string
 /// (trimmed), a number or a boolean is read as written, and an explicit tag
 /// (`!!str 123`) speaks through the value it labels. A key that is missing,
 /// `null`, sits in a front matter that is not a mapping, or in YAML that
 /// does not parse falls back to the heading silently — broken YAML is the
 /// encrypt stage's error, and one diagnostic per problem is enough. A value
 /// that exists but cannot become a title — an empty or whitespace string, a
-/// sequence, a mapping — sets [`DocTitle::rejected`] so the scan can warn.
-pub(crate) fn document_title(source: &str) -> DocTitle {
+/// sequence, a mapping — sets [`DocFrontMatter::title_rejected`] so the scan
+/// can warn.
+pub(crate) fn document_front_matter(source: &str) -> DocFrontMatter {
     // One parse serves the front matter and the heading scan: the raw YAML
     // text is taken off the engine tree before the own-layer conversion
     // drops it.
     let parsed = parse::parse_document(source);
-    let mut rejected = false;
-    if let Some(raw) = front_matter_text(&parsed) {
-        match front_matter_title(&raw) {
-            FrontMatterTitle::Text(text) => {
-                return DocTitle {
-                    title: Some(text),
-                    rejected: false,
-                };
-            }
-            FrontMatterTitle::Rejected => rejected = true,
-            FrontMatterTitle::Absent => {}
-        }
+    let mut found = DocFrontMatter::default();
+    if let Some(raw) = front_matter_text(&parsed)
+        && let Some(mapping) = front_matter_mapping(&raw)
+    {
+        found = front_matter_fields(&mapping);
+    }
+    if found.title.is_some() {
+        return found;
     }
 
     let tree = prepare_tree(&parsed);
-    DocTitle {
-        title: first_h1_in_tree(&tree),
-        rejected,
-    }
+    found.title = first_h1_in_tree(&tree);
+    found
 }
 
-/// What a document's front matter `title` value comes to.
-enum FrontMatterTitle {
-    /// No usable value spoke: the heading decides, without a warning.
+/// What one front matter key that should become a single text comes to.
+enum TextValue {
+    /// The key is missing or explicitly null: no opinion.
     Absent,
-    /// The value became title text.
+    /// The value became text.
     Text(String),
-    /// A `title` key existed but the value cannot become a title.
+    /// The key existed but the value cannot become text.
     Rejected,
 }
 
-/// The `title` value of the raw front matter text.
-///
-/// A front matter that is not a mapping — a bare scalar, a list, nothing at
-/// all — names no `title` key: the front matter is not ours to judge.
-fn front_matter_title(raw: &str) -> FrontMatterTitle {
-    let Ok(value) = serde_yaml::from_str::<Value>(raw) else {
-        return FrontMatterTitle::Absent;
-    };
-    let Value::Mapping(mapping) = value else {
-        return FrontMatterTitle::Absent;
-    };
+/// What a front matter `tags` key comes to.
+enum TagsValue {
+    /// The key is missing or explicitly null: no opinion.
+    Absent,
+    /// The value became a list of tag names.
+    Tags(Vec<String>),
+    /// The key existed but the value cannot become a list of names.
+    Rejected,
+}
 
-    match mapping.get(Value::from("title")) {
-        None | Some(Value::Null) => FrontMatterTitle::Absent,
-        Some(value) => title_text(value),
+/// Every metadata field out of a front matter mapping, each with its own
+/// verdict: a field the author named but that cannot become what it promises
+/// is rejected, not guessed at.
+fn front_matter_fields(mapping: &Mapping) -> DocFrontMatter {
+    let mut found = DocFrontMatter::default();
+
+    match text_value(mapping, "title") {
+        TextValue::Text(text) => found.title = Some(text),
+        TextValue::Rejected => found.title_rejected = true,
+        TextValue::Absent => {}
+    }
+    match text_value(mapping, "description") {
+        TextValue::Text(text) => found.description = Some(text),
+        TextValue::Rejected => found.description_rejected = true,
+        TextValue::Absent => {}
+    }
+    match date_value(mapping) {
+        TextValue::Text(text) => found.date = Some(text),
+        TextValue::Rejected => found.date_rejected = true,
+        TextValue::Absent => {}
+    }
+    match text_value(mapping, "author") {
+        TextValue::Text(text) => found.author = Some(text),
+        TextValue::Rejected => found.author_rejected = true,
+        TextValue::Absent => {}
+    }
+    match tags_value(mapping) {
+        TagsValue::Tags(names) => found.tags = names,
+        TagsValue::Rejected => found.tags_rejected = true,
+        TagsValue::Absent => {}
+    }
+
+    found
+}
+
+/// The mapping of raw front matter text, `None` when it is not a mapping —
+/// a bare scalar, a list, nothing at all names no keys: the front matter is
+/// not ours to judge.
+fn front_matter_mapping(raw: &str) -> Option<Mapping> {
+    match serde_yaml::from_str::<Value>(raw) {
+        Ok(Value::Mapping(mapping)) => Some(mapping),
+        _ => None,
     }
 }
 
-/// Turn one `title` value into text, or say why it cannot become a title.
-fn title_text(value: &Value) -> FrontMatterTitle {
-    match value {
-        Value::String(text) => match text.trim() {
-            "" => FrontMatterTitle::Rejected,
-            trimmed => FrontMatterTitle::Text(trimmed.to_string()),
-        },
-        Value::Number(number) => FrontMatterTitle::Text(number.to_string()),
-        Value::Bool(flag) => FrontMatterTitle::Text(flag.to_string()),
-        Value::Tagged(tagged) => title_text(&tagged.value),
-        _ => FrontMatterTitle::Rejected,
+/// The text value of one front matter key.
+fn text_value(mapping: &Mapping, key: &str) -> TextValue {
+    match mapping.get(Value::from(key)) {
+        None | Some(Value::Null) => TextValue::Absent,
+        Some(value) => scalar_text(value),
     }
+}
+
+/// The `date` value: text that must carry an ISO 8601 date shape.
+fn date_value(mapping: &Mapping) -> TextValue {
+    match text_value(mapping, "date") {
+        TextValue::Text(text) if is_iso_8601_shape(&text) => TextValue::Text(text),
+        TextValue::Text(_) => TextValue::Rejected,
+        other => other,
+    }
+}
+
+/// Turn one YAML value into text, or say it cannot become text.
+fn scalar_text(value: &Value) -> TextValue {
+    match scalar_string(value) {
+        None => TextValue::Rejected,
+        Some(text) => match text.trim() {
+            "" => TextValue::Rejected,
+            trimmed => TextValue::Text(trimmed.to_string()),
+        },
+    }
+}
+
+/// The display text of a scalar YAML value: strings as written, numbers and
+/// booleans as the engine spells them, tagged values through what they
+/// label. Composites name no text.
+fn scalar_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        Value::Tagged(tagged) => scalar_string(&tagged.value),
+        _ => None,
+    }
+}
+
+/// The `tags` value of a front matter mapping.
+///
+/// A sequence of scalars is the spelling the field promises; each name is
+/// trimmed, one leading `#` is stripped and empties are dropped, so
+/// `"#rust"` and `rust` spell the same tag and a document never claims one
+/// twice. A bare scalar is tolerated as a one-tag list. A mapping, or a
+/// composite element anywhere in the sequence, rejects the whole field: a
+/// broken list must not silently become a shorter one.
+fn tags_value(mapping: &Mapping) -> TagsValue {
+    match mapping.get(Value::from("tags")) {
+        None | Some(Value::Null) => TagsValue::Absent,
+        Some(Value::Sequence(items)) => match tag_names(items) {
+            Some(names) => TagsValue::Tags(names),
+            None => TagsValue::Rejected,
+        },
+        Some(value) => match scalar_text(value) {
+            TextValue::Text(text) => {
+                TagsValue::Tags(normalized_tag_name(&text).into_iter().collect())
+            }
+            _ => TagsValue::Rejected,
+        },
+    }
+}
+
+/// The tag names of a sequence of scalar values, `None` when an element
+/// cannot become a name.
+fn tag_names(items: &[Value]) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    for item in items {
+        let text = scalar_string(item)?;
+        if let Some(name) = normalized_tag_name(&text)
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    Some(names)
+}
+
+/// One tag name out of written text: trimmed, one leading `#` stripped,
+/// trimmed again; `None` when nothing is left.
+fn normalized_tag_name(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let without_hash = trimmed.strip_prefix('#').unwrap_or(trimmed).trim();
+    if without_hash.is_empty() {
+        None
+    } else {
+        Some(without_hash.to_string())
+    }
+}
+
+/// Whether `text` carries an ISO 8601 date shape: a `YYYY-MM-DD` calendar
+/// date, optionally followed by a time (`T`, any case, or a space; `HH:MM`;
+/// an optional `:SS`) and a zone (`Z` or `±HH:MM`).
+///
+/// The shape decides, not the calendar: `2026-13-99` is accepted, because a
+/// hand-written `date` is displayed as written and only a shape check keeps
+/// the field honest without dragging a date library into the build.
+fn is_iso_8601_shape(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.len() < 10
+        || !digits(&bytes[0..4])
+        || bytes[4] != b'-'
+        || !digits(&bytes[5..7])
+        || bytes[7] != b'-'
+        || !digits(&bytes[8..10])
+    {
+        return false;
+    }
+    if bytes.len() == 10 {
+        return true;
+    }
+
+    // The time part: a separator, `HH:MM`, an optional `:SS`, an optional
+    // zone.
+    let rest = &bytes[10..];
+    if !(rest[0] == b'T' || rest[0] == b't' || rest[0] == b' ') {
+        return false;
+    }
+    let time = &rest[1..];
+    if time.len() < 5 || !digits(&time[0..2]) || time[2] != b':' || !digits(&time[3..5]) {
+        return false;
+    }
+    let time = &time[5..];
+    let time = if time.len() >= 3 && time[0] == b':' && digits(&time[1..3]) {
+        &time[3..]
+    } else {
+        time
+    };
+    match time {
+        [] => true,
+        [b'Z'] | [b'z'] => true,
+        [sign, hour1, hour2, b':', minute1, minute2] => {
+            (*sign == b'+' || *sign == b'-')
+                && digits(&[*hour1, *hour2])
+                && digits(&[*minute1, *minute2])
+        }
+        _ => false,
+    }
+}
+
+/// Whether every byte of `slice` is an ASCII digit.
+fn digits(slice: &[u8]) -> bool {
+    slice.iter().all(u8::is_ascii_digit)
 }
 
 /// The text of the first level-one heading in a prepared tree, if the
@@ -491,32 +674,32 @@ mod tests {
     }
 
     #[test]
-    fn document_title_prefers_the_front_matter_title() {
-        let found = document_title("---\ntitle: From the matter\n---\n\n# Heading\n");
+    fn document_front_matter_prefers_the_front_matter_title() {
+        let found = document_front_matter("---\ntitle: From the matter\n---\n\n# Heading\n");
 
         assert_eq!(found.title.as_deref(), Some("From the matter"));
-        assert!(!found.rejected);
+        assert!(!found.title_rejected);
     }
 
     #[test]
-    fn document_title_uses_the_front_matter_without_a_heading() {
-        let found = document_title("---\ntitle: Named\n---\n\nno heading\n");
+    fn document_front_matter_uses_the_front_matter_without_a_heading() {
+        let found = document_front_matter("---\ntitle: Named\n---\n\nno heading\n");
 
         assert_eq!(found.title.as_deref(), Some("Named"));
-        assert!(!found.rejected);
+        assert!(!found.title_rejected);
     }
 
     #[test]
-    fn document_title_trims_the_front_matter_value() {
-        let quoted = document_title("---\ntitle: \"  Spaced  \"\n---\n\n# Heading\n");
-        let block = document_title("---\ntitle: |\n  Block title\n---\n\n# Heading\n");
+    fn document_front_matter_trims_the_front_matter_value() {
+        let quoted = document_front_matter("---\ntitle: \"  Spaced  \"\n---\n\n# Heading\n");
+        let block = document_front_matter("---\ntitle: |\n  Block title\n---\n\n# Heading\n");
 
         assert_eq!(quoted.title.as_deref(), Some("Spaced"));
         assert_eq!(block.title.as_deref(), Some("Block title"));
     }
 
     #[test]
-    fn document_title_reads_numbers_and_booleans_as_text() {
+    fn document_front_matter_reads_numbers_and_booleans_as_text() {
         for (raw, expected) in [
             ("title: 123", "123"),
             ("title: 1.5", "1.5"),
@@ -524,38 +707,38 @@ mod tests {
             ("title: true", "true"),
             ("title: false", "false"),
         ] {
-            let found = document_title(&format!("---\n{raw}\n---\n\n# Heading\n"));
+            let found = document_front_matter(&format!("---\n{raw}\n---\n\n# Heading\n"));
 
             assert_eq!(found.title.as_deref(), Some(expected), "raw: {raw}");
-            assert!(!found.rejected, "raw: {raw}");
+            assert!(!found.title_rejected, "raw: {raw}");
         }
     }
 
     #[test]
-    fn document_title_unwraps_a_tagged_title() {
-        let found = document_title("---\ntitle: !!str 42\n---\n\n# Heading\n");
+    fn document_front_matter_unwraps_a_tagged_title() {
+        let found = document_front_matter("---\ntitle: !!str 42\n---\n\n# Heading\n");
 
         assert_eq!(found.title.as_deref(), Some("42"));
-        assert!(!found.rejected);
+        assert!(!found.title_rejected);
     }
 
     #[test]
-    fn document_title_rejects_values_that_cannot_become_text() {
+    fn document_front_matter_rejects_values_that_cannot_become_text() {
         for raw in [
             "title: \"\"",
             "title: \"   \"",
             "title: [a, b]",
             "title: {a: b}",
         ] {
-            let found = document_title(&format!("---\n{raw}\n---\n\n# Heading\n"));
+            let found = document_front_matter(&format!("---\n{raw}\n---\n\n# Heading\n"));
 
             assert_eq!(found.title.as_deref(), Some("Heading"), "raw: {raw}");
-            assert!(found.rejected, "raw: {raw}");
+            assert!(found.title_rejected, "raw: {raw}");
         }
     }
 
     #[test]
-    fn document_title_falls_back_to_the_heading_silently() {
+    fn document_front_matter_falls_back_to_the_heading_silently() {
         for matter in [
             "encrypt: true",
             "other: value",
@@ -564,15 +747,165 @@ mod tests {
             "- one\n- two",
             "title: [unclosed",
         ] {
-            let found = document_title(&format!("---\n{matter}\n---\n\n# Heading\n"));
+            let found = document_front_matter(&format!("---\n{matter}\n---\n\n# Heading\n"));
 
             assert_eq!(found.title.as_deref(), Some("Heading"), "matter: {matter}");
-            assert!(!found.rejected, "matter: {matter}");
+            assert!(!found.title_rejected, "matter: {matter}");
         }
 
-        let no_front_matter = document_title("# Heading\n");
+        let no_front_matter = document_front_matter("# Heading\n");
         assert_eq!(no_front_matter.title.as_deref(), Some("Heading"));
-        assert!(!no_front_matter.rejected);
+        assert!(!no_front_matter.title_rejected);
+    }
+
+    #[test]
+    fn front_matter_metadata_is_read_verbatim() {
+        let found = document_front_matter(
+            "---\ntitle: T\ndescription: A short guide\nauthor: 王五\ndate: 2026-01-02\n\
+             tags: [rust, go]\n---\n\n# Heading\n",
+        );
+
+        assert_eq!(found.description.as_deref(), Some("A short guide"));
+        assert_eq!(found.author.as_deref(), Some("王五"));
+        assert_eq!(found.date.as_deref(), Some("2026-01-02"));
+        assert_eq!(found.tags, ["rust", "go"]);
+        assert!(
+            !found.description_rejected
+                && !found.date_rejected
+                && !found.author_rejected
+                && !found.tags_rejected
+        );
+    }
+
+    #[test]
+    fn metadata_strings_trim_and_numbers_and_booleans_become_text() {
+        let found = document_front_matter(
+            "---\ndescription: \"  Spaced  \"\nauthor: 42\ndate: true\n---\n\n# Heading\n",
+        );
+
+        assert_eq!(found.description.as_deref(), Some("Spaced"));
+        assert_eq!(found.author.as_deref(), Some("42"));
+        // A boolean date is text but not an ISO 8601 shape: rejected.
+        assert!(found.date_rejected);
+        assert_eq!(found.date, None);
+        assert!(!found.description_rejected);
+        assert!(!found.author_rejected);
+    }
+
+    #[test]
+    fn metadata_tagged_values_speak_through_their_label() {
+        let found = document_front_matter("---\ndescription: !!str 42\n---\n\n# Heading\n");
+
+        assert_eq!(found.description.as_deref(), Some("42"));
+        assert!(!found.description_rejected);
+    }
+
+    #[test]
+    fn unusable_description_and_author_are_rejected() {
+        let found =
+            document_front_matter("---\ndescription: [a, b]\nauthor: {x: y}\n---\n\n# Heading\n");
+
+        assert_eq!(found.description, None);
+        assert!(found.description_rejected);
+        assert_eq!(found.author, None);
+        assert!(found.author_rejected);
+    }
+
+    #[test]
+    fn a_missing_or_null_field_is_no_opinion() {
+        let found = document_front_matter(
+            "---\ndescription:\nauthor: null\ndate:\ntags:\n---\n\n# Heading\n",
+        );
+
+        assert_eq!(found.description, None);
+        assert!(!found.description_rejected);
+        assert_eq!(found.author, None);
+        assert!(!found.author_rejected);
+        assert_eq!(found.date, None);
+        assert!(!found.date_rejected);
+        assert!(found.tags.is_empty());
+        assert!(!found.tags_rejected);
+    }
+
+    #[test]
+    fn dates_accept_iso_8601_shapes() {
+        for raw in [
+            "2026-01-02",
+            "2026-01-02T15:04",
+            "2026-01-02 15:04:05",
+            "2026-01-02T15:04:05+08:00",
+            "2026-01-02t15:04z",
+        ] {
+            let found = document_front_matter(&format!("---\ndate: \"{raw}\"\n---\n\n# Heading\n"));
+
+            assert_eq!(found.date.as_deref(), Some(raw), "raw: {raw}");
+            assert!(!found.date_rejected, "raw: {raw}");
+        }
+    }
+
+    #[test]
+    fn dates_outside_the_iso_shape_are_rejected() {
+        for raw in [
+            "yesterday",
+            "2026-1-2",
+            "20260102",
+            "2026/01/02",
+            "2026-01-02 12",
+            "2026-01-02T15:04Z07:00",
+        ] {
+            let found = document_front_matter(&format!("---\ndate: \"{raw}\"\n---\n\n# Heading\n"));
+
+            assert_eq!(found.date, None, "raw: {raw}");
+            assert!(found.date_rejected, "raw: {raw}");
+        }
+    }
+
+    #[test]
+    fn tags_normalize_strip_hash_and_dedupe() {
+        let found = document_front_matter(
+            "---\ntags: [rust, \"#rust\", Rust , \"\", \"#\", go]\n---\n\n# Heading\n",
+        );
+
+        assert_eq!(found.tags, ["rust", "Rust", "go"]);
+        assert!(!found.tags_rejected);
+    }
+
+    #[test]
+    fn tags_accept_block_style_a_bare_scalar_and_an_empty_list() {
+        let block =
+            document_front_matter("---\ntags:\n  - rust\n  - \"#guide\"\n---\n\n# Heading\n");
+        assert_eq!(block.tags, ["rust", "guide"]);
+
+        let one = document_front_matter("---\ntags: \"#solo\"\n---\n\n# Heading\n");
+        assert_eq!(one.tags, ["solo"]);
+        assert!(!one.tags_rejected);
+
+        let none = document_front_matter("---\ntags: []\n---\n\n# Heading\n");
+        assert!(none.tags.is_empty());
+        assert!(!none.tags_rejected);
+    }
+
+    #[test]
+    fn composite_tags_reject_the_whole_field() {
+        let nested = document_front_matter("---\ntags: [rust, [inner]]\n---\n\n# Heading\n");
+        assert!(nested.tags.is_empty());
+        assert!(nested.tags_rejected);
+
+        let mapped = document_front_matter("---\ntags: {a: b}\n---\n\n# Heading\n");
+        assert!(mapped.tags.is_empty());
+        assert!(mapped.tags_rejected);
+    }
+
+    #[test]
+    fn metadata_never_reaches_a_tree_walk_when_the_title_names_itself() {
+        // The heading fallback is the only reason for the tree walk; a
+        // document whose front matter names its title skips it. The test
+        // observes this indirectly: the front matter title wins even when
+        // the body would name another one.
+        let found = document_front_matter("---\ntitle: Matter\ndescription: D\n---\n\n# Heading\n");
+
+        assert_eq!(found.title.as_deref(), Some("Matter"));
+        assert_eq!(found.description.as_deref(), Some("D"));
     }
 
     #[test]

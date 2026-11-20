@@ -17,6 +17,7 @@ import * as Diagrams from "./diagrams.js";
 import * as DiagramView from "./diagram-view.js";
 import * as DocBody from "./doc-body.js";
 import * as LockView from "./lock-view.js";
+import { TAG_CHIP_ATTRIBUTE } from "./tags.js";
 import { t } from "./i18n.js";
 
 /** Class of the paragraph shown while a document is being fetched. */
@@ -146,14 +147,16 @@ export function createDocRender(deps) {
     // The shared document-body render: markup in, tables enhanced in the same
     // breath and still before insertion, so the first paint already carries
     // the sortable headers, filter buttons, code copy buttons and chapter
-    // fold arrows. Folding is asked for here and nowhere else: the search
-    // preview would read the arrow as a press outside its dialog, and the
-    // hover preview is a window onto a chapter rather than a place to read
-    // one.
+    // fold arrows — and the front matter's byline and tags, which go in as
+    // part of the same fill. Folding is asked for here and nowhere else: the
+    // search preview would read the arrow as a press outside its dialog, and
+    // the hover preview is a window onto a chapter rather than a place to
+    // read one.
     var body = DocBody.createDocBody(doc.html, {
       enhanceTables: true,
       collapsible: true,
       codeCopy: true,
+      meta: metaOf(doc),
     });
 
     mountArticle();
@@ -173,6 +176,68 @@ export function createDocRender(deps) {
 
     // The links this document carries are the ones the hover preview watches.
     preview.tag(body);
+  }
+
+  /**
+   * The meta block a document's front matter earns, or `null` for one that
+   * carries none.
+   *
+   * A byline joins the author and the date the payload carried — the two
+   * fields a build keeps public for a sealed document too, so an unlocked
+   * article still signs itself — and the declared tags become the same chips
+   * the article answers clicks on: the class, the role, the keyboard reach
+   * and the data attribute are the ones `app.js`' delegation and the
+   * stylesheet both read, so a chip under the title browses its tag exactly
+   * like the body chips once did.
+   *
+   * A document with no author, no date and no tags earns no block at all,
+   * and the body reads exactly as a build without the feature wrote it.
+   */
+  function metaOf(doc) {
+    var byline = [doc.author, doc.date]
+      .filter(function (value) {
+        return typeof value === "string" && value;
+      })
+      .join(" · ");
+    var tags = Array.isArray(doc.tags) ? doc.tags : [];
+
+    if (!byline && !tags.length) {
+      return null;
+    }
+
+    var meta = document.createElement("div");
+    meta.className = DocBody.DOC_META_CLASS;
+
+    if (byline) {
+      var line = document.createElement("p");
+      line.className = "doc-byline";
+      line.textContent = byline;
+      meta.appendChild(line);
+    }
+
+    if (tags.length) {
+      var chips = document.createElement("p");
+      chips.className = "doc-tags";
+      tags.forEach(function (tag) {
+        chips.appendChild(tagChip(tag));
+      });
+      meta.appendChild(chips);
+    }
+
+    return meta;
+  }
+
+  /** One tag chip: the shape the article's delegation and the CSS answer. */
+  function tagChip(tag) {
+    var chip = document.createElement("span");
+    chip.className = "doc-tag";
+    chip.setAttribute(TAG_CHIP_ATTRIBUTE, tag);
+    chip.setAttribute("role", "button");
+    chip.setAttribute("tabindex", "0");
+    chip.title = t("tags.browseTitle");
+    chip.textContent = "#" + tag;
+
+    return chip;
   }
 
   /** Re-render the current document's diagrams for the theme now in effect. */

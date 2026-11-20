@@ -19,7 +19,7 @@
 import { formatHash } from "./router.js";
 import { t } from "./i18n.js";
 
-/** The body attribute the build writes on every `#tag` chip. */
+/** The attribute every tag chip carries — the tag the reader filters through. */
 export var TAG_CHIP_ATTRIBUTE = "data-tag";
 
 /** Selector for a chip the reader answers clicks on. */

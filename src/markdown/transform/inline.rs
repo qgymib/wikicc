@@ -1,13 +1,13 @@
-//! Inline sugar: Typora's highlight, subscript, superscript, comments, tags
-//! and emoji shortcodes.
+//! Inline sugar: Typora's highlight, subscript, superscript, comments and
+//! emoji shortcodes.
 //!
 //! None of these are parser constructs, so they arrive inside `Text` runs:
-//! `==like this==`, `H~2~O`, `X^2^`, `%%hidden%%`, `#tag`, `:smile:`. This
-//! pass matches the delimited runs and rewrites them into the typed nodes
-//! the serialiser renders — the same children-array technique the fold
-//! uses, so sugar composes with emphasis, links and code exactly where the
-//! author wrote it (`==**bold**==` wraps the strong, `a ~b~ c` leaves the
-//! spaces out of the subscript).
+//! `==like this==`, `H~2~O`, `X^2^`, `%%hidden%%`, `:smile:`. This pass
+//! matches the delimited runs and rewrites them into the typed nodes the
+//! serialiser renders — the same children-array technique the fold uses, so
+//! sugar composes with emphasis, links and code exactly where the author
+//! wrote it (`==**bold**==` wraps the strong, `a ~b~ c` leaves the spaces
+//! out of the subscript).
 //!
 //! Single-tilde strikethrough is off in the parser, so a lone `~` in a text
 //! run is always ours to claim; `~~double~~` already arrived as a `Delete`
@@ -15,11 +15,9 @@
 //! the content may not begin or end with whitespace, so `a ~ b ~ c` stays
 //! literal. `%%…%%` renders nothing: the run is dropped, comments included.
 //!
-//! Tags follow Obsidian's word-boundary rule: a `#` at the start of the run
-//! or after whitespace, followed by letters, digits, `_`, `-` or `/`, and
-//! not purely numeric (`#1` stays literal, `#v1` is a tag). Shortcodes are
-//! `:name:` runs looked up in a built-in table; an unknown name stays
-//! literal text.
+//! Shortcodes are `:name:` runs looked up in a built-in table; an unknown
+//! name stays literal text. A `#tag` run is literal text too: tags are
+//! metadata declared in the front matter, never inline annotations.
 
 use super::super::ast::{OwnKind, OwnNode, walk_blocks};
 
@@ -212,7 +210,7 @@ fn delimit_within(value: &str, delimiter: Delimiter, line: usize) -> Option<Vec<
     Some(nodes)
 }
 
-/// Claim tags and shortcodes inside every text run of the array.
+/// Claim shortcodes inside every text run of the array.
 fn expand_marks(children: &mut Vec<OwnNode>) {
     let mut index = 0;
     while index < children.len() {
@@ -232,7 +230,7 @@ fn expand_marks(children: &mut Vec<OwnNode>) {
     }
 }
 
-/// Split a text run into literals, tags and shortcodes.
+/// Split a text run into literals and shortcodes.
 fn marks_within(value: &str, line: usize) -> Option<Vec<OwnNode>> {
     let mut nodes: Vec<OwnNode> = Vec::new();
     let mut literal = String::new();
@@ -241,18 +239,6 @@ fn marks_within(value: &str, line: usize) -> Option<Vec<OwnNode>> {
 
     while let Some(character) = value[byte_position..].chars().next() {
         let rest = &value[byte_position + character.len_utf8()..];
-        let boundary = byte_position == 0 || value[..byte_position].ends_with(char::is_whitespace);
-
-        if character == '#'
-            && boundary
-            && let Some(tag) = tag_at(rest)
-        {
-            push_literal(&mut nodes, &mut literal, line);
-            nodes.push(OwnNode::new(line, OwnKind::Tag(tag.to_string())));
-            byte_position += 1 + tag.len();
-            claimed = true;
-            continue;
-        }
 
         if character == ':'
             && let Some((name, emoji)) = shortcode_at(rest)
@@ -281,26 +267,6 @@ fn push_literal(nodes: &mut Vec<OwnNode>, literal: &mut String, line: usize) {
     if !literal.is_empty() {
         nodes.push(OwnNode::new(line, OwnKind::Text(std::mem::take(literal))));
     }
-}
-
-/// The tag that starts in `rest`, if it is a well-formed one.
-fn tag_at(rest: &str) -> Option<&str> {
-    let end = rest
-        .char_indices()
-        .find(|(_, character)| !is_tag_character(*character))
-        .map(|(index, _)| index)
-        .unwrap_or(rest.len());
-    let name = &rest[..end];
-
-    if name.is_empty() || name.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    Some(name)
-}
-
-/// Whether `character` can appear in a tag name.
-fn is_tag_character(character: char) -> bool {
-    character.is_alphanumeric() || matches!(character, '_' | '-' | '/')
 }
 
 /// The shortcode that starts in `rest`, resolved through the built-in table.
@@ -592,27 +558,14 @@ mod tests {
     }
 
     #[test]
-    fn tags_follow_the_word_boundary_rule() {
+    fn hash_runs_stay_literal_text() {
         let shapes = shapes("#v2 and #10 and x#tag\n");
 
-        assert_eq!(
-            shapes.iter().filter(|shape| shape.contains("Tag")).count(),
-            1,
-            "{shapes:?}"
-        );
         assert!(
-            shapes.iter().any(|shape| shape.contains("Tag(\"v2\")")),
-            "{shapes:?}"
-        );
-    }
-
-    #[test]
-    fn nested_tags_are_one_tag() {
-        let shapes = shapes("#a/b\n");
-
-        assert!(
-            shapes.iter().any(|shape| shape.contains("Tag(\"a/b\")")),
-            "{shapes:?}"
+            shapes
+                .iter()
+                .all(|shape| shape.contains("Text") && !shape.contains("Tag")),
+            "a `#run` is plain text now: {shapes:?}"
         );
     }
 
@@ -672,33 +625,15 @@ mod tests {
     }
 
     #[test]
-    fn tags_render_as_tagged_spans() {
+    fn hash_runs_render_as_text() {
         let doc = render_document("tagged #v2 here\n");
 
         assert!(
-            doc.html.contains("<span class=\"doc-tag\" data-tag=\"v2\" role=\"button\" tabindex=\"0\" title=\"Browse this tag\">#v2</span>"),
-            "html: {}",
+            doc.html.contains("tagged #v2 here"),
+            "no chip markup is produced: {}",
             doc.html
         );
-        assert_eq!(doc.tags, vec!["v2"], "the walk reports what it rendered");
-    }
-
-    #[test]
-    fn tags_are_collected_deduplicated_and_sorted() {
-        let doc = render_document("#v2 first, #alpha second, #v2 again\n");
-
-        assert_eq!(doc.tags, vec!["alpha", "v2"]);
-        assert_eq!(
-            doc.html.matches("data-tag=").count(),
-            3,
-            "every chip keeps its own data attribute: {}",
-            doc.html
-        );
-        assert!(
-            doc.text.contains("#alpha") && doc.text.contains("#v2"),
-            "the search text keeps the tags as written: {}",
-            doc.text
-        );
+        assert_eq!(doc.text, "tagged #v2 here", "text: {}", doc.text);
     }
 
     #[test]

@@ -21,13 +21,14 @@
 //! declared document the body — html, outline, blocks and plain text — is
 //! sealed into `enc` under a fresh random salt and nonce, with the document
 //! id as the AES-GCM additional data, and the four fields are emptied: the
-//! payload never carries the plaintext. Titles stay public; the link graph
-//! and the counters are untouched, because ids and titles are metadata the
-//! reader shows anyway. A document that declares encryption without any
-//! available password is a hard error naming the document, whatever
-//! `--strict` says. The per-document computation runs in parallel and its
-//! results apply in document order, so the reported failure is the first
-//! failing document in document order.
+//! payload never carries the plaintext. Titles, authors and dates stay
+//! public — metadata the reader shows anyway — while a description and the
+//! declared tags go with the body: both speak about what the body says. The
+//! link graph and the counters are untouched. A document that declares
+//! encryption without any available password is a hard error naming the
+//! document, whatever `--strict` says. The per-document computation runs in
+//! parallel and its results apply in document order, so the reported failure
+//! is the first failing document in document order.
 //!
 //! The asset boundary is sealed with the body. Before a document is
 //! encrypted, its own asset placeholders — in `html` and in every chapter
@@ -168,7 +169,10 @@ pub fn seal_bundle(
     // The apply pass walks the collected results in document order, so the
     // first `Err` is the first failing document — the message a sequential
     // pass would have printed. A document that sealed clears its plaintext
-    // body and carries the blob beside the public title.
+    // body and carries the blob beside the public title. The description and
+    // the tags go with it: both speak about what the body says, and the
+    // public surface of a locked document is its id, its title, its author
+    // and its date — never a word of what its body said.
     let mut sealed_ids: Vec<String> = Vec::new();
     for (doc, result) in build.bundle.docs.iter_mut().zip(sealed) {
         let Some(blob) = result? else {
@@ -179,15 +183,16 @@ pub fn seal_bundle(
         doc.toc = Vec::new();
         doc.blocks = Vec::new();
         doc.text = String::new();
+        doc.description = None;
+        doc.tags = Vec::new();
         doc.enc = Some(blob);
         sealed_ids.push(doc.id.clone());
     }
 
-    // A tag is body content: it was collected from the same walk that
-    // produced the body now sealed. The aggregation therefore loses every
-    // sealed document, and entries whose last document sealed are dropped —
-    // the public surface of a locked document is its id and title, never a
-    // word of what its body said.
+    // A tag describes what a document is about, so the aggregation loses
+    // every sealed document with it, and entries whose last document sealed
+    // are dropped — the public surface of a locked document is its id, its
+    // title, its author and its date, never a word of what its body said.
     if !sealed_ids.is_empty() {
         for entry in &mut build.bundle.tags {
             entry
@@ -306,7 +311,7 @@ mod tests {
 
     use crate::assets::asset_hash;
     use crate::crypto::{SealedRef, open};
-    use crate::scan::SourceDoc;
+    use crate::scan::{DocMeta, SourceDoc};
     use crate::site::build_site;
 
     use super::*;
@@ -330,6 +335,7 @@ mod tests {
             id: "a.md".to_string(),
             path: dir.path().join("a.md"),
             title: "A".to_string(),
+            metadata: DocMeta::default(),
             text: text.to_string(),
         }];
         let mut build = build_site("Site", dir.path(), &docs);
@@ -356,6 +362,7 @@ mod tests {
                 id: format!("{index:02}.md"),
                 path: dir.path().join(format!("{index:02}.md")),
                 title: format!("Doc {index}"),
+                metadata: DocMeta::default(),
             })
             .collect();
         let mut build = build_site("Site", dir.path(), &docs);
@@ -534,14 +541,23 @@ mod tests {
                 id: "00.md".to_string(),
                 path: dir.path().join("00.md"),
                 title: "Locked".to_string(),
-                text: "---\nencrypt: true\n---\n\n# Locked\n\nsecret #private #shared\n"
-                    .to_string(),
+                metadata: DocMeta {
+                    description: Some("A secret summary".to_string()),
+                    author: Some("Alice".to_string()),
+                    date: Some("2026-01-02".to_string()),
+                    tags: vec!["private".to_string(), "shared".to_string()],
+                },
+                text: "---\nencrypt: true\n---\n\n# Locked\n\nsecret body\n".to_string(),
             },
             SourceDoc {
                 id: "01.md".to_string(),
                 path: dir.path().join("01.md"),
                 title: "Public".to_string(),
-                text: "# Public\n\nopen #shared\n".to_string(),
+                metadata: DocMeta {
+                    tags: vec!["shared".to_string()],
+                    ..DocMeta::default()
+                },
+                text: "# Public\n\nopen body\n".to_string(),
             },
         ];
         let mut build = build_site("Site", dir.path(), &docs);
@@ -558,7 +574,31 @@ mod tests {
                 tag: "shared".to_string(),
                 docs: vec!["01.md".to_string()],
             }],
-            "a tag is body content: the locked document's words never reach the payload"
+            "a tag describes what a document is about: the locked one is stripped"
+        );
+        assert_eq!(
+            build.bundle.docs[0].tags,
+            Vec::<String>::new(),
+            "the sealed document carries no tags of its own"
+        );
+        assert_eq!(
+            build.bundle.docs[0].description, None,
+            "a description speaks about the body: it is sealed with it"
+        );
+        assert_eq!(
+            build.bundle.docs[0].author.as_deref(),
+            Some("Alice"),
+            "the author stays public"
+        );
+        assert_eq!(
+            build.bundle.docs[0].date.as_deref(),
+            Some("2026-01-02"),
+            "the date stays public"
+        );
+        assert_eq!(
+            build.bundle.docs[1].tags,
+            vec!["shared".to_string()],
+            "the public document keeps its tags"
         );
     }
 
@@ -569,6 +609,7 @@ mod tests {
             id: "a.md".to_string(),
             path: dir.path().join("a.md"),
             title: "A".to_string(),
+            metadata: DocMeta::default(),
             text: "---\nencrypt: true\n---\n\n# A\n\n## Section\n\nbody text\n".to_string(),
         }];
         let mut build = build_site("Site", dir.path(), &docs);
@@ -692,6 +733,7 @@ mod tests {
                 id: format!("{index:02}.md"),
                 path: dir.path().join(format!("{index:02}.md")),
                 title: format!("Doc {index}"),
+                metadata: DocMeta::default(),
                 text: format!("---\nencrypt: true\n---\n\n# Doc {index}\n\nsecret {index}\n"),
             })
             .collect();
@@ -801,12 +843,14 @@ mod tests {
                 id: "public.md".to_string(),
                 path: dir.path().join("public.md"),
                 title: "Public".to_string(),
+                metadata: DocMeta::default(),
                 text: "# Public\n\n![x](img/x.svg)\n".to_string(),
             },
             SourceDoc {
                 id: "shared.md".to_string(),
                 path: dir.path().join("shared.md"),
                 title: "Shared".to_string(),
+                metadata: DocMeta::default(),
                 text: "---\nencrypt: true\n---\n\n# Shared\n\n## Part\n\n![x](img/x.svg)\n"
                     .to_string(),
             },
@@ -814,6 +858,7 @@ mod tests {
                 id: "private.md".to_string(),
                 path: dir.path().join("private.md"),
                 title: "Private".to_string(),
+                metadata: DocMeta::default(),
                 text: "---\nencrypt: true\n---\n\n# Private\n\n## Part\n\n![y](img/y.svg)\n"
                     .to_string(),
             },
@@ -913,6 +958,7 @@ mod tests {
             id: "public.md".to_string(),
             path: dir.path().join("public.md"),
             title: "Public".to_string(),
+            metadata: DocMeta::default(),
             text: "# Public\n\n![x](img/x.svg)\n".to_string(),
         }];
         let mut build = build_site("Site", dir.path(), &docs);

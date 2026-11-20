@@ -35,6 +35,7 @@
  * come from the pure `search.js`.
  */
 import { matchRanges } from "./search.js";
+import { DOC_META_CLASS } from "./doc-body.js";
 
 /** Class of one highlighted hit inside a rendered document. */
 export var HIT_CLASS = "search-hit";
@@ -84,6 +85,12 @@ export function highlightHits(root, query) {
   while (node) {
     if (insideOwnMark(node, root)) {
       // Already counted where the mark was wrapped.
+    } else if (insideIgnoredMeta(node, root)) {
+      // The caller's meta block — a byline and the declared tags — is not
+      // the document's text: the engine never indexed a word of it, so its
+      // hits fill no slot and take no mark. Marking there anyway would
+      // number places the result list cannot name, and every ordinal after
+      // one would point a row at the wrong passage.
     } else if (skippable(node, root)) {
       if (textOfNode(node).trim()) {
         recordSkipped(node, matchRanges(textOfNode(node), query), slots, root);
@@ -109,6 +116,24 @@ function insideOwnMark(node, root) {
       parent.tagName &&
       String(parent.tagName).toUpperCase() === "MARK" &&
       String(parent.className).split(" ").indexOf(HIT_CLASS) !== -1
+    ) {
+      return true;
+    }
+    parent = parent.parentNode;
+  }
+
+  return false;
+}
+
+/** Whether a text node sits inside the meta block the caller inserted. */
+function insideIgnoredMeta(node, root) {
+  var parent = node.parentNode;
+
+  while (parent && parent !== root) {
+    if (
+      String(parent.className || "")
+        .split(" ")
+        .indexOf(DOC_META_CLASS) !== -1
     ) {
       return true;
     }

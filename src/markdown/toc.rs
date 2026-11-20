@@ -191,7 +191,6 @@ fn collect_heading_text(children: &[OwnNode], into: &mut HeadingText) {
                 into.push(label.as_deref().unwrap_or(identifier));
             }
             OwnKind::Html { value } => into.push(value),
-            OwnKind::Tag(name) => into.push(&format!("#{name}")),
             OwnKind::Shortcode { emoji, .. } => into.push(&emoji.to_string()),
             OwnKind::Wikilink { target, alias } => {
                 into.push(alias.as_deref().unwrap_or(target));

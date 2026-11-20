@@ -38,11 +38,13 @@ import * as DiagramView from "./diagram-view.js";
 import * as MathView from "./math-view.js";
 import * as MediaView from "./media-view.js";
 import * as Links from "./links.js";
-import { TAG_CHIP_ATTRIBUTE } from "./tags.js";
 import { t } from "./i18n.js";
 
 /** Class every document body carries; the stylesheet keys the typography off it. */
 export var BODY_CLASS = "doc-body";
+
+/** Class of the meta block a caller may hand in, under the document's title. */
+export var DOC_META_CLASS = "doc-meta";
 
 /** Class added to a body whose chapters can be folded away. */
 export var COLLAPSIBLE_CLASS = "chapter-collapsible";
@@ -189,6 +191,12 @@ export function enhanceChapters(body) {
  * heading that ends a chapter is the next one the body itself carries, so a
  * heading nested inside a quote or a list never ends one: the fold hides the
  * element that holds it together with it.
+ *
+ * The meta block the caller placed right after a heading is never chapter
+ * content: it is the byline and the declared tags, the one part of the body
+ * that is not prose, and a fold that hid it would hide a fact the reader
+ * sees wherever they have scrolled to. Its index is skipped, so the fold's
+ * range starts past it and the arrow's own count reads only prose.
  */
 function chaptersOf(body) {
   var headings = Array.prototype.filter.call(
@@ -224,21 +232,65 @@ function chaptersOf(body) {
       }
     }
 
+    // The meta block right behind the heading is furniture, not chapter:
+    // the range starts past it, and a chapter holding only the block holds
+    // nothing a fold could hide.
+    var contentStart = begin + 1;
+    if (children[contentStart] && isMetaBlock(children[contentStart])) {
+      contentStart += 1;
+    }
+
     // The chapter is the range between its heading and the one that ends it;
     // a chapter with nothing in that range holds nothing a fold could hide.
-    if (stop - begin < 2) {
+    if (stop - contentStart < 1) {
       return;
     }
 
     chapters.push({
       heading: heading,
-      begin: begin + 1,
+      begin: contentStart,
       stop: stop,
       button: null,
     });
   });
 
   return chapters;
+}
+
+/** Whether `element` is the meta block the caller handed to `fillDocBody`. */
+function isMetaBlock(element) {
+  return (
+    !!element &&
+    !!element.classList &&
+    typeof element.classList.contains === "function" &&
+    element.classList.contains(DOC_META_CLASS)
+  );
+}
+
+/**
+ * Place the meta block after the body's first own H1, at the front if there
+ * is none.
+ *
+ * The body's markup usually opens with the document's own title heading, so
+ * "after it" is where a byline reads as a byline; a document that starts
+ * with anything else gets the block first, before every other element.
+ */
+function insertMeta(body, meta) {
+  var children = body.children ? Array.prototype.slice.call(body.children) : [];
+
+  for (var index = 0; index < children.length; index += 1) {
+    if (children[index].tagName === "H1") {
+      var anchor = children[index];
+      if (anchor.nextSibling) {
+        body.insertBefore(meta, anchor.nextSibling);
+      } else {
+        body.appendChild(meta);
+      }
+      return;
+    }
+  }
+
+  body.insertBefore(meta, body.firstChild);
 }
 
 /**
@@ -655,7 +707,9 @@ function markCopied(button) {
  * `options.enhanceTables` says whether the tables in the markup gain the sort
  * and filter controls of the article, `options.codeCopy` whether its code
  * blocks gain the button that copies them, and `options.collapsible` whether
- * its chapters gain the arrow that folds them. The work happens here, right
+ * its chapters gain the arrow that folds them. `options.meta` is a node the
+ * caller built — the article's byline and tag block — that goes in under the
+ * document's title before any of that runs. The work happens here, right
  * after the markup exists and — for a caller that has not inserted the
  * element yet — before it is on screen.
  *
@@ -670,13 +724,13 @@ function markCopied(button) {
 /**
  * Rewrite the copy the build wrote into the body's own attributes.
  *
- * Two slots in the markup the build serialises speak English: a dead link's
- * `title`, which quotes the build warning's wording, and a tag chip's
- * `title`. Both travel in the payload verbatim, but the dictionaries the
- * reader was built with name the language the site was built in, so the
- * enhancement rewrites them in that language before the body is inserted —
- * no-JS pages and the build warning itself keep the English as the
- * fallback, and an unknown reason code keeps the build's wording too.
+ * One slot in the markup the build serialises speaks English: a dead link's
+ * `title`, which quotes the build warning's wording. It travels in the
+ * payload verbatim, but the dictionaries the reader was built with name the
+ * language the site was built in, so the enhancement rewrites it in that
+ * language before the body is inserted — no-JS pages and the build warning
+ * itself keep the English as the fallback, and an unknown reason code keeps
+ * the build's wording too.
  *
  * The walk is a plain recursion over the children, not a selector query:
  * the body is inserted into the article, the search preview and the hover
@@ -701,8 +755,6 @@ function localizeBuildCopy(root) {
       if (title !== null) {
         child.setAttribute("title", title);
       }
-    } else if (child.getAttribute(TAG_CHIP_ATTRIBUTE) !== null) {
-      child.setAttribute("title", t("tags.browseTitle"));
     }
 
     localizeBuildCopy(child);
@@ -713,6 +765,14 @@ export function fillDocBody(body, html, options) {
   body.innerHTML = html;
 
   localizeBuildCopy(body);
+
+  // The caller's meta block — a byline and the declared tags — goes in
+  // before any enhancement, so every index the enhancements compute reads
+  // the body with it already in place. It belongs under the document's
+  // title when the markup opens with one, ahead of everything otherwise.
+  if (options && options.meta) {
+    insertMeta(body, options.meta);
+  }
 
   if (options && options.codeCopy) {
     enhanceCodeCopy(body);
@@ -741,8 +801,8 @@ export function fillDocBody(body, html, options) {
  * `options.extraClass` names what the container is — the search preview's
  * `search-document`, for one — and goes in front, so the class string reads
  * "what it is, and that it typesets like the article". `options.enhanceTables`,
- * `options.codeCopy` and `options.collapsible` are handed to `fillDocBody`
- * untouched.
+ * `options.codeCopy`, `options.collapsible` and `options.meta` are handed to
+ * `fillDocBody` untouched.
  */
 export function createDocBody(html, options) {
   var body = document.createElement("div");

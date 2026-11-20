@@ -32,6 +32,7 @@ tests/fixtures/**/dist
 /node_modules/
 
 # AI Agent
+/AGENTS.md
 /.codebuddy
 /.playwright-cli
 /.codegraph

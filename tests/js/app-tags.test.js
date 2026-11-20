@@ -24,15 +24,16 @@ const TAGS = [
   { tag: "solo", docs: ["index.md"] },
 ];
 
-/** The body the build wrote for a document that carries one tag chip. */
+/** The documents for a site whose index declares one tag. */
 const taggedDocs = [
   {
     id: "index.md",
     title: "Index",
-    html: '<p>tagged <span class="doc-tag" data-tag="solo" role="button" tabindex="0" title="Browse this tag">#solo</span> here</p>',
-    text: "tagged #solo here",
+    html: "<p>tagged here</p>",
+    text: "tagged here",
     toc: [],
     blocks: [],
+    tags: ["solo"],
   },
   {
     id: "guide/intro.md",
@@ -195,7 +196,7 @@ test("a chip in the article answers like the panel's row", () => {
       startSession();
 
       const chip = chipIn(session.shell);
-      assert.ok(chip, "the render carries the chip the build wrote");
+      assert.ok(chip, "the render carries the chip the declared tags built");
 
       // The surfaces the answer brings up start folded away.
       session.doc.body.setAttribute("data-sidebar", "hidden");

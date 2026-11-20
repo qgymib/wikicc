@@ -1,0 +1,40 @@
+/* ---------- document meta ---------- */
+
+/* The block the reader places under a document's title when the front matter
+   carries metadata: an author byline (`author · date`) and the tags the
+   document declares. The build knows none of this markup — the reader builds
+   the block from the payload's per-document fields and inserts it before any
+   other enhancement runs, so every index the enhancements compute reads the
+   body with the block already in place.
+
+   The block is never part of a chapter's foldable range and never part of the
+   search text, so folding and highlighting both leave it alone. The tags
+   reuse the chip face the body's inline chips wear (content.css), and the
+   article's click delegation answers a chip the same way wherever it sits. */
+
+.doc-meta {
+  margin: -0.35em 0 1.4em;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.doc-meta:empty {
+  display: none;
+}
+
+.doc-meta .doc-byline,
+.doc-meta .doc-tags {
+  margin: 0 0 0.25em;
+}
+
+.doc-meta .doc-byline:last-child,
+.doc-meta .doc-tags:last-child {
+  margin-bottom: 0;
+}
+
+.doc-meta .doc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}

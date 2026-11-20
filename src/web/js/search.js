@@ -10,8 +10,9 @@
  *   spaces and punctuation and would index a whole Chinese paragraph as one
  *   token, while a word-level split cannot keep a queried phrase intact: the
  *   pairs make `combineWith: "AND"` mean "these characters sit together";
- * - the field set (`title`, `headings`, `text`) and their weights, so a title
- *   hit outranks a heading hit, which outranks a body hit;
+ * - the field set (`title`, `headings`, `description`, `text`) and their
+ *   weights, so a title hit outranks a heading or description hit, which
+ *   outranks a body hit;
  * - `combineWith: "AND"`, so every word of a multi-word query has to match.
  *
  * Alongside the index it owns the *context* of a hit: `matchSnippet` cuts the
@@ -152,11 +153,11 @@ export function headingsText(toc) {
 export function createSearch(docs) {
   var index = new MiniSearch({
     idField: "id",
-    fields: ["title", "headings", "text"],
+    fields: ["title", "headings", "description", "text"],
     storeFields: ["id"],
     tokenize: tokenize,
     searchOptions: {
-      boost: { title: 4, headings: 2 },
+      boost: { title: 4, headings: 2, description: 2 },
       prefix: true,
       combineWith: "AND",
     },
@@ -674,23 +675,37 @@ export function headingsOf(doc) {
 }
 
 /**
+ * The description one document declares, wherever its record shape carries it.
+ *
+ * The payload keeps the field optional and the corpus omits it for a sealed
+ * document — a description speaks about the body, so it is sealed with it —
+ * and a decrypted model answers for the public one the payload carried. A
+ * record without a description answers an empty string, which indexes to
+ * nothing and falls the summary through to the outline.
+ */
+export function descriptionOf(doc) {
+  return (doc && typeof doc.description === "string" && doc.description) || "";
+}
+
+/**
  * The one record the engine indexes for any document it is handed.
  *
  * A payload document, a corpus record of the pages format and a model a
- * password just opened all carry their title, outline and text differently:
- * the payload holds the outline structure, the corpus a pre-flattened string,
- * and the decrypted model the structure again. Indexing every one through
- * this single mapping is what keeps the fields the same shape wherever they
- * came from — `headingsOf` reads the pre-flattened string where it is present
- * and flattens the outline where it is not, so a hit in a heading ranks the
- * same way in both formats. The dynamic index updates of a decryption use it
- * too: a record that replaces a sealed one describes the document exactly as
- * the initial build indexed it.
+ * password just opened all carry their title, outline, description and text
+ * differently: the payload holds the outline structure, the corpus a
+ * pre-flattened string, and the decrypted model the structure again. Indexing
+ * every one through this single mapping is what keeps the fields the same
+ * shape wherever they came from — `headingsOf` reads the pre-flattened string
+ * where it is present and flattens the outline where it is not, so a hit in a
+ * heading ranks the same way in both formats. The dynamic index updates of a
+ * decryption use it too: a record that replaces a sealed one describes the
+ * document exactly as the initial build indexed it.
  */
 export function recordOf(doc) {
   return {
     id: doc.id,
     title: doc.title || "",
+    description: descriptionOf(doc),
     headings: headingsOf(doc),
     text: doc.text || "",
   };
@@ -711,10 +726,11 @@ export function recordOf(doc) {
  *
  * The list is never truncated: the reader asked for every place the words
  * appear, and enumerating them is one linear scan of each ranked document's
- * text. A document with no hit in its body but one in its title or outline is
- * still listed once, as `hit: -1` — no body occurrence to scroll to — with a
- * context cut from the outline, or a `null` snippet when only the title
- * matched and the caller shows the path instead.
+ * text. A document with no hit in its body but one in its title, outline or
+ * description is still listed once, as `hit: -1` — no body occurrence to
+ * scroll to — with a context cut from the description where the document
+ * declares one, from the outline otherwise, or a `null` snippet when only the
+ * title matched and the caller shows the path instead.
  */
 export function occurrences(docs, ids, query, options) {
   var byId = new Map();
@@ -733,14 +749,18 @@ export function occurrences(docs, ids, query, options) {
     var body = String(doc.text || "");
     var ranges = matchRanges(body, query);
     if (!ranges.length) {
-      // The outline is part of what the engine indexes, so a hit there is a
-      // hit worth showing; it is searched only after the body, which reads
-      // better as a context than a list of headings.
+      // The description and the outline are both part of what the engine
+      // indexes, so a hit there is a hit worth showing; the description is
+      // searched first, because a summary written for the reader says more
+      // than a list of headings, and the outline answers for the documents
+      // that declare no description.
       entries.push({
         id: doc.id,
         title: doc.title || doc.id,
         path: doc.id,
-        snippet: matchSnippet(headingsOf(doc), query, options),
+        snippet:
+          matchSnippet(descriptionOf(doc), query, options) ||
+          matchSnippet(headingsOf(doc), query, options),
         hit: -1,
       });
       return;

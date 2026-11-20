@@ -57,13 +57,17 @@ Two details about the sources:
 
 ## What stays public
 
-**The title stays public.** The lock page, the sidebar, the link graph and
-search all show the title; search reaches the body only after the reader
+**The title, the author and the date stay public.** The lock page, the
+sidebar, the link graph and search all show the title; the article header
+keeps showing an author byline and date the same way. A description and the
+declared tags do not: both speak about what the body says, so both are
+sealed with it — a sealed document joins no tag aggregation and its corpus
+record names no description. Search reaches the body only after the reader
 unlocks the document — before that, a query matching the title finds a row
 marked *Locked*, and afterwards the document is ordinary
 ([search](search.md) describes the two halves). What the lock page shows is
-exactly what the artifact leaks: the id and the title, the same metadata the
-reader uses everywhere.
+exactly what the artifact leaks: the id, the title, the author and the date,
+the same metadata the reader uses everywhere.
 
 ## The reader
 
