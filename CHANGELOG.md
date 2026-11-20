@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Entries describe what a user of the binary can observe, not how the change was
 implemented; the rules behind them live in `docs/design.md`.
 
+## [2.3.0] - 2026-11-20
+
+Audio and video play in place, documents collect their body tags and
+their backlinks are one click away, and the reader can be built in
+English or Chinese.
+
+### Added
+
+- Audio and video play in place. A reference to an audio or video file
+  renders as a player with controls inside the article, and a link to
+  one opens the viewer window with the same player instead of
+  navigating away.
+- A `language` setting. `en` or `zh`, case-insensitive and taken from
+  the same three sources as every other setting, builds the reader for
+  English or Chinese: copy baked into the documents at build time —
+  dead-link reasons, tag labels — is written in that language and reads
+  correctly without JavaScript, and the copy the reader renders itself
+  follows suit. Any other value fails the build.
+- Body tags. A `#tag` written in a document's body is collected at
+  build time; the reader gains a tags panel listing every tag and the
+  documents carrying it, and picking a tag — in the panel or on a chip
+  in an article — filters the sidebar down to those documents.
+- Backlinks. The floating window gains a backlinks view listing every
+  document that links to the one being read; an entry navigates there
+  on click.
+- Mermaid diagrams join the content viewer. Hovering a rendered diagram
+  shows the toolbar, and opening it enlarges the diagram in the lightbox
+  with the viewer's zoom controls.
+- Links with no target in the site are dead. A link that resolves to no
+  document renders as dead and the reader stops its click, with the
+  reason spelled out in the tooltip; a link to a real document but a
+  missing chapter keeps working and says so.
+- Extensionless assets are sniffed. An asset referenced without an
+  extension is typed from its contents — text that reads as UTF-8
+  without control bytes is served as `text/plain`, anything else falls
+  back to `application/octet-stream` — and the file written beside the
+  site takes its extension from that type.
+
+### Changed
+
+- An omitted input directory means the current directory. Building
+  without a positional input used to fail; it now compiles the working
+  directory.
+
+### Fixed
+
+- The mermaid frame no longer lingers after the viewer closes.
+- Wheel zoom anchors at the cursor: the point under it stays put while
+  zooming a viewer image.
+- A press outside the graph panel closes it.
+
 ## [2.2.0] - 2026-11-17
 
 Builds run in parallel across the machine's cores, a front matter title
